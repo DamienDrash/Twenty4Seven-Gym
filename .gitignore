@@ -1,0 +1,79 @@
+# Secrets and local runtime config
+.env
+.env.*
+!.env.example
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+
+# AI / local workspace tooling not relevant to the project
+.agent/
+.agents/
+.aiassistant/
+.amazonq/
+.augment/
+.gemini/
+.idx/
+.junie/
+.kiro/
+.openhands/
+.qwen/
+.roo/
+.ruler/
+.superpowers/
+.trae/
+.aider.conf.yml
+.clinerules
+.goosehints
+AGENTS.md
+AGENTS.md.bak
+CLAUDE.md
+CRUSH.md
+WARP.md
+firebender.json
+opencode.json
+
+# Local backups and temporary files
+*.bak
+
+# Legacy root modules superseded by src/nuki_integration
+/config.py
+/enums.py
+/exceptions.py
+/logging_setup.py
+/models.py
+/nuki_client.py
+/oauth.py
+/security.py
+/setup_webhook.py
+/storage.py
+/webhook_service.py

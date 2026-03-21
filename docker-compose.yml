@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: studio_access
+      POSTGRES_USER: studio_access
+      POSTGRES_PASSWORD: studio_access
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio_access -d studio_access"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  web:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn nuki_integration.app:app --host 0.0.0.0 --port 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: studio-access-worker
+
+volumes:
+  postgres_data:
