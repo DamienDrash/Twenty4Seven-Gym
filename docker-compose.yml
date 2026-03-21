@@ -1,21 +1,24 @@
 services:
   db:
     image: postgres:16
+    container_name: twenty4seven-gym-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: studio_access
-      POSTGRES_USER: studio_access
-      POSTGRES_PASSWORD: studio_access
+      POSTGRES_DB: ${POSTGRES_DB:-studio_access}
+      POSTGRES_USER: ${POSTGRES_USER:-studio_access}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      TZ: ${APP_TIMEZONE:-Europe/Berlin}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U studio_access -d studio_access"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-studio_access} -d ${POSTGRES_DB:-studio_access}"]
       interval: 5s
       timeout: 5s
       retries: 12
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ${POSTGRES_DATA_PATH:-./data/postgres}:/var/lib/postgresql/data
 
   web:
     build: .
+    container_name: twenty4seven-gym-web
     restart: unless-stopped
     env_file:
       - .env
@@ -24,10 +27,11 @@ services:
         condition: service_healthy
     command: uvicorn nuki_integration.app:app --host 0.0.0.0 --port 8080
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${WEB_BIND_HOST:-127.0.0.1}:${WEB_PORT:-8080}:8080"
 
   worker:
     build: .
+    container_name: twenty4seven-gym-worker
     restart: unless-stopped
     env_file:
       - .env
@@ -35,6 +39,3 @@ services:
       db:
         condition: service_healthy
     command: studio-access-worker
-
-volumes:
-  postgres_data:

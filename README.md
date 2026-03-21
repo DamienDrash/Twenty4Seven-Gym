@@ -1,186 +1,237 @@
-# Nuki Integration — Production-Grade Webhook Receiver
+# Twenty4Seven-Gym
 
-Secure, production-ready integration for the Nuki Web API with:
+<div align="center">
 
-- **HMAC-SHA256 signature verification** (central and decentral modes)
-- **Two-tier deduplication**: byte-level (raw hash) + semantic (smartlockId:feature:timestamp)
-- **Event lifecycle tracking**: received → processing → processed | failed
-- **Replay protection** via configurable timestamp window
-- **Silent smart-lock filtering** (uniform 202 — no authorization leaks)
-- **OAuth2 token management** with proactive refresh at 75% TTL
-- **Deep health checks** with write/read/delete DB verification
-- **SQLite WAL mode** for concurrent read/write safety
-- **Stale-event recovery** for crashed background tasks
+**Responsive gym access web app for Magicline, Nuki Pro, and Synology**
 
-## Architecture
+[![FastAPI](https://img.shields.io/badge/FastAPI-admin%20%2B%20API-0f766e?style=flat-square)](#)
+[![Magicline](https://img.shields.io/badge/Magicline-bookings%20%26%20webhooks-111827?style=flat-square)](#)
+[![Nuki](https://img.shields.io/badge/Nuki-Pro%20%2B%20Keypad%202-16a34a?style=flat-square)](#)
+[![Postgres](https://img.shields.io/badge/Postgres-required-1d4ed8?style=flat-square)](#)
+[![Synology](https://img.shields.io/badge/Synology-DS723%2B%20target-f59e0b?style=flat-square)](#)
 
+</div>
+
+Twenty4Seven-Gym is a booking-driven access platform for fitness studios. It provides a responsive admin web app, a public member check-in flow, Magicline synchronization, Nuki code lifecycle management, SMTP notifications, and operational tooling for running 24/7 access on a Synology NAS.
+
+> [!IMPORTANT]
+> The source of truth for access is a real Magicline booking of `Freies Training`. This project runs with **PostgreSQL only** and is designed to be deployed via **Docker Compose**.
+
+## What This Project Actually Is
+
+This repository contains the full application, not just an integration module:
+
+- a **responsive admin web app** under `/app`
+- a **public member check-in funnel** under `/check-in`
+- a **FastAPI backend** with auth, settings, audit, member views, access-window actions, and diagnostics
+- a **background worker** for Magicline polling, provisioning, notifications, and retries
+- a **Nuki adapter** with dry-run and live paths
+- a **Magicline webhook endpoint** for short-notice bookings and changes
+
+The active application code lives in [`src/nuki_integration`](./src/nuki_integration).
+
+## Core User Flows
+
+### Admin / Operator
+
+- log in to the `Twenty4Seven-Gym` operations console
+- search members and inspect bookings, access windows, codes, alerts, and audit logs
+- resend codes, deactivate access early, issue emergency codes
+- configure SMTP, Telegram, and the public check-in content
+- inspect lock status and remote-open audit events
+
+### Member
+
+- books `Freies Training` in Magicline
+- receives a personal access code by email before the slot
+- opens the public check-in link from the mail or scans the studio QR code
+- completes the house-rules and checklist funnel before the training block
+
+## System Flow
+
+```text
+Magicline booking / webhook
+        ->
+member sync + booking sync
+        ->
+access window calculation
+        ->
+worker schedules due provisioning
+        ->
+email delivery + Nuki code create/update
+        ->
+public member check-in funnel
+        ->
+training slot
 ```
-Nuki Cloud
-    │
-    ▼  POST /webhooks/nuki
-┌─────────────────────────────────────────────┐
-│  FastAPI Webhook Receiver                    │
-│                                              │
-│  1. HMAC signature verification              │
-│  2. Optional shared-secret check             │
-│  3. Raw body → byte-hash duplicate check     │
-│  4. JSON parse (permissive envelope)         │
-│  5. Timestamp replay check                   │
-│  6. Smart-lock allowlist (silent filter)     │
-│  7. Semantic-key dedup (INSERT OR IGNORE)    │
-│  8. Return 202 immediately                   │
-│  9. Background: processing → processed|failed│
-└─────────────────────────────────────────────┘
-    │
-    ▼  SQLite (WAL mode)
-┌─────────────────────────────────────────────┐
-│  webhook_events table                        │
-│  - idempotency_key (PK, semantic)            │
-│  - raw_hash (index, byte-level)              │
-│  - status: received|processing|processed|failed│
-│  - error_detail (for failed events)          │
-│  - updated_at (for stale detection)          │
-└─────────────────────────────────────────────┘
+
+## Main Features
+
+- Magicline polling sync plus webhook fast path
+- booking clustering for adjacent `Freies Training` slots of the same member
+- one operational access lifecycle per consolidated member block
+- timed lifecycle:
+  - code dispatch at `T-15 minutes`
+  - validity until `slot end + 30 minutes`
+- Admin and Operator roles with local auth
+- self-service password reset
+- SMTP test flow and configurable mail settings
+- optional Telegram alerts for warnings, errors, and emergency-code creation
+- public QR + mail-link based pre-use check-in flow
+- Synology-friendly Docker Compose deployment
+
+## Application Surfaces
+
+### Admin Console
+
+Primary UI sections currently implemented:
+
+- `Betrieb`
+- `Mitglieder`
+- `Access Windows`
+- `Schloss`
+- `Alerts & Audit`
+- `Einstellungen`
+
+The UI is responsive and intended to work on desktop and smartphone, with the operational console optimized for fast intervention.
+
+### Public Check-in
+
+The public member page is intentionally separate from the admin console:
+
+- no admin navigation
+- no admin login hints
+- same design language as the operations UI
+- mobile-first funnel for:
+  - training block context
+  - house rules
+  - checklist
+  - final confirmation
+
+## HTTP Routes
+
+Important routes exposed by the app:
+
+- `/app` — admin web app shell
+- `/check-in` — public member check-in shell
+- `/reset-password` — public password reset shell
+- `/admin/...` — authenticated admin and operator API
+- `/public/check-in/...` — public check-in API
+- `/webhooks/magicline` and `/webhook/magicline` — Magicline webhook ingestion
+- `/healthz/live`
+- `/healthz/ready`
+- `/docs`
+
+## Project Structure
+
+```text
+src/nuki_integration/
+├── app.py              # FastAPI routes and web entrypoints
+├── worker.py           # background worker entrypoint
+├── db.py               # PostgreSQL schema, queries, and persistence
+├── services.py         # access logic, sync orchestration, notifications, check-in
+├── magicline.py        # Magicline API client and booking mapping
+├── nuki_client.py      # Nuki adapter and dry-run/live behavior
+├── notifications.py    # SMTP and Telegram delivery
+├── models.py           # request/response and domain models
+└── static/
+    ├── index.html      # app shell
+    ├── app.js          # admin UI + public check-in UI
+    └── admin.css       # shared design language
 ```
 
-## Quick Start
+## Local Development
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e .[dev]
 
 cp .env.example .env
-# Fill in NUKI_CLIENT_SECRET or NUKI_DECENTRAL_WEBHOOK_SECRET,
-# ALLOWED_SMARTLOCK_IDS, etc.
-
-# Register the decentral webhook (one-time):
-nuki-setup-webhook
-
-# Start the receiver:
-uvicorn nuki_integration.webhook_service:app --host 0.0.0.0 --port 8080
+mkdir -p data/postgres
+docker compose up -d --build
 ```
 
-## Webhook Modes
+Useful commands:
 
-### Central Webhooks
-- Configured in Nuki Web via OAuth2 approval flow.
-- Signature verified with `NUKI_CLIENT_SECRET`.
-- Set `NUKI_WEBHOOK_MODE=central`.
-
-### Decentral Webhooks
-- Registered via API (`PUT /api/decentralWebhook`).
-- Signature verified with the per-registration `secret`.
-- Set `NUKI_WEBHOOK_MODE=decentral`.
-- Store the secret from registration as `NUKI_DECENTRAL_WEBHOOK_SECRET`.
-
-## Security Design Decisions
-
-### Uniform 202 Responses
-All structurally valid, signature-verified requests receive HTTP 202 —
-including events for non-allowed locks.  This prevents:
-- **Information leakage**: attackers cannot enumerate valid lock IDs.
-- **Nuki delivery penalties**: non-2xx responses count toward the 5%
-  error threshold that triggers warnings and eventual suspension.
-
-Only signature failures return 401 (these are not from Nuki).
-
-### Two-Tier Deduplication
-1. **Raw hash** (SHA-256 of exact bytes): catches network-level retries
-   where the payload is byte-identical.
-2. **Semantic key** (`smartlockId:feature:timestamp`): catches logically
-   identical events that differ at the byte level (e.g., Nuki adds a
-   new field, JSON key ordering changes).
-
-### Event Lifecycle Tracking
-The original design had no way to distinguish "received and queued" from
-"business logic completed."  Now every event transitions through:
-
-```
-received → processing → processed
-                     └→ failed (with error_detail)
+```bash
+ruff check src tests
+pytest
+docker compose ps
+docker compose logs -f web worker
 ```
 
-A recovery sweep finds stale `processing` events (crashed workers) and
-resets them to `received` for retry.
+Health checks:
 
-## Health Endpoints
-
-| Endpoint | Purpose | Checks |
-|----------|---------|--------|
-| `GET /healthz/live` | Liveness probe | Process alive (no deps) |
-| `GET /healthz/ready` | Readiness probe | Full DB write/read/delete cycle |
-
-**Why separate probes**: a temporary DB issue should stop traffic
-(readiness → fail) but not restart the container (liveness → still ok).
-
-## OAuth2 Token Management
-
-Nuki issues 1-hour access tokens and 90-day refresh tokens.  The
-`OAuthTokenManager` refreshes proactively at 75% of TTL (~45 min)
-using an async lock to prevent concurrent refresh races.
-
-When the refresh token expires (90 days) or is invalidated by Nuki
-(re-auth from another device), the service logs a `CRITICAL` alert
-and raises `TokenRefreshError`.  The operator must re-authorize.
-
-## Production Deployment
-
-### Required
-- **HTTPS with TLS termination** via reverse proxy (nginx, Caddy, Traefik).
-- **ALLOWED_SMARTLOCK_IDS** set to the specific locks you manage.
-- **Signature verification** — never disable in production.
-
-### Recommended
-- **PostgreSQL** instead of SQLite for multi-worker deployments.
-- **Dramatiq or Celery** queue workers instead of FastAPI BackgroundTasks.
-- **Vault / AWS Secrets Manager** for secrets instead of `.env` files.
-- **Secret rotation** on a 90-day cycle with dual-key overlap.
-- **Structured log aggregation** (Loki, Datadog, ELK).
-- **Alerting** on:
-  - Events stuck in `processing` > 10 minutes.
-  - No `DEVICE_STATUS` received for > 24 hours per lock.
-  - `failed` events accumulating.
-  - OAuth2 token refresh failures.
-
-### Nuki Operational Constraints
-- Webhook error rate > 5% in 24h → Nuki sends warning email.
-- 100% error rate sustained → Nuki suspends the webhook URL.
-- Only HTTP 200, 202, 204 count as successful delivery.
-- Reactivation: `POST /api/key/{apiKeyId}/advanced/reactivate`.
-- Polling intervals < 30s are explicitly discouraged by Nuki.
-- Manual sync (`POST /smartlock/{id}/sync`) drains lock batteries.
-
-## Project Structure
-
-```
-src/nuki_integration/
-├── __init__.py
-├── config.py           # Settings with cached_property, HTTPS enforcement
-├── enums.py            # Nuki states, webhook features, event lifecycle
-├── exceptions.py       # Typed exception hierarchy
-├── logging_setup.py    # Structured JSON logging
-├── models.py           # Pydantic models with semantic idempotency key
-├── nuki_client.py      # Async Nuki Web API client
-├── oauth.py            # OAuth2 token refresh with async lock
-├── security.py         # HMAC verification, replay protection, hashing
-├── storage.py          # SQLite with WAL, lifecycle tracking, health check
-├── setup_webhook.py    # CLI for one-time webhook registration
-└── webhook_service.py  # FastAPI application
+```bash
+curl http://127.0.0.1:8080/healthz/live
+curl http://127.0.0.1:8080/healthz/ready
 ```
 
-## Standards Compliance
+## Configuration
 
-This implementation addresses requirements from:
+Key environment variables:
 
-- **NIST SP 800-213**: securability, data protection at rest/in transit,
-  logical access control, cybersecurity state awareness (audit logging).
-- **ETSI EN 303 645**: encrypted communications (5.5), secure storage (5.4),
-  minimized attack surface (5.6), input validation (5.13).
-- **ETSI TS 103 815**: smart door lock vertical — mandatory encrypted and
-  authenticated communications between all components.
-- **OWASP API Security 2023**: BOLA mitigation (lock-level allowlist),
-  authentication hardening (OAuth2 with refresh), security configuration
-  (no docs in prod, structured errors, security headers).
-- **OWASP REST Security**: HTTPS-only, strict input typing, rate-limit
-  awareness.
+- `APP_PUBLIC_BASE_URL`
+- `DATABASE_URL`
+- `POSTGRES_DB`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `MAGICLINE_BASE_URL`
+- `MAGICLINE_API_KEY`
+- `MAGICLINE_WEBHOOK_API_KEY`
+- `BOOTSTRAP_ADMIN_EMAIL`
+- `BOOTSTRAP_ADMIN_PASSWORD`
+- `JWT_SECRET`
+- `SMTP_HOST`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`
+- `NUKI_DRY_RUN`
+
+Use [`.env.example`](./.env.example) as the baseline.
+
+## Synology DS723+ Deployment
+
+Recommended installation path:
+
+```bash
+/volume1/docker/twenty4seven-gym
+```
+
+1. Install `Container Manager` on DSM.
+2. Enable SSH on the NAS.
+3. Clone this repository to the NAS.
+4. Copy `.env.example` to `.env`.
+5. Set strong values for:
+   - `POSTGRES_PASSWORD`
+   - `BOOTSTRAP_ADMIN_PASSWORD`
+   - `JWT_SECRET`
+6. Keep `NUKI_DRY_RUN=true` until live Nuki credentials are available.
+7. Start the stack:
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Recommended reverse proxy rules on DSM:
+
+- `/opengym` -> `http://127.0.0.1:8080`
+- `/magicline/webhook` -> `http://127.0.0.1:8080`
+
+> [!TIP]
+> Persist Postgres on NAS storage through `POSTGRES_DATA_PATH`, for example `./data/postgres` inside the project directory on `/volume1`.
+
+## Current Scope
+
+Phase 1 covers:
+
+- Magicline booking-driven access logic
+- Nuki keypad code lifecycle
+- email delivery
+- admin and operator operations
+- public member check-in funnel
+- Synology deployment baseline
+
+Later building automation topics such as cameras, presence sensors, and Shelly flows are intentionally out of scope for this phase.
