@@ -251,6 +251,65 @@ class AccessWindowCheckInRecord(BaseModel):
     checklist: list[dict] = Field(default_factory=list)
 
 
+class FunnelTemplateSummary(BaseModel):
+    id: int
+    name: str
+    slug: str
+    funnel_type: str
+
+
+class FunnelStep(BaseModel):
+    id: int
+    template_id: int
+    step_order: int
+    title: str
+    body: str | None = None
+    image_path: str | None = None
+    requires_note: bool
+    requires_photo: bool
+
+
+class FunnelTemplateDetail(BaseModel):
+    template: FunnelTemplateSummary
+    steps: list[FunnelStep]
+
+
+class FunnelTemplateCreateRequest(BaseModel):
+    name: str
+    slug: str
+    funnel_type: str
+    description: str | None = None
+
+
+class FunnelStepCreateRequest(BaseModel):
+    template_id: int
+    step_order: int
+    title: str
+    body: str | None = None
+    image_path: str | None = None
+    requires_note: bool = False
+    requires_photo: bool = False
+
+
+class FunnelTemplateResponse(FunnelTemplateSummary):
+    description: str | None = None
+class FunnelStepEvent(BaseModel):
+    step_id: int
+    status: str
+    note: str | None = None
+    photo_path: str | None = None
+
+
+class FunnelSubmission(BaseModel):
+    id: int
+    access_window_id: int
+    template_id: int
+    entry_source: str
+    success: bool
+    created_at: datetime
+    steps: list[FunnelStepEvent]
+
+
 class MagiclineWebhookEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
 

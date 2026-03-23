@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -26,6 +26,11 @@ from .models import (
     CompletePasswordResetRequest,
     EmailTestRequest,
     ForgotPasswordRequest,
+    FunnelStep,
+    FunnelStepCreateRequest,
+    FunnelTemplateCreateRequest,
+    FunnelTemplateDetail,
+    FunnelTemplateResponse,
     LoginRequest,
     LoginResponse,
     MagiclineWebhookEnvelope,
@@ -50,21 +55,28 @@ from .nuki_client import NukiClient
 from .services import (
     complete_password_reset,
     deactivate_access_window,
+    delete_funnel_step,
     get_effective_check_in_settings,
     get_effective_smtp_config,
     get_effective_telegram_config,
+    get_funnel_template,
+    get_media_url,
     get_member_detail,
     inspect_magicline_member_by_email,
     issue_emergency_access_code,
+    list_funnel_templates,
     list_magicline_bookables,
     process_magicline_webhook,
     provision_due_codes,
     request_password_reset,
     resend_access_code,
     resolve_public_check_in,
+    save_media_file,
     submit_public_check_in,
     sync_magicline_bookings,
     sync_magicline_member_by_email,
+    upsert_funnel_step_service,
+    upsert_funnel_template_service,
 )
 
 settings = get_settings()
@@ -348,6 +360,134 @@ def admin_telegram_test(
 ) -> dict[str, bool]:
     telegram = TelegramService(get_effective_telegram_config(db, runtime_settings))
     return {"sent": telegram.send_message(text=payload.message)}
+
+
+def _template_response(row: dict[str, object]) -> FunnelTemplateResponse:
+    return FunnelTemplateResponse(
+        id=int(row["id"]),
+        name=str(row["name"]),
+        slug=str(row["slug"]),
+        funnel_type=str(row["funnel_type"]),
+        description=row.get("description"),
+    )
+
+
+@app.get("/admin/funnels", response_model=list[FunnelTemplateResponse])
+def admin_list_funnels(
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> list[FunnelTemplateResponse]:
+    rows = list_funnel_templates(db=db)
+    return [_template_response(row) for row in rows]
+
+
+@app.post("/admin/funnels", response_model=FunnelTemplateResponse)
+def admin_create_funnel(
+    payload: FunnelTemplateCreateRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> FunnelTemplateResponse:
+    row = upsert_funnel_template_service(db=db, payload=payload)
+    return _template_response(row)
+
+
+@app.put("/admin/funnels/{template_id}", response_model=FunnelTemplateResponse)
+def admin_update_funnel(
+    template_id: int,
+    payload: FunnelTemplateCreateRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> FunnelTemplateResponse:
+    row = upsert_funnel_template_service(db=db, payload=payload, template_id=template_id)
+    return _template_response(row)
+
+
+@app.get("/admin/funnels/{template_id}", response_model=FunnelTemplateDetail)
+def admin_get_funnel(
+    template_id: int,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> FunnelTemplateDetail:
+    row = get_funnel_template(db=db, template_id=template_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Funnel not found.")
+    template = _template_response(row)
+    steps = [
+        FunnelStep(
+            id=int(step["id"]),
+            template_id=int(step["template_id"]),
+            step_order=int(step["step_order"]),
+            title=str(step["title"]),
+            body=step.get("body"),
+            image_path=step.get("image_path"),
+            requires_note=bool(step["requires_note"]),
+            requires_photo=bool(step["requires_photo"]),
+        )
+        for step in row["steps"] or []
+    ]
+    return FunnelTemplateDetail(template=template, steps=steps)
+
+
+@app.post("/admin/funnels/{template_id}/steps", response_model=FunnelStep)
+def admin_create_funnel_step(
+    template_id: int,
+    payload: FunnelStepCreateRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> FunnelStep:
+    step = upsert_funnel_step_service(db=db, payload=payload)
+    return FunnelStep(
+        id=int(step["id"]),
+        template_id=int(step["template_id"]),
+        step_order=int(step["step_order"]),
+        title=str(step["title"]),
+        body=step.get("body"),
+        image_path=step.get("image_path"),
+        requires_note=bool(step["requires_note"]),
+        requires_photo=bool(step["requires_photo"]),
+    )
+
+
+@app.put("/admin/funnels/{template_id}/steps/{step_id}", response_model=FunnelStep)
+def admin_update_funnel_step(
+    template_id: int,
+    step_id: int,
+    payload: FunnelStepCreateRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> FunnelStep:
+    step = upsert_funnel_step_service(db=db, payload=payload, step_id=step_id)
+    return FunnelStep(
+        id=int(step["id"]),
+        template_id=int(step["template_id"]),
+        step_order=int(step["step_order"]),
+        title=str(step["title"]),
+        body=step.get("body"),
+        image_path=step.get("image_path"),
+        requires_note=bool(step["requires_note"]),
+        requires_photo=bool(step["requires_photo"]),
+    )
+
+
+@app.delete("/admin/funnels/{template_id}/steps/{step_id}")
+def admin_delete_funnel_step(
+    template_id: int,
+    step_id: int,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> dict[str, bool]:
+    delete_funnel_step(db=db, step_id=step_id)
+    return {"deleted": True}
+
+
+@app.post("/admin/media/upload")
+def admin_media_upload(
+    file: UploadFile = File(...),
+    _admin: UserRecord = Depends(require_admin),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, str]:
+    filename = save_media_file(runtime_settings, file)
+    return {"url": get_media_url(runtime_settings, filename)}
 
 
 @app.get("/admin/system/check-in-settings", response_model=CheckInSettingsResponse)

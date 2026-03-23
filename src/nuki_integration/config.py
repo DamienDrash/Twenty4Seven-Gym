@@ -70,6 +70,9 @@ class Settings(BaseSettings):
         default="https://services.frigew.ski/opengym",
         alias="APP_PUBLIC_BASE_URL",
     )
+    media_storage_path: str = Field(default="./media/uploads", alias="MEDIA_STORAGE_PATH")
+    media_url_base: str = Field(default="/media", alias="MEDIA_URL_BASE")
+
 
     @property
     def active_nuki_token(self) -> str:

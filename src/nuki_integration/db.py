@@ -159,6 +159,49 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS funnel_templates (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    funnel_type TEXT NOT NULL,
+    description TEXT DEFAULT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS funnel_steps (
+    id BIGSERIAL PRIMARY KEY,
+    template_id BIGINT NOT NULL REFERENCES funnel_templates(id) ON DELETE CASCADE,
+    step_order INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT DEFAULT NULL,
+    image_path TEXT DEFAULT NULL,
+    requires_note BOOLEAN NOT NULL DEFAULT FALSE,
+    requires_photo BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (template_id, step_order)
+);
+
+CREATE TABLE IF NOT EXISTS funnel_submissions (
+    id BIGSERIAL PRIMARY KEY,
+    access_window_id BIGINT NOT NULL REFERENCES access_windows(id) ON DELETE CASCADE,
+    template_id BIGINT NOT NULL REFERENCES funnel_templates(id) ON DELETE CASCADE,
+    entry_source TEXT NOT NULL,
+    success BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS funnel_step_events (
+    id BIGSERIAL PRIMARY KEY,
+    submission_id BIGINT NOT NULL REFERENCES funnel_submissions(id) ON DELETE CASCADE,
+    step_id BIGINT NOT NULL REFERENCES funnel_steps(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    note TEXT,
+    photo_path TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id
 ON password_reset_tokens (user_id, expires_at DESC);
 """
@@ -1262,3 +1305,187 @@ class Database:
                 )
             conn.commit()
             return window_count
+
+    def list_funnel_templates(self) -> list[dict[str, Any]]:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, slug, funnel_type
+                FROM funnel_templates
+                ORDER BY funnel_type, name
+                """,
+            )
+            return list(cur.fetchall())
+
+    def get_funnel_template_detail(self, template_id: int) -> dict[str, Any] | None:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, slug, funnel_type, description
+                FROM funnel_templates
+                WHERE id = %s
+                """,
+                (template_id,),
+            )
+            template = cur.fetchone()
+            if not template:
+                return None
+            cur.execute(
+                """
+                SELECT id, template_id, step_order, title, body, image_path,
+                       requires_note, requires_photo
+                FROM funnel_steps
+                WHERE template_id = %s
+                ORDER BY step_order
+                """,
+                (template_id,),
+            )
+            template["steps"] = list(cur.fetchall())
+            return template
+
+    def upsert_funnel_template(
+        self,
+        *,
+        template_id: int | None,
+        name: str,
+        slug: str,
+        funnel_type: str,
+        description: str | None,
+    ) -> dict[str, Any]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                if template_id:
+                    cur.execute(
+                        """
+                        UPDATE funnel_templates
+                        SET name = %s, slug = %s, funnel_type = %s,
+                            description = %s, updated_at = NOW()
+                        WHERE id = %s
+                        RETURNING id, name, slug, funnel_type, description
+                        """,
+                        (name, slug, funnel_type, description, template_id),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO funnel_templates (name, slug, funnel_type, description)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id, name, slug, funnel_type, description
+                        """,
+                        (name, slug, funnel_type, description),
+                    )
+                result = cur.fetchone()
+            conn.commit()
+            return result
+
+    def upsert_funnel_step(
+        self,
+        *,
+        step_id: int | None,
+        template_id: int,
+        step_order: int,
+        title: str,
+        body: str | None,
+        image_path: str | None,
+        requires_note: bool,
+        requires_photo: bool,
+    ) -> dict[str, Any]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                if step_id:
+                    cur.execute(
+                        """
+                        UPDATE funnel_steps
+                        SET step_order = %s, title = %s, body = %s,
+                            image_path = %s, requires_note = %s,
+                            requires_photo = %s, updated_at = NOW()
+                        WHERE id = %s
+                        RETURNING id, template_id, step_order, title, body,
+                                  image_path, requires_note, requires_photo
+                        """,
+                        (
+                            step_order,
+                            title,
+                            body,
+                            image_path,
+                            requires_note,
+                            requires_photo,
+                            step_id,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO funnel_steps (template_id, step_order, title, body,
+                                                  image_path, requires_note, requires_photo)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id, template_id, step_order, title, body,
+                                  image_path, requires_note, requires_photo
+                        """,
+                        (
+                            template_id,
+                            step_order,
+                            title,
+                            body,
+                            image_path,
+                            requires_note,
+                            requires_photo,
+                        ),
+                    )
+                result = cur.fetchone()
+            conn.commit()
+            return result
+
+    def delete_funnel_step(self, *, step_id: int) -> None:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM funnel_steps WHERE id = %s", (step_id,))
+        conn.commit()
+
+    def create_funnel_submission(
+        self,
+        *,
+        access_window_id: int,
+        template_id: int,
+        entry_source: str,
+        success: bool,
+    ) -> dict[str, Any]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO funnel_submissions (
+                        access_window_id, template_id, entry_source, success
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, access_window_id, template_id, entry_source, success, created_at
+                    """,
+                    (access_window_id, template_id, entry_source, success),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row
+
+    def create_funnel_step_event(
+        self,
+        *,
+        submission_id: int,
+        step_id: int,
+        status: str,
+        note: str | None,
+        photo_path: str | None,
+    ) -> dict[str, Any]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO funnel_step_events (
+                        submission_id, step_id, status, note, photo_path
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id, submission_id, step_id, status, note, photo_path, created_at
+                    """,
+                    (submission_id, step_id, status, note, photo_path),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row

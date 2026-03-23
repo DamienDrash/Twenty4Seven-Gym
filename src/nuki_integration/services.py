@@ -5,6 +5,8 @@ import secrets
 from base64 import b64encode
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import qrcode
@@ -21,8 +23,12 @@ from .magicline import (
     derive_entitlements,
     is_access_booking,
 )
+from .models import FunnelStepCreateRequest, FunnelTemplateCreateRequest
 from .notifications import EmailService, SMTPConfig, TelegramConfig, TelegramService
 from .nuki_client import NukiClient
+
+if TYPE_CHECKING:
+    from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +107,118 @@ def get_effective_check_in_settings(db: Database, settings: Settings) -> dict[st
     merged["studio_check_in_url"] = f"{settings.app_public_base_url.rstrip('/')}/check-in"
     merged["studio_qr_svg"] = generate_qr_data_uri(str(merged["studio_check_in_url"]))
     return merged
+
+
+def get_media_url(settings: Settings, filename: str) -> str:
+    base = settings.media_url_base.rstrip("/")
+    return f"{base}/{filename.lstrip('/')}"
+
+
+def save_media_file(settings: Settings, upload: UploadFile) -> str:
+    dest_dir = Path(settings.media_storage_path)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(upload.filename).suffix
+    filename = f"{secrets.token_hex(12)}{suffix}"
+    dest_path = dest_dir / filename
+    with dest_path.open("wb") as buffer:
+        buffer.write(upload.file.read())
+    return filename
+
+
+def list_funnel_templates(*, db: Database) -> list[dict[str, object]]:
+    return db.list_funnel_templates()
+
+
+def get_funnel_template(*, db: Database, template_id: int) -> dict[str, object] | None:
+    return db.get_funnel_template_detail(template_id=template_id)
+
+
+def upsert_funnel_template_service(
+    *,
+    db: Database,
+    payload: FunnelTemplateCreateRequest,
+    template_id: int | None = None,
+) -> dict[str, object]:
+    return create_or_update_template(
+        db=db,
+        template_id=template_id,
+        name=payload.name,
+        slug=payload.slug,
+        funnel_type=payload.funnel_type,
+        description=payload.description,
+    )
+
+
+def upsert_funnel_step_service(
+    *,
+    db: Database,
+    payload: FunnelStepCreateRequest,
+    step_id: int | None = None,
+) -> dict[str, object]:
+    return create_or_update_step(
+        db=db,
+        template_id=payload.template_id,
+        step_order=payload.step_order,
+        title=payload.title,
+        body=payload.body,
+        image_path=payload.image_path,
+        requires_note=payload.requires_note,
+        requires_photo=payload.requires_photo,
+        step_id=step_id,
+    )
+
+
+def media_url_response(*, settings: Settings, filename: str) -> str:
+    path = Path(filename)
+    if path.is_absolute():
+        return get_media_url(settings, filename)
+    return get_media_url(settings, filename)
+
+
+def create_or_update_template(
+    *,
+    db: Database,
+    name: str,
+    slug: str,
+    funnel_type: str,
+    description: str | None,
+    template_id: int | None = None,
+) -> dict[str, object]:
+    return db.upsert_funnel_template(
+        template_id=template_id,
+        name=name,
+        slug=slug,
+        funnel_type=funnel_type,
+        description=description,
+    )
+
+
+def create_or_update_step(
+    *,
+    db: Database,
+    template_id: int,
+    step_order: int,
+    title: str,
+    body: str | None,
+    image_path: str | None,
+    requires_note: bool,
+    requires_photo: bool,
+    step_id: int | None = None,
+) -> dict[str, object]:
+    return db.upsert_funnel_step(
+        step_id=step_id,
+        template_id=template_id,
+        step_order=step_order,
+        title=title,
+        body=body,
+        image_path=image_path,
+        requires_note=requires_note,
+        requires_photo=requires_photo,
+    )
+
+
+def delete_funnel_step(*, db: Database, step_id: int) -> None:
+    db.delete_funnel_step(step_id=step_id)
 
 
 def generate_qr_data_uri(url: str) -> str:
