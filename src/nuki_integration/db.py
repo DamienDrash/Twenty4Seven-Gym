@@ -150,6 +150,20 @@ CREATE TABLE IF NOT EXISTS access_window_checkins (
 CREATE INDEX IF NOT EXISTS idx_access_window_checkins_member_id
 ON access_window_checkins (member_id, confirmed_at DESC);
 
+CREATE TABLE IF NOT EXISTS access_window_checkouts (
+    id BIGSERIAL PRIMARY KEY,
+    access_window_id BIGINT NOT NULL UNIQUE REFERENCES access_windows(id) ON DELETE CASCADE,
+    member_id BIGINT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,
+    checklist JSONB NOT NULL DEFAULT '[]'::jsonb,
+    confirmed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_window_checkouts_member_id
+ON access_window_checkouts (member_id, confirmed_at DESC);
+
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -238,13 +252,19 @@ class Database:
                     ADD COLUMN IF NOT EXISTS booking_ids JSONB NOT NULL DEFAULT '[]'::jsonb
                     """
                 )
-                cur.execute(
-                    """
-                    ALTER TABLE access_windows
-                    ADD COLUMN IF NOT EXISTS booking_count INTEGER NOT NULL DEFAULT 1
-                    """
-                )
-            conn.commit()
+            cur.execute(
+                """
+                ALTER TABLE access_windows
+                ADD COLUMN IF NOT EXISTS booking_count INTEGER NOT NULL DEFAULT 1
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE access_window_checkouts
+                ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'checks-funnel'
+                """
+            )
+        conn.commit()
 
     def health_check(self) -> bool:
         try:
@@ -1489,3 +1509,107 @@ class Database:
                 row = cur.fetchone()
             conn.commit()
             return row
+
+    def get_funnel_by_type(self, funnel_type: str) -> dict[str, Any] | None:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, name, slug, funnel_type, description
+                FROM funnel_templates
+                WHERE funnel_type = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (funnel_type,),
+            )
+            template = cur.fetchone()
+            if not template:
+                return None
+            cur.execute(
+                """
+                SELECT id, template_id, step_order, title, body, image_path,
+                       requires_note, requires_photo
+                FROM funnel_steps
+                WHERE template_id = %s
+                ORDER BY step_order ASC
+                """,
+                (template["id"],),
+            )
+            template["steps"] = list(cur.fetchall())
+            return template
+
+    def list_member_windows_with_status(
+        self,
+        *,
+        member_id: int,
+        from_dt: datetime,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    aw.id,
+                    aw.starts_at,
+                    aw.ends_at,
+                    aw.status,
+                    aw.booking_count,
+                    aw.access_reason,
+                    awci.confirmed_at AS checkin_confirmed_at,
+                    awco.confirmed_at AS checkout_confirmed_at
+                FROM access_windows aw
+                LEFT JOIN access_window_checkins awci
+                    ON awci.access_window_id = aw.id
+                LEFT JOIN access_window_checkouts awco
+                    ON awco.access_window_id = aw.id
+                WHERE aw.member_id = %s
+                  AND aw.ends_at >= %s
+                  AND aw.status IN ('scheduled', 'active')
+                ORDER BY aw.starts_at ASC
+                LIMIT 20
+                """,
+                (member_id, from_dt),
+            )
+            return list(cur.fetchall())
+
+    def upsert_window_checkout(
+        self,
+        *,
+        access_window_id: int,
+        member_id: int,
+        source: str,
+        checklist: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO access_window_checkouts (
+                        access_window_id, member_id, source, checklist,
+                        confirmed_at, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, NOW(), NOW())
+                    ON CONFLICT (access_window_id)
+                    DO UPDATE SET
+                        source = EXCLUDED.source,
+                        checklist = EXCLUDED.checklist,
+                        confirmed_at = NOW(),
+                        updated_at = NOW()
+                    RETURNING access_window_id, confirmed_at, source, checklist
+                    """,
+                    (access_window_id, member_id, source, Json(checklist)),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row
+
+    def get_window_checkout(self, *, access_window_id: int) -> dict[str, Any] | None:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT access_window_id, confirmed_at, source, checklist
+                FROM access_window_checkouts
+                WHERE access_window_id = %s
+                """,
+                (access_window_id,),
+            )
+            return cur.fetchone()

@@ -1,0 +1,2297 @@
+const params = new URLSearchParams(window.location.search);
+
+const state = {
+  token: localStorage.getItem("opengym_token") || "",
+  role: localStorage.getItem("opengym_role") || "",
+  me: null,
+  members: [],
+  windows: [],
+  alerts: [],
+  actions: [],
+  users: [],
+  memberDetail: null,
+  lockStatus: null,
+  lockLog: [],
+  emailSettings: null,
+  telegramSettings: null,
+  checkInSettings: null,
+  view: params.get("view") || "overview",
+  selectedMemberId: params.get("member") || "",
+  message: "",
+  messageType: "",
+  publicCheckInSession: null,
+  publicCheckInAttempted: false,
+  publicCheckInStep: 1,
+  publicCheckInDraft: {
+    rulesAccepted: false,
+    checklist: {},
+  },
+  // ── New /checks public shell ───────────────────────────────────
+  checksSession: null,
+  checksAttempted: false,
+  checksWindowId: null,
+  checksFunnelType: null,
+  checksFunnel: null,
+  checksFunnelStep: 0,
+  checksFunnelDraft: {},
+  checksLoading: false,
+  // ── Admin Funnel Builder ───────────────────────────────────────
+  funnelsList: [],
+  funnelDetail: null,
+  selectedFunnelId: null,
+  stepEditorId: null,
+};
+
+const app = document.getElementById("app");
+document.title = "Twenty4Seven-Gym";
+
+const actionCopy = {
+  resend: { success: "Code erneut versendet.", confirm: "" },
+  deactivate: {
+    success: "Access Window wurde vorzeitig deaktiviert.",
+    confirm: "Dieses Access Window wirklich sofort deaktivieren?",
+  },
+  "emergency-code": {
+    success: "Notfallcode wurde erzeugt.",
+    confirm: "Jetzt einen einmaligen Notfallcode für dieses Zeitfenster erzeugen?",
+  },
+};
+
+function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  return fetch(path, { ...options, headers }).then(async (res) => {
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
+    if (!res.ok) throw new Error(data.detail || text || "Request failed");
+    return data;
+  });
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function setMessage(text, type = "") {
+  state.message = text;
+  state.messageType = type;
+  render();
+}
+
+function setPendingState(target, busy, busyLabel = "Wird verarbeitet…") {
+  const buttons = target.matches?.("form")
+    ? [...target.querySelectorAll('button[type="submit"], button:not([type])')]
+    : [target];
+  buttons.forEach((button) => {
+    if (!button) return;
+    if (!button.dataset.originalLabel) {
+      button.dataset.originalLabel = button.textContent || "";
+    }
+    button.disabled = busy;
+    button.setAttribute("aria-busy", String(busy));
+    button.textContent = busy ? busyLabel : button.dataset.originalLabel;
+  });
+}
+
+async function withPending(target, task, busyLabel) {
+  setPendingState(target, true, busyLabel);
+  try {
+    return await task();
+  } finally {
+    setPendingState(target, false, busyLabel);
+  }
+}
+
+function syncUrlState() {
+  const next = new URLSearchParams();
+  next.set("view", state.view);
+  if (state.selectedMemberId) next.set("member", state.selectedMemberId);
+  const query = next.toString();
+  const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  window.history.replaceState({}, "", nextUrl);
+}
+
+function fmtDate(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("de-DE", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function pill(value) {
+  const tone = /active|emailed|ready|admin|booked|success/i.test(value)
+    ? "good"
+    : /warn|scheduled|operator|pending|flagged|credentials/i.test(value)
+      ? "warn"
+      : /error|bad|canceled|expired|replaced|failed/i.test(value)
+        ? "bad"
+        : "info";
+  return `<span class="pill ${tone}">${escapeHtml(value)}</span>`;
+}
+
+function icon(symbol) {
+  return `<span class="icon-slot" aria-hidden="true">${symbol}</span>`;
+}
+
+function currentMember() {
+  return state.memberDetail?.member || null;
+}
+
+function upcomingWindow() {
+  return [...state.windows]
+    .filter((item) => item.status === "scheduled" || item.status === "active")
+    .sort((a, b) => new Date(a.dispatch_at) - new Date(b.dispatch_at))[0];
+}
+
+function urgentAlerts() {
+  return state.alerts.filter((item) => item.severity === "error" || item.severity === "warning");
+}
+
+async function login(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const data = await api("./auth/login", {
+      method: "POST",
+      body: JSON.stringify({
+        email: form.get("email"),
+        password: form.get("password"),
+      }),
+    });
+    state.token = data.access_token;
+    state.role = data.role;
+    localStorage.setItem("opengym_token", data.access_token);
+    localStorage.setItem("opengym_role", data.role);
+    await loadAppData();
+  }, "Authentifizierung…");
+}
+
+async function forgotPassword(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email: form.get("email") }),
+    });
+    setMessage("Reset-Link wurde angefordert. Prüfe dein Postfach.", "good");
+  }, "Link wird gesendet…");
+}
+
+async function resetPassword(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const token = new URLSearchParams(window.location.search).get("token") || "";
+    await api("./auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, password: form.get("password") }),
+    });
+    setMessage("Passwort aktualisiert. Du kannst dich jetzt anmelden.", "good");
+    window.history.replaceState({}, "", "./app");
+    render();
+  }, "Passwort wird gesetzt…");
+}
+
+async function loadAppData() {
+  state.me = await api("./me");
+  const requests = [
+    api("./admin/members?limit=12"),
+    api("./admin/access-windows?limit=12"),
+    api("./admin/alerts?limit=12"),
+    api("./admin/admin-actions?limit=12"),
+    api("./admin/lock/status"),
+    api("./admin/lock/log?limit=12"),
+  ];
+  if (state.role === "admin") {
+    requests.push(
+      api("./admin/users?limit=20"),
+      api("./admin/system/email-settings"),
+      api("./admin/system/telegram-settings"),
+      api("./admin/system/check-in-settings"),
+      api("./admin/funnels"),
+    );
+  }
+  const results = await Promise.all(requests);
+  [state.members, state.windows, state.alerts, state.actions, state.lockStatus, state.lockLog] = results;
+  if (state.role === "admin") {
+    [state.users, state.emailSettings, state.telegramSettings, state.checkInSettings, state.funnelsList] = results.slice(6);
+  }
+  if (state.selectedMemberId) {
+    await loadMemberDetail(state.selectedMemberId, false);
+  } else {
+    render();
+  }
+}
+
+async function loadMemberDetail(memberId, rerender = true) {
+  state.selectedMemberId = String(memberId);
+  state.memberDetail = await api(`./admin/members/${memberId}`);
+  syncUrlState();
+  if (rerender) render();
+}
+
+function setView(view) {
+  state.view = view;
+  syncUrlState();
+  render();
+}
+
+async function runWindowAction(windowId, action) {
+  const config = actionCopy[action] || { success: `${action} abgeschlossen.`, confirm: "" };
+  if (config.confirm && !window.confirm(config.confirm)) {
+    return;
+  }
+  await api(`./admin/access-windows/${windowId}/${action}`, { method: "POST" });
+  setMessage(config.success, "good");
+  await loadAppData();
+}
+
+async function remoteOpen(trigger) {
+  if (!window.confirm("Remote Open jetzt auslösen bzw. protokollieren?")) {
+    return;
+  }
+  await withPending(trigger, async () => {
+    const result = await api("./admin/remote-open", { method: "POST" });
+    setMessage(
+      result.dry_run ? "Remote Open im Dry-Run protokolliert." : "Türöffnung ausgelöst.",
+      "good",
+    );
+    await loadAppData();
+  }, "Remote Open läuft…");
+}
+
+async function runFullSync() {
+  await api("./admin/sync", { method: "POST" });
+  setMessage("Magicline-Sync ausgeführt.", "good");
+  await loadAppData();
+}
+
+async function runProvisioning() {
+  await api("./admin/provision", { method: "POST" });
+  setMessage("Provisioning geprüft.", "good");
+  await loadAppData();
+}
+
+async function memberSearch(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") || "").trim();
+    state.members = await api(`./admin/members?email=${encodeURIComponent(email)}&limit=12`);
+    state.memberDetail = null;
+    state.selectedMemberId = "";
+    syncUrlState();
+    render();
+  }, "Suche läuft…");
+}
+
+async function syncMember(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") || "").trim();
+    await api(`./admin/sync/member?email=${encodeURIComponent(email)}`, { method: "POST" });
+    setMessage("Mitgliedssync abgeschlossen.", "good");
+    await loadAppData();
+  }, "Sync läuft…");
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/users", {
+      method: "POST",
+      body: JSON.stringify({
+        email: form.get("email"),
+        password: form.get("password"),
+        role: form.get("role"),
+        is_active: true,
+      }),
+    });
+    setMessage("Benutzer angelegt.", "good");
+    await loadAppData();
+  }, "Benutzer wird angelegt…");
+}
+
+async function updateSmtp(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/email-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        smtp_host: form.get("smtp_host"),
+        smtp_port: Number(form.get("smtp_port")),
+        smtp_username: form.get("smtp_username"),
+        smtp_password: form.get("smtp_password"),
+        smtp_use_tls: true,
+        smtp_from_email: form.get("smtp_from_email"),
+      }),
+    });
+    setMessage("SMTP-Einstellungen gespeichert.", "good");
+    await loadAppData();
+  }, "SMTP wird gespeichert…");
+}
+
+async function testEmail(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/email-test", {
+      method: "POST",
+      body: JSON.stringify({ to_email: form.get("to_email") }),
+    });
+    setMessage("Test-E-Mail versendet.", "good");
+  }, "Testmail wird gesendet…");
+}
+
+async function updateTelegram(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/telegram-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        telegram_bot_token: form.get("telegram_bot_token"),
+        telegram_chat_id: form.get("telegram_chat_id"),
+      }),
+    });
+    setMessage("Telegram-Einstellungen gespeichert.", "good");
+    await loadAppData();
+  }, "Telegram wird gespeichert…");
+}
+
+async function testTelegram(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/telegram-test", {
+      method: "POST",
+      body: JSON.stringify({ message: form.get("message") }),
+    });
+    setMessage("Telegram-Testalarm gesendet.", "good");
+  }, "Telegram-Test läuft…");
+}
+
+async function updateCheckInSettings(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/check-in-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: form.get("enabled") === "on",
+        title: form.get("title"),
+        intro: form.get("intro"),
+        rules_heading: form.get("rules_heading"),
+        rules_body: form.get("rules_body"),
+        checklist_heading: form.get("checklist_heading"),
+        checklist_items: checklistItemsFromText(form.get("checklist_items")),
+        success_message: form.get("success_message"),
+      }),
+    });
+    setMessage("Check-in-Konfiguration gespeichert.", "good");
+    await loadAppData();
+  }, "Check-in wird gespeichert…");
+}
+
+async function loadPublicCheckInSession() {
+  const token = new URLSearchParams(window.location.search).get("token");
+  if (!token) {
+    render();
+    return;
+  }
+  state.publicCheckInAttempted = true;
+  const session = await api(`./public/check-in/session?token=${encodeURIComponent(token)}`);
+  state.publicCheckInSession = session;
+  state.publicCheckInStep = session.window.is_confirmed ? 4 : 1;
+  state.publicCheckInDraft = {
+    rulesAccepted: session.window.is_confirmed,
+    checklist: Object.fromEntries(
+      (session.settings?.checklist_items || []).map((item) => [item.id, session.window.is_confirmed]),
+    ),
+  };
+  render();
+}
+
+async function resolvePublicCheckIn(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const session = await api("./public/check-in/resolve", {
+      method: "POST",
+      body: JSON.stringify({
+        email: form.get("email"),
+        code: form.get("code"),
+      }),
+    });
+    state.publicCheckInSession = session;
+    state.publicCheckInAttempted = true;
+    state.publicCheckInStep = session.window.is_confirmed ? 4 : 1;
+    state.publicCheckInDraft = {
+      rulesAccepted: session.window.is_confirmed,
+      checklist: Object.fromEntries(
+        (session.settings?.checklist_items || []).map((item) => [item.id, session.window.is_confirmed]),
+      ),
+    };
+    window.history.replaceState({}, "", `./check-in?token=${encodeURIComponent(session.token)}`);
+    setMessage("", "");
+    render();
+  }, "Check-in wird geladen…");
+}
+
+async function submitPublicCheckIn(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const checklist = (state.publicCheckInSession?.settings?.checklist_items || []).map((item) => ({
+      id: item.id,
+      checked: Boolean(state.publicCheckInDraft.checklist[item.id]),
+    }));
+    const result = await api("./public/check-in/submit", {
+      method: "POST",
+      body: JSON.stringify({
+        token: state.publicCheckInSession.token,
+        rules_accepted: state.publicCheckInDraft.rulesAccepted,
+        checklist,
+        entry_source: state.publicCheckInSession.entry_source,
+      }),
+    });
+    state.publicCheckInSession.window.confirmed_at = result.check_in.confirmed_at;
+    state.publicCheckInSession.window.source = result.check_in.source;
+    state.publicCheckInSession.window.is_confirmed = true;
+    state.publicCheckInStep = 4;
+    setMessage(result.success_message, "good");
+    render();
+  }, "Bestätigung wird gesendet…");
+}
+
+function goToPublicCheckInStep(step) {
+  state.publicCheckInStep = step;
+  render();
+}
+
+function updatePublicRulesAccepted(checked) {
+  state.publicCheckInDraft.rulesAccepted = checked;
+  render();
+}
+
+function updatePublicChecklist(id, checked) {
+  state.publicCheckInDraft.checklist[id] = checked;
+  render();
+}
+
+function publicChecklistComplete() {
+  const items = state.publicCheckInSession?.settings?.checklist_items || [];
+  return items.every((item) => Boolean(state.publicCheckInDraft.checklist[item.id]));
+}
+
+function publicCheckInSteps() {
+  return [
+    { id: 1, label: "Init" },
+    { id: 2, label: "Rules" },
+    { id: 3, label: "Check" },
+    { id: 4, label: "Done" },
+  ];
+}
+
+function logout() {
+  localStorage.removeItem("opengym_token");
+  localStorage.removeItem("opengym_role");
+  state.token = "";
+  state.role = "";
+  state.me = null;
+  state.memberDetail = null;
+  state.selectedMemberId = "";
+  state.emailSettings = null;
+  state.telegramSettings = null;
+  state.checkInSettings = null;
+  state.funnelsList = [];
+  state.funnelDetail = null;
+  state.selectedFunnelId = null;
+  state.view = "overview";
+  syncUrlState();
+  render();
+}
+
+function checklistItemsFromText(raw) {
+  return String(raw || "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((label, index) => ({
+      id: label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        || `item_${index + 1}`,
+      label,
+    }));
+}
+
+function attachCommonHandlers() {
+  document.getElementById("logout-button")?.addEventListener("click", logout);
+  document.getElementById("sync-button")?.addEventListener("click", () => runFullSync().catch(handleError));
+  document.getElementById("provision-button")?.addEventListener("click", () => runProvisioning().catch(handleError));
+  document.querySelectorAll("[data-remote-open]").forEach((button) => {
+    button.addEventListener("click", (event) => remoteOpen(event.currentTarget).catch(handleError));
+  });
+  document.querySelectorAll("[data-view]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (
+        event.defaultPrevented
+        || event.button !== 0
+        || event.metaKey
+        || event.ctrlKey
+        || event.shiftKey
+        || event.altKey
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setView(link.dataset.view);
+    });
+  });
+}
+
+function attachOverviewHandlers() {
+  document.querySelectorAll("[data-member-id]").forEach((button) => {
+    button.addEventListener("click", () => loadMemberDetail(button.dataset.memberId).catch(handleError));
+  });
+}
+
+function attachMembersHandlers() {
+  document.getElementById("member-search-form")?.addEventListener("submit", (event) => memberSearch(event).catch(handleError));
+  document.getElementById("member-sync-form")?.addEventListener("submit", (event) => syncMember(event).catch(handleError));
+  document.querySelectorAll("[data-member-id]").forEach((button) => {
+    button.addEventListener("click", () => loadMemberDetail(button.dataset.memberId).catch(handleError));
+  });
+  document.querySelectorAll("[data-window-action]").forEach((button) => {
+    button.addEventListener("click", () => runWindowAction(button.dataset.windowId, button.dataset.windowAction).catch(handleError));
+  });
+}
+
+function attachSettingsHandlers() {
+  document.getElementById("create-user-form")?.addEventListener("submit", (event) => createUser(event).catch(handleError));
+  document.getElementById("smtp-form")?.addEventListener("submit", (event) => updateSmtp(event).catch(handleError));
+  document.getElementById("smtp-test-form")?.addEventListener("submit", (event) => testEmail(event).catch(handleError));
+  document.getElementById("telegram-form")?.addEventListener("submit", (event) => updateTelegram(event).catch(handleError));
+  document.getElementById("telegram-test-form")?.addEventListener("submit", (event) => testTelegram(event).catch(handleError));
+  document.getElementById("checkin-form")?.addEventListener("submit", (event) => updateCheckInSettings(event).catch(handleError));
+}
+
+function handleError(error) {
+  setMessage(error.message || "Unbekannter Fehler.", "bad");
+}
+
+function navButton(view, label, symbol) {
+  const active = state.view === view ? "active" : "";
+  const href = `./app?view=${encodeURIComponent(view)}${state.selectedMemberId ? `&member=${encodeURIComponent(state.selectedMemberId)}` : ""}`;
+  return `
+    <a
+      class="nav-button ${active}"
+      data-view="${view}"
+      href="${href}"
+      aria-current="${state.view === view ? "page" : "false"}"
+    >
+      <span class="nav-label">${escapeHtml(label)}</span>
+    </a>
+  `;
+}
+
+function renderStatusStrip() {
+  const next = upcomingWindow();
+  const alertCount = urgentAlerts().length;
+  return `
+    <div class="live-strip">
+      <div class="live-card">
+        <div class="live-label">SCHLOSS</div>
+        <div class="live-value">
+          <span class="live-dot ${/credentials|unknown/i.test(state.lockStatus?.connectivity || "") ? "warn" : ""}"></span>
+          ${escapeHtml(state.lockStatus?.connectivity || "unknown")}
+        </div>
+        <div class="subtle">${pill(state.lockStatus?.source || "system")} ${pill(state.lockStatus?.lock_state || "unknown")}</div>
+      </div>
+      <div class="live-card">
+        <div class="live-label">MITGLIEDER</div>
+        <div class="live-value">${state.members.length}</div>
+        <div class="subtle">Aktive Sicht geladen</div>
+      </div>
+      <div class="live-card">
+        <div class="live-label">ALARME</div>
+        <div class="live-value">
+          ${alertCount > 0 ? `<span class="live-dot bad"></span>` : `<span class="live-dot"></span>`}
+          ${alertCount}
+        </div>
+        <div class="subtle">${alertCount ? "Handlungsbedarf" : "Keine Anomalien"}</div>
+      </div>
+      <div class="live-card">
+        <div class="live-label">NÄCHSTER SLOT</div>
+        <div class="live-value numberish">${next ? fmtDate(next.dispatch_at) : "—"}</div>
+        <div class="subtle">${next ? `Member ${next.member_id}` : "Kein offenes Fenster"}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderOverview() {
+  const next = upcomingWindow();
+  return `
+    <div class="dashboard-grid">
+      <section class="metric-card span-3">
+        <span class="eyebrow">OFFENE FENSTER</span>
+        <strong>${state.windows.length}</strong>
+        <span class="subtle">Geplant oder aktiv</span>
+      </section>
+      <section class="metric-card span-3">
+        <span class="eyebrow">WARNUNGEN</span>
+        <strong>${urgentAlerts().length}</strong>
+        <span class="subtle">Fehler + Warnungen</span>
+      </section>
+      <section class="metric-card span-3">
+        <span class="eyebrow">SCHLOSS</span>
+        <strong>${escapeHtml(state.lockStatus?.connectivity || "—")}</strong>
+        <span class="subtle">Dry-Run aktiv</span>
+      </section>
+      <section class="metric-card span-3">
+        <span class="eyebrow">NÄCHSTE FREISCHALTUNG</span>
+        <strong class="numberish">${next ? fmtDate(next.dispatch_at) : "—"}</strong>
+        <span class="subtle">${next ? `Window ${next.id}` : "Kein Termin offen"}</span>
+      </section>
+
+      <section class="panel span-8">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Jetzt Wichtig</h2>
+            <p class="panel-kicker">Betriebsrelevante Alerts — sofortige Sichtbarkeit für Eingriffe.</p>
+          </div>
+        </div>
+        <div class="stack">
+          ${urgentAlerts().length ? urgentAlerts().map((alert) => `
+            <div class="list-item">
+              <div class="split">${pill(alert.severity)}<span class="subtle numberish">${fmtDate(alert.created_at)}</span></div>
+              <h3>${escapeHtml(alert.kind)}</h3>
+              <p class="subtle">${escapeHtml(alert.message)}</p>
+            </div>
+          `).join("") : `
+            <div class="empty">Keine offenen Warn- oder Fehlerfälle</div>
+          `}
+        </div>
+      </section>
+
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Schloss Log</h2>
+            <p class="panel-kicker">Letzte Dry-Run- und manuelle Eingriffe.</p>
+          </div>
+        </div>
+        <div class="stack">
+          ${state.lockLog.length ? state.lockLog.slice(0, 5).map((entry) => `
+            <div class="list-item">
+              <div class="split"><strong>${escapeHtml(entry.action)}</strong><span class="subtle numberish">${fmtDate(entry.created_at)}</span></div>
+              <p class="subtle">${escapeHtml(entry.actor_email)}</p>
+            </div>
+          `).join("") : '<div class="empty">Keine Schlossereignisse</div>'}
+        </div>
+      </section>
+
+      <section class="panel span-6">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Access Windows</h2>
+            <p class="panel-kicker">Nächste Freigaben und Endzeiten im Überblick.</p>
+          </div>
+        </div>
+        <div class="stack">
+          ${state.windows.slice(0, 6).map((w) => `
+            <div class="list-item">
+              <div class="split">${pill(w.status)}<span class="subtle numberish">${fmtDate(w.dispatch_at)}</span></div>
+              <h3>Member ${escapeHtml(w.member_id)} · Window ${w.id}</h3>
+              <p class="subtle">${fmtDate(w.starts_at)} → ${fmtDate(w.ends_at)}</p>
+            </div>
+          `).join("") || '<div class="empty">Keine Access Windows</div>'}
+        </div>
+      </section>
+
+      <section class="panel span-6">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Schnellzugriff</h2>
+            <p class="panel-kicker">Direkter Sprung zu Diagnose und manuellen Aktionen.</p>
+          </div>
+        </div>
+        <div class="entity-list">
+          ${state.members.map((member) => `
+            <button type="button" class="list-item entity-button" data-member-id="${member.id}">
+              <div class="split"><strong>${escapeHtml(`${member.first_name || ""} ${member.last_name || ""}`.trim() || member.email || `Member ${member.id}`)}</strong>${pill(member.status || "unknown")}</div>
+              <p class="subtle">${escapeHtml(member.email || "Keine E-Mail")} · ML-ID ${escapeHtml(member.magicline_customer_id)}</p>
+            </button>
+          `).join("") || '<div class="empty">Keine Mitglieder geladen</div>'}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderMemberCards() {
+  return state.members.map((member) => {
+    const active = currentMember()?.id === member.id ? "active" : "";
+    const label = `${member.first_name || ""} ${member.last_name || ""}`.trim() || member.email || `Member ${member.id}`;
+    return `
+      <button type="button" class="list-item entity-button ${active}" data-member-id="${member.id}">
+        <div class="split"><strong>${escapeHtml(label)}</strong>${pill(member.status || "unknown")}</div>
+        <p class="subtle">${escapeHtml(member.email || "Keine E-Mail")} · ML-ID ${escapeHtml(member.magicline_customer_id)}</p>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderWindowActions(w) {
+  return `
+    <div class="action-group" style="margin-top:8px;">
+      <button type="button" class="secondary" data-window-id="${w.id}" data-window-action="resend">Code Neu Senden</button>
+      <button type="button" class="warn" data-window-id="${w.id}" data-window-action="emergency-code">Notfallcode</button>
+      <button type="button" class="bad" data-window-id="${w.id}" data-window-action="deactivate">Deaktivieren</button>
+    </div>
+  `;
+}
+
+function renderMembersView() {
+  const detail = state.memberDetail;
+  return `
+    <div class="detail-layout">
+      <div class="detail-column">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Mitglieder</h2>
+              <p class="panel-kicker">Suche, Sync und Einzelansicht per E-Mail.</p>
+            </div>
+          </div>
+          <div class="stack">
+            <form id="member-search-form" class="stack">
+              <label for="member-search-email">Mitglied suchen
+                <input id="member-search-email" name="email" type="email" autocomplete="off" spellcheck="false" inputmode="email" placeholder="member@example.com" />
+              </label>
+              <button type="submit">Suchen</button>
+            </form>
+            <form id="member-sync-form" class="stack">
+              <label for="member-sync-email">Gezielter Sync
+                <input id="member-sync-email" name="email" type="email" autocomplete="off" spellcheck="false" inputmode="email" placeholder="Magicline-Sync für E-Mail…" required />
+              </label>
+              <button type="submit" class="secondary">Mitglied Syncen</button>
+            </form>
+          </div>
+          <div class="entity-list" style="margin-top:14px;">
+            ${renderMemberCards() || '<div class="empty">Keine Mitglieder vorhanden</div>'}
+          </div>
+        </section>
+      </div>
+
+      <div class="detail-column">
+        ${detail ? `
+          <section class="detail-card">
+            <p class="eyebrow">// MITGLIED</p>
+            <h2 class="panel-title">${escapeHtml(`${detail.member.first_name || ""} ${detail.member.last_name || ""}`.trim() || detail.member.email || `Member ${detail.member.id}`)}</h2>
+            <div class="detail-meta">
+              ${pill(detail.member.status || "unknown")}
+              <span>ML-ID ${escapeHtml(detail.member.magicline_customer_id)}</span>
+              <span>${escapeHtml(detail.member.email || "Keine E-Mail")}</span>
+              <span class="numberish">Sync ${fmtDate(detail.member.last_synced_at)}</span>
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <div class="panel-header">
+              <div>
+                <h3 class="panel-title">Buchungshistorie</h3>
+                <p class="panel-kicker">Freies Training und Statuswechsel aus Magicline.</p>
+              </div>
+            </div>
+            <div class="stack">
+              ${detail.bookings.map((booking) => `
+                <div class="list-item">
+                  <div class="split">${pill(booking.booking_status)}<span class="subtle numberish">${fmtDate(booking.start_at)}</span></div>
+                  <h4>${escapeHtml(booking.title)}</h4>
+                  <p class="subtle">${fmtDate(booking.start_at)} → ${fmtDate(booking.end_at)}</p>
+                </div>
+              `).join("") || '<div class="empty">Keine Buchungen</div>'}
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <div class="panel-header">
+              <div>
+                <h3 class="panel-title">Zugangsfenster</h3>
+                <p class="panel-kicker">Berechnete Korridore inkl. manueller Eingriffe.</p>
+              </div>
+            </div>
+            <div class="stack">
+              ${detail.access_windows.map((w) => `
+                <div class="list-item">
+                  <div class="split">${pill(w.status)}<span class="subtle numberish">${fmtDate(w.dispatch_at)}</span></div>
+                  <p class="subtle">Window ${w.id} · Bookings: ${escapeHtml(w.booking_ids.join(", "))}</p>
+                  <p class="subtle">${fmtDate(w.starts_at)} → ${fmtDate(w.ends_at)}</p>
+                  <p class="subtle">Check-in: ${w.check_in_confirmed_at ? `bestätigt ${fmtDate(w.check_in_confirmed_at)}` : "offen"}</p>
+                  ${w.check_in_checklist?.length ? `
+                    <div class="stack compact-stack" style="margin-top:6px;">
+                      ${w.check_in_checklist.map((item) => `<p class="subtle">${item.checked ? "✓" : "✗"} ${escapeHtml(item.label)}</p>`).join("")}
+                    </div>
+                  ` : ""}
+                  ${renderWindowActions(w)}
+                </div>
+              `).join("") || '<div class="empty">Keine Access Windows</div>'}
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <div class="panel-header">
+              <div>
+                <h3 class="panel-title">Code-Historie</h3>
+                <p class="panel-kicker">Reguläre und Notfallcodes im Verlauf.</p>
+              </div>
+            </div>
+            <div class="stack">
+              ${detail.access_codes.map((code) => `
+                <div class="list-item">
+                  <div class="split">${pill(code.status)}<span class="subtle numberish">${fmtDate(code.created_at)}</span></div>
+                  <p class="code">••••${escapeHtml(code.code_last4)}${code.is_emergency ? " · EMERGENCY" : ""}</p>
+                  <p class="subtle">Versendet ${fmtDate(code.emailed_at)} · Läuft ab ${fmtDate(code.expires_at)}</p>
+                </div>
+              `).join("") || '<div class="empty">Noch keine Codes</div>'}
+            </div>
+          </section>
+        ` : `
+          <section class="detail-card">
+            <p class="eyebrow">// KEIN MEMBER AKTIV</p>
+            <h2 class="panel-title">Member auswählen</h2>
+            <p class="subtle">Wähle links ein Mitglied, um Buchungen, Access Windows und Codes zu prüfen.</p>
+          </section>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+function renderWindowsView() {
+  return `
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2 class="panel-title">Access Windows</h2>
+          <p class="panel-kicker">Operative Gesamtliste mit Direktaktionen pro Eintrag.</p>
+        </div>
+      </div>
+      <div class="stack">
+        ${state.windows.map((w) => `
+          <div class="list-item">
+            <div class="split">${pill(w.status)}<span class="subtle numberish">${fmtDate(w.dispatch_at)}</span></div>
+            <h3>Member ${escapeHtml(w.member_id)} · Window ${w.id}</h3>
+            <p class="subtle">${fmtDate(w.starts_at)} → ${fmtDate(w.ends_at)} · ${escapeHtml(w.access_reason)}</p>
+            <p class="subtle">Check-in: ${w.check_in_confirmed_at ? `bestätigt ${fmtDate(w.check_in_confirmed_at)}` : "offen"}</p>
+            ${renderWindowActions(w)}
+          </div>
+        `).join("") || '<div class="empty">Keine Access Windows vorhanden</div>'}
+      </div>
+    </section>
+  `;
+}
+
+function renderLockView() {
+  return `
+    <div class="dashboard-grid">
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Schlosszustand</h2>
+            <p class="panel-kicker">Systemsicht bis die echten Nuki-Credentials aktiv sind.</p>
+          </div>
+        </div>
+        <div class="stack">
+          <div class="list-item">
+            <div class="split">
+              <strong>Smartlock ${escapeHtml(state.lockStatus?.smartlock_id || "—")}</strong>
+              ${pill(state.lockStatus?.source || "system")}
+            </div>
+            <div class="row" style="margin-top:8px;">
+              ${pill(state.lockStatus?.connectivity || "unknown")}
+              ${pill(state.lockStatus?.lock_state || "unknown")}
+              ${pill(state.lockStatus?.battery_state || "unknown")}
+            </div>
+          </div>
+          <div class="list-item">
+            <p class="eyebrow">// DRY-RUN MODUS</p>
+            <p class="subtle">Bis zum Go-live zeigt die Konsole belastbare Betriebsdaten ohne Live-Telemetrie.</p>
+          </div>
+          ${state.role === "admin" ? `
+            <button type="button" class="warn" data-remote-open>Remote Open Protokollieren</button>
+          ` : ""}
+        </div>
+      </section>
+      <section class="panel span-8">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Schloss-Log</h2>
+            <p class="panel-kicker">Remote Open, Code-Interventionen und Dry-Run-Aktivitäten.</p>
+          </div>
+        </div>
+        <div class="stack">
+          ${state.lockLog.map((entry) => `
+            <div class="list-item">
+              <div class="split"><strong>${escapeHtml(entry.action)}</strong><span class="subtle numberish">${fmtDate(entry.created_at)}</span></div>
+              <p class="subtle">${escapeHtml(entry.actor_email)}</p>
+              <p class="code">${escapeHtml(JSON.stringify(entry.payload || {}))}</p>
+            </div>
+          `).join("") || '<div class="empty">Keine Schlossereignisse</div>'}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAlertsView() {
+  return `
+    <div class="dashboard-grid">
+      <section class="panel span-5">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Warnungen &amp; Fehler</h2>
+            <p class="panel-kicker">Alle betrieblichen Hinweise, die den Ablauf oder Zutritt beeinflussen.</p>
+          </div>
+        </div>
+        <div class="stack">
+          ${state.alerts.map((alert) => `
+            <div class="list-item">
+              <div class="split">${pill(alert.severity)}<span class="subtle numberish">${fmtDate(alert.created_at)}</span></div>
+              <h3>${escapeHtml(alert.kind)}</h3>
+              <p class="subtle">${escapeHtml(alert.message)}</p>
+            </div>
+          `).join("") || '<div class="empty">Keine Alerts vorhanden</div>'}
+        </div>
+      </section>
+      <section class="panel span-7">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Betriebslog</h2>
+            <p class="panel-kicker">Admin- und Operator-Aktionen in auditierbarer Reihenfolge.</p>
+          </div>
+        </div>
+        <div class="stack">
+          ${state.actions.map((action) => `
+            <div class="list-item">
+              <div class="split"><strong>${escapeHtml(action.action)}</strong><span class="subtle numberish">${fmtDate(action.created_at)}</span></div>
+              <p class="subtle">${escapeHtml(action.actor_email)}</p>
+              <p class="code">${escapeHtml(JSON.stringify(action.payload || {}))}</p>
+            </div>
+          `).join("") || '<div class="empty">Keine Aktionen protokolliert</div>'}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderSettingsView() {
+  if (state.role !== "admin") {
+    return `
+      <section class="detail-card">
+        <p class="eyebrow">// ZUGRIFF VERWEIGERT</p>
+        <h2 class="panel-title">Einstellungen</h2>
+        <p class="subtle">Nur Admins dürfen Integrationen und Benutzer verwalten.</p>
+      </section>
+    `;
+  }
+  return `
+    <div class="dashboard-grid">
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Benutzer</h2>
+            <p class="panel-kicker">Admin- und Operator-Konten verwalten.</p>
+          </div>
+        </div>
+        <form id="create-user-form" class="stack">
+          <label for="new-user-email">E-Mail
+            <input id="new-user-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="operator@example.com" required />
+          </label>
+          <label for="new-user-password">Startpasswort
+            <input id="new-user-password" name="password" type="password" autocomplete="new-password" placeholder="Mindestens 12 Zeichen" required />
+          </label>
+          <label for="new-user-role">Rolle
+            <select id="new-user-role" name="role">
+              <option value="operator">Operator</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <button type="submit">Benutzer Anlegen</button>
+        </form>
+        <div class="stack" style="margin-top:14px;">
+          ${state.users.map((user) => `
+            <div class="list-item">
+              <div class="split"><strong>${escapeHtml(user.email)}</strong>${pill(user.role)}</div>
+              <p class="subtle">${user.is_active ? "Aktiv" : "Inaktiv"}</p>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">SMTP</h2>
+            <p class="panel-kicker">Mitgliedercodes und Reset-Mails konfigurieren.</p>
+          </div>
+        </div>
+        <form id="smtp-form" class="stack">
+          <label for="smtp-host">Host
+            <input id="smtp-host" name="smtp_host" type="text" autocomplete="off" value="${escapeHtml(state.emailSettings?.smtp_host || "")}" placeholder="smtp.example.com" />
+          </label>
+          <label for="smtp-port">Port
+            <input id="smtp-port" name="smtp_port" type="number" inputmode="numeric" value="${escapeHtml(state.emailSettings?.smtp_port || 587)}" />
+          </label>
+          <label for="smtp-username">Benutzername
+            <input id="smtp-username" name="smtp_username" type="text" autocomplete="username" value="${escapeHtml(state.emailSettings?.smtp_username || "")}" />
+          </label>
+          <label for="smtp-password">Passwort
+            <input id="smtp-password" name="smtp_password" type="password" autocomplete="new-password" placeholder="Nur neu setzen wenn nötig" />
+          </label>
+          <label for="smtp-from">Absenderadresse
+            <input id="smtp-from" name="smtp_from_email" type="email" autocomplete="email" spellcheck="false" inputmode="email" value="${escapeHtml(state.emailSettings?.smtp_from_email || "")}" />
+          </label>
+          <button type="submit">SMTP Speichern</button>
+        </form>
+        <form id="smtp-test-form" class="stack" style="margin-top:14px;">
+          <label for="smtp-test-email">Testempfänger
+            <input id="smtp-test-email" name="to_email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="test@example.com" required />
+          </label>
+          <button type="submit" class="secondary">Testmail Senden</button>
+        </form>
+      </section>
+
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Telegram</h2>
+            <p class="panel-kicker">Alarmkanal für Warnungen, Fehler und Notfallcodes.</p>
+          </div>
+        </div>
+        <form id="telegram-form" class="stack">
+          <label for="telegram-bot-token">Bot Token
+            <input id="telegram-bot-token" name="telegram_bot_token" type="password" autocomplete="off" placeholder="${state.telegramSettings?.has_bot_token ? "Token gesetzt — neu eingeben zum Überschreiben" : "Telegram Bot Token"}" />
+          </label>
+          <label for="telegram-chat-id">Chat ID
+            <input id="telegram-chat-id" name="telegram_chat_id" type="text" autocomplete="off" spellcheck="false" value="${escapeHtml(state.telegramSettings?.telegram_chat_id || "")}" placeholder="Telegram Chat ID" />
+          </label>
+          <button type="submit">Telegram Speichern</button>
+        </form>
+        <form id="telegram-test-form" class="stack" style="margin-top:14px;">
+          <label for="telegram-test-message">Testnachricht
+            <textarea id="telegram-test-message" name="message" placeholder="[T247GYM] Testalarm">[T247GYM] Testalarm</textarea>
+          </label>
+          <button type="submit" class="secondary">Telegram Testen</button>
+        </form>
+      </section>
+
+      <section class="panel span-12">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Check-in &amp; Hausregeln</h2>
+            <p class="panel-kicker">Öffentliche Member-Seite vor jedem Freies-Training-Block. Inkl. Studio-QR und Mail-Link.</p>
+          </div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="span-7">
+            <form id="checkin-form" class="stack">
+              <label class="checkbox-row" for="checkin-enabled">
+                <input id="checkin-enabled" name="enabled" type="checkbox" ${state.checkInSettings?.enabled ? "checked" : ""} />
+                <span>Check-in öffentlich aktivieren</span>
+              </label>
+              <label for="checkin-title">Titel
+                <input id="checkin-title" name="title" type="text" autocomplete="off" value="${escapeHtml(state.checkInSettings?.title || "")}" required />
+              </label>
+              <label for="checkin-intro">Einleitung
+                <textarea id="checkin-intro" name="intro" required>${escapeHtml(state.checkInSettings?.intro || "")}</textarea>
+              </label>
+              <label for="checkin-rules-heading">Hausregel-Überschrift
+                <input id="checkin-rules-heading" name="rules_heading" type="text" autocomplete="off" value="${escapeHtml(state.checkInSettings?.rules_heading || "")}" required />
+              </label>
+              <label for="checkin-rules-body">Hausregeln
+                <textarea id="checkin-rules-body" name="rules_body" required>${escapeHtml(state.checkInSettings?.rules_body || "")}</textarea>
+              </label>
+              <label for="checkin-checklist-heading">Checklisten-Überschrift
+                <input id="checkin-checklist-heading" name="checklist_heading" type="text" autocomplete="off" value="${escapeHtml(state.checkInSettings?.checklist_heading || "")}" required />
+              </label>
+              <label for="checkin-items">Checklistenpunkte (je Zeile ein Punkt)
+                <textarea id="checkin-items" name="checklist_items" required>${escapeHtml((state.checkInSettings?.checklist_items || []).map((item) => item.label).join("\n"))}</textarea>
+              </label>
+              <label for="checkin-success-message">Erfolgstext
+                <textarea id="checkin-success-message" name="success_message" required>${escapeHtml(state.checkInSettings?.success_message || "")}</textarea>
+              </label>
+              <button type="submit">Check-in Speichern</button>
+            </form>
+          </div>
+          <div class="span-5">
+            <div class="stack">
+              <div class="list-item">
+                <p class="eyebrow">// ÖFFENTLICHER LINK</p>
+                <p class="code">${escapeHtml(state.checkInSettings?.studio_check_in_url || "")}</p>
+              </div>
+              <div class="list-item qr-panel">
+                <p class="eyebrow">// STUDIO QR-CODE</p>
+                ${state.checkInSettings?.studio_qr_svg
+                  ? `<img class="qr-image" src="${state.checkInSettings.studio_qr_svg}" alt="QR-Code für öffentlichen Check-in" />`
+                  : '<div class="empty">QR nicht verfügbar</div>'
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderMainContent() {
+  if (state.view === "members") return renderMembersView();
+  if (state.view === "windows") return renderWindowsView();
+  if (state.view === "lock") return renderLockView();
+  if (state.view === "alerts") return renderAlertsView();
+  if (state.view === "settings") return renderSettingsView();
+  if (state.view === "funnels") return renderFunnelsView();
+  return renderOverview();
+}
+
+function renderAuth() {
+  app.innerHTML = `
+    <section class="auth-shell">
+      <div class="auth-grid">
+        <div class="auth-panel">
+          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+          <h1>Studio Access Control.</h1>
+          <p class="subtle">Magicline-Sync, Nuki-Keypad, Alerts und manuelle Freigaben — in einer operativen Konsole mit klarer Priorität.</p>
+        </div>
+        <div class="auth-panel">
+          <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "Anmeldung mit Admin- oder Operator-Konto.")}</div>
+          <form id="login-form" class="stack" style="margin-top:14px;">
+            <label for="login-email">E-Mail
+              <input id="login-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="admin@example.com" required />
+            </label>
+            <label for="login-password">Passwort
+              <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Passwort" required />
+            </label>
+            <button type="submit">Anmelden</button>
+          </form>
+          <form id="forgot-form" class="stack" style="margin-top:14px;">
+            <label for="forgot-email">Passwort zurücksetzen
+              <input id="forgot-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="E-Mail für Reset-Link" required />
+            </label>
+            <button type="submit" class="secondary">Reset-Link Anfordern</button>
+          </form>
+        </div>
+      </div>
+    </section>
+  `;
+  document.getElementById("login-form").addEventListener("submit", (event) => login(event).catch(handleError));
+  document.getElementById("forgot-form").addEventListener("submit", (event) => forgotPassword(event).catch(handleError));
+}
+
+function renderPublicCheckIn() {
+  const session = state.publicCheckInSession;
+  if (!session) {
+    app.innerHTML = `
+      <section class="public-shell">
+        <div class="public-hero">
+          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+          <h1 class="hero-title">Member Check-in.</h1>
+          <p class="subtle">Scanne den QR-Code im Studio oder nutze den Link aus deiner Zugangs-Mail.</p>
+        </div>
+        <div style="padding:20px 26px;">
+          <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "E-Mail und Zugangscode eingeben.")}</div>
+          <form id="public-checkin-resolve-form" class="stack" style="margin-top:14px;">
+            <label for="public-email">E-Mail
+              <input id="public-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="deine@email.de" required />
+            </label>
+            <label for="public-code">Zugangscode
+              <input id="public-code" name="code" type="text" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" placeholder="6-stelliger Code aus deiner Mail" required />
+            </label>
+            <button type="submit">Trainingsblock Laden</button>
+          </form>
+        </div>
+      </section>
+    `;
+    document.getElementById("public-checkin-resolve-form")?.addEventListener("submit", (event) => resolvePublicCheckIn(event).catch(handleError));
+    return;
+  }
+
+  const steps = publicCheckInSteps();
+  const step = session.window.is_confirmed ? 4 : state.publicCheckInStep;
+  const checklistItems = session.settings.checklist_items || [];
+  const checklistComplete = publicChecklistComplete();
+  const completedCount = checklistItems.filter((item) => state.publicCheckInDraft.checklist[item.id]).length;
+  let content = "";
+
+  if (step === 1) {
+    content = `
+      <section class="detail-card funnel-card" style="margin:18px 20px;">
+        <p class="eyebrow">// SCHRITT 1/4 — INIT</p>
+        <h2 class="panel-title">Trainingsblock prüfen</h2>
+        <p class="subtle">Vor jedem gebuchten Freies-Training-Block führst du hier den Check-in durch. Der Zugangscode wurde separat versendet.</p>
+        <div class="funnel-summary" style="margin-top:14px;">
+          <div class="summary-item">
+            <span class="summary-label">Mitglied</span>
+            <strong>${escapeHtml(session.window.member_first_name || "Member")}</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Zeitfenster</span>
+            <strong>${fmtDate(session.window.starts_at)} → ${fmtDate(session.window.ends_at)}</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Status</span>
+            <strong>${pill(session.window.status)}</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Einstieg</span>
+            <strong>${escapeHtml(session.entry_source === "studio-qr" ? "Studio QR" : "Mail-Link")}</strong>
+          </div>
+        </div>
+        <div class="funnel-actions" style="margin-top:16px;">
+          <button type="button" id="public-step-next">Check-in starten</button>
+        </div>
+      </section>
+    `;
+  } else if (step === 2) {
+    content = `
+      <section class="detail-card funnel-card" style="margin:18px 20px;">
+        <p class="eyebrow">// SCHRITT 2/4 — RULES</p>
+        <h2 class="panel-title">${escapeHtml(session.settings.rules_heading)}</h2>
+        <p class="subtle">Lies die Regeln vollständig und bestätige sie bewusst, bevor du fortfährst.</p>
+        <div class="rules-panel" style="margin-top:12px;">
+          <div class="rules-body">${escapeHtml(session.settings.rules_body).replace(/\n/g, "<br />")}</div>
+        </div>
+        <label class="checkbox-row funnel-checkbox" for="rules-accepted-step" style="margin-top:12px;">
+          <input id="rules-accepted-step" type="checkbox" ${state.publicCheckInDraft.rulesAccepted ? "checked" : ""} />
+          <span>Ich habe die Hausregeln gelesen und bestätige die Einhaltung.</span>
+        </label>
+        <div class="funnel-actions" style="margin-top:16px;">
+          <button type="button" id="public-step-back" class="secondary">Zurück</button>
+          <button type="button" id="public-step-next" ${state.publicCheckInDraft.rulesAccepted ? "" : "disabled"}>Weiter zur Checkliste</button>
+        </div>
+      </section>
+    `;
+  } else if (step === 3) {
+    content = `
+      <section class="detail-card funnel-card" style="margin:18px 20px;">
+        <p class="eyebrow">// SCHRITT 3/4 — CHECKLIST</p>
+        <h2 class="panel-title">${escapeHtml(session.settings.checklist_heading)}</h2>
+        <p class="subtle">Bestätige jeden Punkt einzeln — dokumentiert den Studiozustand vor deinem Block.</p>
+        <p class="funnel-progress-note" style="margin-top:10px;">${completedCount} / ${checklistItems.length} bestätigt</p>
+        <div class="checklist-stack funnel-checklist" style="margin-top:12px;">
+          ${checklistItems.map((item, index) => `
+            <label class="checklist-tile" for="check-${escapeHtml(item.id)}">
+              <span class="checklist-index">${String(index + 1).padStart(2, "0")}</span>
+              <input id="check-${escapeHtml(item.id)}" data-check-item="${escapeHtml(item.id)}" type="checkbox" ${state.publicCheckInDraft.checklist[item.id] ? "checked" : ""} />
+              <span class="checklist-copy">${escapeHtml(item.label)}</span>
+            </label>
+          `).join("")}
+        </div>
+        <div class="funnel-actions" style="margin-top:16px;">
+          <button type="button" id="public-step-back" class="secondary">Zurück</button>
+          <button type="button" id="public-step-next" ${checklistComplete ? "" : "disabled"}>Weiter zum Abschluss</button>
+        </div>
+      </section>
+    `;
+  } else {
+    content = `
+      <section class="detail-card funnel-card" style="margin:18px 20px;">
+        <p class="eyebrow">// SCHRITT 4/4 — DONE</p>
+        <h2 class="panel-title">${session.window.is_confirmed ? "Check-in abgeschlossen" : "Abschluss und Bestätigung"}</h2>
+        <div class="message ${state.messageType}" aria-live="polite" style="margin-top:12px;">${escapeHtml(state.message || (session.window.is_confirmed ? session.settings.success_message : "Prüfe deine Angaben und bestätige den Check-in verbindlich."))}</div>
+        <div class="funnel-summary review-grid" style="margin-top:14px;">
+          <div class="summary-item">
+            <span class="summary-label">Hausregeln</span>
+            <strong>${state.publicCheckInDraft.rulesAccepted ? "Bestätigt" : "Offen"}</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Checkliste</span>
+            <strong>${completedCount} / ${checklistItems.length} OK</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Trainingsblock</span>
+            <strong>${fmtDate(session.window.starts_at)} → ${fmtDate(session.window.ends_at)}</strong>
+          </div>
+          <div class="summary-item">
+            <span class="summary-label">Quelle</span>
+            <strong>${escapeHtml(session.window.source || session.entry_source)}</strong>
+          </div>
+        </div>
+        ${session.window.is_confirmed
+          ? `
+            <div class="list-item" style="margin-top:14px;">
+              <p class="eyebrow">// BESTÄTIGT</p>
+              <p class="subtle numberish">${fmtDate(session.window.confirmed_at)} · ${escapeHtml(session.window.source || "public-check-in")}</p>
+            </div>
+          `
+          : `
+            <form id="public-checkin-submit-form" class="stack" style="margin-top:14px;">
+              <div class="funnel-actions">
+                <button type="button" id="public-step-back" class="secondary">Zurück</button>
+                <button type="submit">Verbindlich bestätigen</button>
+              </div>
+            </form>
+          `}
+      </section>
+    `;
+  }
+
+  app.innerHTML = `
+    <section class="public-shell">
+      <div class="public-hero">
+        <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+        <h1 class="hero-title">${escapeHtml(session.settings.title)}</h1>
+        <p class="subtle">${escapeHtml(session.settings.intro)}</p>
+        <div class="public-meta">
+          ${pill(session.window.status)}
+          <span>${escapeHtml(session.window.member_first_name || "Member")}</span>
+          <span class="numberish">${fmtDate(session.window.starts_at)} → ${fmtDate(session.window.ends_at)}</span>
+        </div>
+        <div class="funnel-steps" aria-label="Check-in Fortschritt">
+          ${steps.map((item) => `
+            <div class="funnel-step ${step === item.id ? "active" : ""} ${step > item.id || session.window.is_confirmed ? "done" : ""}">
+              <span class="funnel-step-index">${item.id}</span>
+              <span>${escapeHtml(item.label)}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+      ${content}
+    </section>
+  `;
+  document.getElementById("public-checkin-submit-form")?.addEventListener("submit", (event) => submitPublicCheckIn(event).catch(handleError));
+  document.getElementById("public-step-next")?.addEventListener("click", () => {
+    if (step < 4) {
+      goToPublicCheckInStep(step + 1);
+    }
+  });
+  document.getElementById("public-step-back")?.addEventListener("click", () => {
+    if (step > 1) {
+      goToPublicCheckInStep(step - 1);
+    }
+  });
+  document.getElementById("rules-accepted-step")?.addEventListener("change", (event) => {
+    updatePublicRulesAccepted(event.currentTarget.checked);
+  });
+  document.querySelectorAll("[data-check-item]").forEach((input) => {
+    input.addEventListener("change", (event) => {
+      updatePublicChecklist(input.dataset.checkItem, event.currentTarget.checked);
+    });
+  });
+}
+
+function renderReset() {
+  const token = new URLSearchParams(window.location.search).get("token") || "";
+  app.innerHTML = `
+    <section class="reset-shell">
+      <div class="auth-panel">
+        <p class="eyebrow">// PASSWORT RESET</p>
+        <h1>Neues Passwort setzen.</h1>
+        <p class="subtle code">${escapeHtml(token ? `Token: ${token.slice(0, 12)}…` : "Kein Token vorhanden.")}</p>
+      </div>
+      <div class="auth-panel">
+        <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "Setze hier ein neues Passwort für dein Konto.")}</div>
+        <form id="reset-form" class="stack" style="margin-top:14px;">
+          <label for="reset-password">Neues Passwort
+            <input id="reset-password" name="password" type="password" autocomplete="new-password" placeholder="Mindestens 12 Zeichen" required />
+          </label>
+          <button type="submit">Passwort Setzen</button>
+        </form>
+      </div>
+    </section>
+  `;
+  document.getElementById("reset-form").addEventListener("submit", (event) => resetPassword(event).catch(handleError));
+}
+
+function renderApp() {
+  const current = currentMember();
+  app.innerHTML = `
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-terminal">
+            <span class="eyebrow">// STUDIO ACCESS CONTROL</span>
+            <h1 class="brand-title">T247GYM<span class="blink-cursor"></span></h1>
+            <p class="brand-status">SYSTEM ONLINE</p>
+          </div>
+        </div>
+
+        <div class="mobile-toolbar" aria-label="Mobile Navigation">
+          ${navButton("overview", "Betrieb", "◎")}
+          ${navButton("members", "Members", "◌")}
+          ${navButton("windows", "Windows", "◐")}
+          ${navButton("lock", "Schloss", "◍")}
+          ${navButton("alerts", "Alerts", "△")}
+          ${navButton("funnels", "Funnels", "◈")}
+          ${navButton("settings", "Config", "□")}
+        </div>
+
+        <nav class="sidebar-nav" aria-label="Primäre Navigation">
+          ${navButton("overview", "Betrieb", "◎")}
+          ${navButton("members", "Mitglieder", "◌")}
+          ${navButton("windows", "Access Windows", "◐")}
+          ${navButton("lock", "Schloss", "◍")}
+          ${navButton("alerts", "Alerts & Audit", "△")}
+          ${navButton("funnels", "Funnels", "◈")}
+          ${navButton("settings", "Einstellungen", "□")}
+        </nav>
+
+        <div class="sidebar-footer">
+          <p class="eyebrow">// SESSION</p>
+          <strong>${escapeHtml(state.me?.email || "")}</strong>
+          <div class="row" style="margin-top:8px;">${pill(state.me?.role || "unknown")} ${pill("Nuki dry-run")}</div>
+          ${current ? `<p class="subtle" style="margin-top:10px;">&gt; ${escapeHtml(current.email || `Member ${current.id}`)}</p>` : ""}
+        </div>
+      </aside>
+
+      <section class="content">
+        <header class="topbar">
+          <div class="hero-card">
+            <div class="hero-copy">
+              <div>
+                <p class="eyebrow">// OPERATIONS CONSOLE</p>
+                <h2 class="hero-title">Twenty4Seven-Gym</h2>
+              </div>
+              <p class="subtle">Kritische Zustände zuerst. Klare Eingriffe. Mobile Bedienbarkeit ohne Funktionsverlust.</p>
+              <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "System bereit. Wähle links einen Bereich oder prüfe die nächsten Freischaltungen.")}</div>
+              <div class="hero-actions">
+                <button type="button" id="sync-button">ML Sync</button>
+                <button type="button" id="provision-button" class="secondary">Due Codes</button>
+                ${state.role === "admin" ? '<button type="button" class="warn" data-remote-open>Remote Open</button>' : ""}
+                <button type="button" id="logout-button" class="secondary">Logout</button>
+              </div>
+            </div>
+            <div class="hero-copy">
+              <div>
+                <p class="eyebrow">// AKTIVER KONTEXT</p>
+                <h3 class="panel-title">${escapeHtml(current?.email || state.me?.email || "Kein Member aktiv")}</h3>
+                <p class="subtle">${current ? "Member-Detail geladen" : "Nutze Mitglieder- oder Windows-Sicht für gezielte Aktionen."}</p>
+              </div>
+              <div class="row">
+                ${pill(state.me?.role || "unknown")}
+                ${pill(state.lockStatus?.connectivity || "unknown")}
+                ${pill(`${state.windows.length} windows`)}
+              </div>
+            </div>
+          </div>
+          ${renderStatusStrip()}
+        </header>
+
+        <main id="app-main">
+          ${renderMainContent()}
+        </main>
+      </section>
+    </div>
+  `;
+
+  attachCommonHandlers();
+  if (state.view === "overview") attachOverviewHandlers();
+  if (state.view === "members") attachMembersHandlers();
+  if (state.view === "settings") attachSettingsHandlers();
+  if (state.view === "funnels") attachFunnelHandlers();
+}
+
+// ================================================================
+// NEW /checks PUBLIC SHELL
+// ================================================================
+
+function applyChecksSession(session) {
+  state.checksSession = session;
+  state.checksAttempted = true;
+  state.checksWindowId = null;
+  state.checksFunnelType = null;
+  state.checksFunnel = null;
+  state.checksFunnelStep = 0;
+  state.checksFunnelDraft = {};
+  state.checksLoading = false;
+  window.history.replaceState({}, "", `./checks?token=${encodeURIComponent(session.token)}`);
+  render();
+}
+
+async function resolveChecks(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const session = await api("./public/checks/resolve", {
+      method: "POST",
+      body: JSON.stringify({
+        email: form.get("email"),
+        code: String(form.get("code")).trim(),
+      }),
+    });
+    applyChecksSession(session);
+  }, "Wird geprüft…");
+}
+
+async function loadChecksSessionFromUrl() {
+  const token = new URLSearchParams(window.location.search).get("token");
+  if (!token) { render(); return; }
+  state.checksAttempted = true;
+  try {
+    const session = await api(`./public/checks/session?token=${encodeURIComponent(token)}`);
+    applyChecksSession(session);
+  } catch (err) {
+    state.checksAttempted = true;
+    setMessage(err.message || "Session konnte nicht geladen werden.", "bad");
+  }
+}
+
+async function startChecksFunnel(windowId, funnelType) {
+  if (state.checksLoading) return;
+  state.checksLoading = true;
+  state.checksWindowId = windowId;
+  state.checksFunnelType = funnelType;
+  state.checksFunnelStep = 0;
+  state.checksFunnelDraft = {};
+  state.checksFunnel = null;
+  render();
+  try {
+    const funnel = await api(`./public/checks/funnel/${funnelType}`);
+    state.checksFunnel = funnel;
+    for (const step of funnel.steps || []) {
+      state.checksFunnelDraft[step.id] = { checked: false, note: "" };
+    }
+  } catch (err) {
+    state.checksWindowId = null;
+    state.checksFunnelType = null;
+    state.checksLoading = false;
+    setMessage(err.message || "Funnel konnte nicht geladen werden.", "bad");
+    return;
+  }
+  state.checksLoading = false;
+  render();
+}
+
+function backToChecksWindowList() {
+  state.checksWindowId = null;
+  state.checksFunnelType = null;
+  state.checksFunnel = null;
+  state.checksFunnelStep = 0;
+  state.checksFunnelDraft = {};
+  render();
+}
+
+function updateChecksDraft(stepId, field, value) {
+  if (!state.checksFunnelDraft[stepId]) {
+    state.checksFunnelDraft[stepId] = { checked: false, note: "" };
+  }
+  state.checksFunnelDraft[stepId][field] = value;
+  render();
+}
+
+async function submitChecksFunnel() {
+  const steps = Object.entries(state.checksFunnelDraft).map(([stepId, data]) => ({
+    step_id: parseInt(stepId),
+    checked: data.checked || false,
+    note: data.note || "",
+  }));
+  const result = await api(
+    `./public/checks/window/${state.checksWindowId}/${state.checksFunnelType}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        token: state.checksSession.token,
+        window_id: state.checksWindowId,
+        funnel_type: state.checksFunnelType,
+        steps,
+      }),
+    },
+  );
+  const win = state.checksSession.windows.find((w) => w.id === state.checksWindowId);
+  if (win) {
+    if (result.funnel_type === "checkin") win.checkin_confirmed_at = result.confirmed_at;
+    if (result.funnel_type === "checkout") win.checkout_confirmed_at = result.confirmed_at;
+  }
+  const totalSteps = state.checksFunnel?.steps?.length || 0;
+  state.checksFunnelStep = totalSteps + 1;
+  render();
+}
+
+function checksProgressBar() {
+  const steps = state.checksFunnel?.steps || [];
+  const total = steps.length;
+  const items = [
+    { label: "Übersicht", step: 0 },
+    ...steps.map((s, i) => ({
+      label: s.title.length > 10 ? s.title.slice(0, 10) + "…" : s.title,
+      step: i + 1,
+    })),
+    { label: "Abschluss", step: total + 1 },
+  ];
+  return `
+    <div class="checks-funnel-progress" aria-label="Fortschritt">
+      ${items.map((item) => `
+        <div class="checks-progress-step
+          ${state.checksFunnelStep === item.step ? "active" : ""}
+          ${state.checksFunnelStep > item.step ? "done" : ""}
+        ">${state.checksFunnelStep > item.step ? "✓ " : ""}${escapeHtml(item.label)}</div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderChecksStepOverview() {
+  const win = state.checksSession.windows.find((w) => w.id === state.checksWindowId);
+  const funnel = state.checksFunnel;
+  const funnelLabel = state.checksFunnelType === "checkin" ? "Check-In" : "Check-Out";
+  return `
+    <section class="detail-card funnel-card">
+      <p class="eyebrow">// ${funnelLabel.toUpperCase()} — ÜBERSICHT</p>
+      <h2 class="panel-title">${escapeHtml(funnel.template_name)}</h2>
+      ${funnel.description ? `<p class="subtle" style="margin-top:6px;">${escapeHtml(funnel.description)}</p>` : ""}
+      <div class="funnel-overview-grid">
+        <div class="summary-item">
+          <span class="summary-label">Zeitfenster</span>
+          <strong>${fmtDate(win?.starts_at)} → ${fmtDate(win?.ends_at)}</strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Status</span>
+          <strong>${pill(win?.status || "unknown")}</strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Schritte</span>
+          <strong>${funnel.steps.length}</strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Typ</span>
+          <strong>${escapeHtml(funnelLabel)}</strong>
+        </div>
+      </div>
+      <div class="funnel-actions" style="margin-top:18px;">
+        <button type="button" id="checks-funnel-back" class="secondary">Zurück</button>
+        <button type="button" id="checks-funnel-next">${funnelLabel} starten</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderChecksStepN(stepIndex) {
+  const step = state.checksFunnel.steps[stepIndex - 1];
+  if (!step) return "";
+  const draft = state.checksFunnelDraft[step.id] || { checked: false, note: "" };
+  const totalSteps = state.checksFunnel.steps.length;
+  const isLast = stepIndex === totalSteps;
+  const canProceed = !step.requires_note || (draft.note && draft.note.trim().length > 0);
+  return `
+    <section class="detail-card funnel-card">
+      <p class="eyebrow">// SCHRITT ${stepIndex} VON ${totalSteps}</p>
+      <h2 class="panel-title">${escapeHtml(step.title)}</h2>
+      ${step.body ? `<div class="step-body-content" style="margin-top:12px;">${escapeHtml(step.body).replace(/\n/g, "<br />")}</div>` : ""}
+      ${step.image_path ? `<img class="step-image" src="${escapeHtml(step.image_path)}" alt="${escapeHtml(step.title)}" />` : ""}
+      ${step.requires_note ? `
+        <div style="margin-top:14px;">
+          <label for="step-note-${step.id}">Notiz (erforderlich)
+            <textarea id="step-note-${step.id}" class="step-note-field" data-checks-note="${step.id}"
+              placeholder="Beschreibe kurz deine Beobachtung…">${escapeHtml(draft.note || "")}</textarea>
+          </label>
+        </div>
+      ` : `
+        <label class="checkbox-row" style="margin-top:14px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-strong);"
+          for="checks-check-${step.id}">
+          <input id="checks-check-${step.id}" type="checkbox" data-checks-check="${step.id}"
+            ${draft.checked ? "checked" : ""} />
+          <span>Punkt bestätigt</span>
+        </label>
+      `}
+      <div class="funnel-actions" style="margin-top:16px;">
+        <button type="button" id="checks-funnel-back" class="secondary">Zurück</button>
+        <button type="button" id="checks-funnel-next" ${canProceed ? "" : "disabled"}>
+          ${isLast ? "Abschließen" : "Weiter"}
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function renderChecksStepDone() {
+  const win = state.checksSession.windows.find((w) => w.id === state.checksWindowId);
+  const funnelLabel = state.checksFunnelType === "checkin" ? "Check-In" : "Check-Out";
+  const successText = state.checksFunnelType === "checkin"
+    ? "Check-In erfolgreich erfasst. Gutes Training!"
+    : "Check-Out erfolgreich erfasst. Danke und bis zum nächsten Mal!";
+  return `
+    <section class="detail-card funnel-card">
+      <p class="eyebrow">// ${funnelLabel.toUpperCase()} ABGESCHLOSSEN</p>
+      <h2 class="panel-title">${escapeHtml(funnelLabel)} bestätigt.</h2>
+      <div class="message good" style="margin-top:12px;">${escapeHtml(successText)}</div>
+      <div class="funnel-overview-grid" style="margin-top:14px;">
+        <div class="summary-item">
+          <span class="summary-label">Zeitfenster</span>
+          <strong>${fmtDate(win?.starts_at)} → ${fmtDate(win?.ends_at)}</strong>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Schritte</span>
+          <strong>${state.checksFunnel?.steps?.length || 0} abgeschlossen</strong>
+        </div>
+      </div>
+      <div class="funnel-actions" style="margin-top:16px;">
+        <button type="button" id="checks-funnel-back-list">Zurück zur Übersicht</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderChecksWindowList() {
+  const session = state.checksSession;
+  app.innerHTML = `
+    <section class="public-shell">
+      <div class="public-hero">
+        <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+        <h1 class="hero-title">Hallo, ${escapeHtml(session.member_name)}.</h1>
+        <p class="subtle">Deine Trainingsfenster. Starte den Check-In vor dem Training und den Check-Out danach.</p>
+        <div class="public-meta">
+          <span>${escapeHtml(session.member_email)}</span>
+          <span>${session.windows.length} Fenster geladen</span>
+        </div>
+      </div>
+      <div style="padding:18px 20px;">
+        ${state.message ? `<div class="message ${state.messageType}" aria-live="polite" style="margin-bottom:14px;">${escapeHtml(state.message)}</div>` : ""}
+        ${session.windows.length ? session.windows.map((win) => {
+          const checkinDone = !!win.checkin_confirmed_at;
+          const checkoutDone = !!win.checkout_confirmed_at;
+          const canCheckin = win.has_checkin_funnel && !checkinDone;
+          const canCheckout = win.has_checkout_funnel && checkinDone && !checkoutDone;
+          return `
+            <div class="checks-window-card">
+              <div class="split">
+                <strong>${fmtDate(win.starts_at)} → ${fmtDate(win.ends_at)}</strong>
+                ${pill(win.status)}
+              </div>
+              <p class="subtle" style="margin-top:4px;">${win.booking_count > 1 ? `${win.booking_count} Buchungen · ` : ""}${escapeHtml(win.access_reason)}</p>
+              <div class="checks-status-row">
+                <div class="checks-status-badge ${checkinDone ? "done" : "pending"}">
+                  ${checkinDone ? "✓" : "○"} Check-In
+                  ${checkinDone ? `<span>${fmtDate(win.checkin_confirmed_at)}</span>` : ""}
+                </div>
+                <div class="checks-status-badge ${checkoutDone ? "done" : "pending"}">
+                  ${checkoutDone ? "✓" : "○"} Check-Out
+                  ${checkoutDone ? `<span>${fmtDate(win.checkout_confirmed_at)}</span>` : ""}
+                </div>
+              </div>
+              <div class="action-group" style="margin-top:12px;">
+                ${canCheckin
+                  ? `<button type="button" class="good" data-checks-checkin data-window-id="${win.id}">Check-In starten</button>`
+                  : win.has_checkin_funnel
+                    ? `<button type="button" disabled class="secondary">✓ Check-In erledigt</button>`
+                    : ""}
+                ${canCheckout
+                  ? `<button type="button" class="secondary" data-checks-checkout data-window-id="${win.id}">Check-Out starten</button>`
+                  : win.has_checkout_funnel && checkinDone
+                    ? `<button type="button" disabled class="secondary">✓ Check-Out erledigt</button>`
+                    : win.has_checkout_funnel
+                      ? `<button type="button" disabled class="secondary" title="Erst Check-In abschließen">Check-Out gesperrt</button>`
+                      : ""}
+              </div>
+            </div>
+          `;
+        }).join("") : '<div class="empty">Keine aktiven oder bevorstehenden Trainingsfenster</div>'}
+      </div>
+    </section>
+  `;
+  document.querySelectorAll("[data-checks-checkin]").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      startChecksFunnel(parseInt(btn.dataset.windowId), "checkin").catch(handleError));
+  });
+  document.querySelectorAll("[data-checks-checkout]").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      startChecksFunnel(parseInt(btn.dataset.windowId), "checkout").catch(handleError));
+  });
+}
+
+function renderChecksFunnel() {
+  const funnel = state.checksFunnel;
+  if (!funnel) {
+    app.innerHTML = `
+      <section class="public-shell">
+        <div class="public-hero">
+          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+          <h1 class="hero-title">Funnel wird geladen…</h1>
+        </div>
+      </section>`;
+    return;
+  }
+  const totalSteps = funnel.steps.length;
+  const isDone = state.checksFunnelStep > totalSteps;
+  const funnelLabel = state.checksFunnelType === "checkin" ? "Check-In" : "Check-Out";
+  let stepContent = isDone
+    ? renderChecksStepDone()
+    : state.checksFunnelStep === 0
+      ? renderChecksStepOverview()
+      : renderChecksStepN(state.checksFunnelStep);
+
+  app.innerHTML = `
+    <section class="public-shell">
+      <div class="public-hero">
+        <p class="eyebrow">// TWENTY4SEVEN-GYM — ${escapeHtml(funnelLabel.toUpperCase())}</p>
+        <h1 class="hero-title">${escapeHtml(funnel.template_name)}</h1>
+        ${checksProgressBar()}
+      </div>
+      <div style="padding:14px 16px;">${stepContent}</div>
+    </section>
+  `;
+
+  if (isDone) {
+    document.getElementById("checks-funnel-back-list")?.addEventListener("click", backToChecksWindowList);
+    return;
+  }
+  document.getElementById("checks-funnel-next")?.addEventListener("click", () => {
+    if (state.checksFunnelStep >= totalSteps) {
+      submitChecksFunnel().catch(handleError);
+    } else {
+      state.checksFunnelStep += 1;
+      render();
+    }
+  });
+  document.getElementById("checks-funnel-back")?.addEventListener("click", () => {
+    if (state.checksFunnelStep <= 0) {
+      backToChecksWindowList();
+    } else {
+      state.checksFunnelStep -= 1;
+      render();
+    }
+  });
+  document.querySelectorAll("[data-checks-note]").forEach((ta) => {
+    ta.addEventListener("input", (e) =>
+      updateChecksDraft(parseInt(ta.dataset.checksNote), "note", e.currentTarget.value));
+  });
+  document.querySelectorAll("[data-checks-check]").forEach((cb) => {
+    cb.addEventListener("change", (e) =>
+      updateChecksDraft(parseInt(cb.dataset.checksCheck), "checked", e.currentTarget.checked));
+  });
+}
+
+function renderChecksResolve() {
+  app.innerHTML = `
+    <section class="public-shell">
+      <div class="public-hero">
+        <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+        <h1 class="hero-title">Studio Check-In / Check-Out.</h1>
+        <p class="subtle">Melde dich mit deiner E-Mail und deinem Zugangscode an.</p>
+      </div>
+      <div style="padding:22px 26px;">
+        <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "E-Mail und aktuellen Zugangscode aus deiner Mail eingeben.")}</div>
+        <form id="checks-resolve-form" class="stack" style="margin-top:16px;">
+          <label for="checks-email">E-Mail
+            <input id="checks-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="deine@email.de" required />
+          </label>
+          <label for="checks-code">Zugangscode
+            <input id="checks-code" name="code" type="text" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" placeholder="6-stelliger Code" required />
+          </label>
+          <button type="submit">Trainingssession laden</button>
+        </form>
+      </div>
+    </section>
+  `;
+  document.getElementById("checks-resolve-form")
+    ?.addEventListener("submit", (e) => resolveChecks(e).catch(handleError));
+}
+
+function renderChecks() {
+  if (!state.checksSession) {
+    renderChecksResolve();
+  } else if (state.checksFunnel !== null && state.checksWindowId !== null) {
+    renderChecksFunnel();
+  } else {
+    renderChecksWindowList();
+  }
+}
+
+// ================================================================
+// ADMIN FUNNEL BUILDER
+// ================================================================
+
+async function loadFunnelDetail(id) {
+  state.selectedFunnelId = parseInt(id);
+  state.stepEditorId = null;
+  state.funnelDetail = await api(`./admin/funnels/${id}`);
+  render();
+}
+
+async function saveFunnelTemplate(event, templateId) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const nameVal = String(form.get("name") || "");
+    const slugVal = String(form.get("slug") || "").trim() ||
+      nameVal.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const payload = {
+      name: nameVal,
+      slug: slugVal,
+      funnel_type: form.get("funnel_type"),
+      description: String(form.get("description") || "") || null,
+    };
+    let result;
+    if (templateId) {
+      result = await api(`./admin/funnels/${templateId}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      result = await api("./admin/funnels", { method: "POST", body: JSON.stringify(payload) });
+    }
+    state.funnelsList = await api("./admin/funnels");
+    state.selectedFunnelId = result.id;
+    state.funnelDetail = await api(`./admin/funnels/${result.id}`);
+    setMessage("Funnel gespeichert.", "good");
+  }, "Speichere…");
+}
+
+async function saveFunnelStep(event, templateId, stepEditorId) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    const payload = {
+      template_id: templateId,
+      step_order: parseInt(form.get("step_order")) || 1,
+      title: form.get("title"),
+      body: String(form.get("body") || "") || null,
+      image_path: String(form.get("image_path") || "") || null,
+      requires_note: form.get("requires_note") === "on",
+      requires_photo: form.get("requires_photo") === "on",
+    };
+    const isNew = !stepEditorId || stepEditorId === "new";
+    if (isNew) {
+      await api(`./admin/funnels/${templateId}/steps`, { method: "POST", body: JSON.stringify(payload) });
+    } else {
+      await api(`./admin/funnels/${templateId}/steps/${stepEditorId}`, { method: "PUT", body: JSON.stringify(payload) });
+    }
+    state.funnelDetail = await api(`./admin/funnels/${templateId}`);
+    state.stepEditorId = null;
+    setMessage("Schritt gespeichert.", "good");
+  }, "Speichere…");
+}
+
+async function deleteFunnelStep(templateId, stepId) {
+  if (!window.confirm("Schritt löschen?")) return;
+  await api(`./admin/funnels/${templateId}/steps/${stepId}`, { method: "DELETE" });
+  state.funnelDetail = await api(`./admin/funnels/${templateId}`);
+  state.stepEditorId = null;
+  setMessage("Schritt gelöscht.", "good");
+  render();
+}
+
+function attachFunnelHandlers() {
+  document.getElementById("funnel-create-form")
+    ?.addEventListener("submit", (e) => saveFunnelTemplate(e, null).catch(handleError));
+  document.querySelectorAll("[data-funnel-id]").forEach((btn) => {
+    btn.addEventListener("click", () => loadFunnelDetail(btn.dataset.funnelId).catch(handleError));
+  });
+  document.getElementById("step-add-btn")?.addEventListener("click", () => {
+    state.stepEditorId = "new";
+    render();
+  });
+  document.getElementById("step-editor-cancel")?.addEventListener("click", () => {
+    state.stepEditorId = null;
+    render();
+  });
+  document.getElementById("step-editor-form")
+    ?.addEventListener("submit", (e) =>
+      saveFunnelStep(e, state.selectedFunnelId, state.stepEditorId).catch(handleError));
+  document.querySelectorAll("[data-step-edit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.stepEditorId = parseInt(btn.dataset.stepEdit);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-step-delete]").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      deleteFunnelStep(state.selectedFunnelId, parseInt(btn.dataset.stepDelete)).catch(handleError));
+  });
+}
+
+function renderStepEditor() {
+  const isNew = !state.stepEditorId || state.stepEditorId === "new";
+  const existingStep = isNew ? null
+    : state.funnelDetail?.steps?.find((s) => s.id === state.stepEditorId);
+  const nextOrder = isNew
+    ? Math.max(0, ...(state.funnelDetail?.steps?.map((s) => s.step_order) || [0])) + 1
+    : existingStep?.step_order || 1;
+  return `
+    <section class="step-editor-card">
+      <div class="panel-header">
+        <h3 class="panel-title">${isNew ? "Neuer Schritt" : "Schritt bearbeiten"}</h3>
+        <button type="button" id="step-editor-cancel" class="secondary">Abbrechen</button>
+      </div>
+      <form id="step-editor-form" class="stack">
+        <label for="step-order">Reihenfolge
+          <input id="step-order" name="step_order" type="number" inputmode="numeric" value="${nextOrder}" min="1" required />
+        </label>
+        <label for="step-title">Titel
+          <input id="step-title" name="title" type="text" autocomplete="off"
+            value="${escapeHtml(existingStep?.title || "")}" placeholder="Schritt-Überschrift" required />
+        </label>
+        <label for="step-body">Inhalt / Beschreibung
+          <textarea id="step-body" name="body"
+            placeholder="Text, der dem Member angezeigt wird…">${escapeHtml(existingStep?.body || "")}</textarea>
+        </label>
+        <label for="step-image">Bild-URL (optional)
+          <input id="step-image" name="image_path" type="text" autocomplete="off"
+            value="${escapeHtml(existingStep?.image_path || "")}"
+            placeholder="/media/uploads/bild.jpg oder https://…" />
+        </label>
+        <label class="checkbox-row" for="step-requires-note">
+          <input id="step-requires-note" name="requires_note" type="checkbox"
+            ${existingStep?.requires_note ? "checked" : ""} />
+          <span>Notiz erforderlich — Member muss Text eingeben</span>
+        </label>
+        <label class="checkbox-row" for="step-requires-photo">
+          <input id="step-requires-photo" name="requires_photo" type="checkbox"
+            ${existingStep?.requires_photo ? "checked" : ""} />
+          <span>Foto erforderlich</span>
+        </label>
+        <button type="submit">${isNew ? "Schritt Anlegen" : "Schritt Speichern"}</button>
+      </form>
+    </section>
+  `;
+}
+
+function renderFunnelsView() {
+  const templates = state.funnelsList || [];
+  const detail = state.funnelDetail;
+  return `
+    <div class="detail-layout">
+      <div class="detail-column">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Funnel-Templates</h2>
+              <p class="panel-kicker">Check-In und Check-Out Funnels für /checks definieren. Der jeweils neueste pro Typ ist aktiv.</p>
+            </div>
+          </div>
+          <form id="funnel-create-form" class="stack">
+            <label for="funnel-name">Name
+              <input id="funnel-name" name="name" type="text" autocomplete="off"
+                placeholder="z.B. Standard Check-In" required />
+            </label>
+            <label for="funnel-slug">Slug (auto aus Name wenn leer)
+              <input id="funnel-slug" name="slug" type="text" autocomplete="off"
+                placeholder="standard-check-in" />
+            </label>
+            <label for="funnel-type">Typ
+              <select id="funnel-type" name="funnel_type">
+                <option value="checkin">Check-In</option>
+                <option value="checkout">Check-Out</option>
+              </select>
+            </label>
+            <label for="funnel-desc">Beschreibung
+              <input id="funnel-desc" name="description" type="text" autocomplete="off"
+                placeholder="Optionale Beschreibung…" />
+            </label>
+            <button type="submit">Funnel Erstellen</button>
+          </form>
+          <div class="entity-list" style="margin-top:16px;">
+            ${templates.length ? templates.map((t) => `
+              <button type="button"
+                class="list-item entity-button ${state.selectedFunnelId === t.id ? "active" : ""}"
+                data-funnel-id="${t.id}">
+                <div class="split">
+                  <strong>${escapeHtml(t.name)}</strong>
+                  ${pill(t.funnel_type)}
+                </div>
+                <p class="subtle">${escapeHtml(t.slug)}</p>
+              </button>
+            `).join("") : '<div class="empty">Noch keine Funnels angelegt</div>'}
+          </div>
+        </section>
+      </div>
+
+      <div class="detail-column">
+        ${detail ? `
+          <section class="detail-card">
+            <p class="eyebrow">// ${detail.template.funnel_type.toUpperCase()}-FUNNEL</p>
+            <h2 class="panel-title">${escapeHtml(detail.template.name)}</h2>
+            ${detail.template.description
+              ? `<p class="subtle" style="margin-top:4px;">${escapeHtml(detail.template.description)}</p>`
+              : ""}
+            <div class="detail-meta" style="margin-top:10px;">
+              ${pill(detail.template.funnel_type)}
+              <span class="code">${escapeHtml(detail.template.slug)}</span>
+              <span>${detail.steps.length} Schritte</span>
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <div class="panel-header">
+              <div>
+                <h3 class="panel-title">Schritte</h3>
+                <p class="panel-kicker">Reihenfolge per step_order. Inhalt: Text, Bild, Notiz-Pflicht.</p>
+              </div>
+              <button type="button" id="step-add-btn" class="secondary">+ Schritt</button>
+            </div>
+            <div class="stack">
+              ${detail.steps.length ? detail.steps.map((step) => `
+                <div class="list-item">
+                  <div class="split">
+                    <strong>${escapeHtml(step.step_order + ". " + step.title)}</strong>
+                    <div class="row">
+                      ${step.requires_note ? `<span class="pill info">Notiz</span>` : ""}
+                      ${step.requires_photo ? `<span class="pill info">Foto</span>` : ""}
+                      ${step.image_path ? `<span class="pill good">Bild</span>` : ""}
+                    </div>
+                  </div>
+                  ${step.body
+                    ? `<p class="subtle" style="margin-top:4px;">${escapeHtml(step.body.slice(0, 100))}${step.body.length > 100 ? "…" : ""}</p>`
+                    : ""}
+                  <div class="action-group" style="margin-top:8px;">
+                    <button type="button" class="secondary" data-step-edit="${step.id}">Bearbeiten</button>
+                    <button type="button" class="bad" data-step-delete="${step.id}">Löschen</button>
+                  </div>
+                </div>
+              `).join("") : '<div class="empty">Noch keine Schritte — klicke "+ Schritt"</div>'}
+            </div>
+          </section>
+
+          ${state.stepEditorId !== null ? renderStepEditor() : ""}
+        ` : `
+          <section class="detail-card">
+            <p class="eyebrow">// FUNNEL EDITOR</p>
+            <h2 class="panel-title">Funnel auswählen</h2>
+            <p class="subtle">Wähle links einen Funnel um Schritte zu bearbeiten, oder lege einen neuen an.</p>
+            <p class="subtle" style="margin-top:10px;">Der jeweils neueste Funnel pro Typ ist aktiv auf <span class="code">/checks</span>.</p>
+          </section>
+        `}
+      </div>
+    </div>
+  `;
+}
+
+// ================================================================
+// MAIN RENDER DISPATCHER
+// ================================================================
+
+function render() {
+  if (window.location.pathname.endsWith("/checks")) {
+    if (
+      !state.checksSession
+      && !state.checksAttempted
+      && new URLSearchParams(window.location.search).get("token")
+    ) {
+      app.innerHTML = `
+        <section class="auth-shell">
+          <div class="auth-panel">
+            <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+            <h1>Session wird geladen…</h1>
+            <p class="subtle">Deine Trainingsfenster werden vorbereitet.</p>
+          </div>
+        </section>
+      `;
+      loadChecksSessionFromUrl().catch(handleError);
+      return;
+    }
+    renderChecks();
+    return;
+  }
+  if (window.location.pathname.endsWith("/check-in")) {
+    if (
+      !state.publicCheckInSession
+      && !state.publicCheckInAttempted
+      && new URLSearchParams(window.location.search).get("token")
+    ) {
+      app.innerHTML = `
+        <section class="auth-shell">
+          <div class="auth-panel">
+            <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+            <h1>Check-in wird geladen…</h1>
+            <p class="subtle">Dein Trainingsblock wird vorbereitet.</p>
+          </div>
+        </section>
+      `;
+      loadPublicCheckInSession().catch(handleError);
+      return;
+    }
+    renderPublicCheckIn();
+    return;
+  }
+  if (window.location.pathname.endsWith("/reset-password")) {
+    renderReset();
+    return;
+  }
+  if (!state.token) {
+    renderAuth();
+    return;
+  }
+  if (!state.me) {
+    app.innerHTML = `
+      <section class="auth-shell">
+        <div class="auth-panel">
+          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+          <h1>Wird initialisiert…</h1>
+          <p class="subtle">Betriebsdaten, Schlossstatus und Alerts werden geladen.</p>
+        </div>
+      </section>
+    `;
+    loadAppData().catch((error) => {
+      localStorage.removeItem("opengym_token");
+      localStorage.removeItem("opengym_role");
+      state.token = "";
+      state.role = "";
+      setMessage(error.message, "bad");
+    });
+    return;
+  }
+  renderApp();
+}
+  if (window.location.pathname.endsWith("/check-in")) {
+    if (
+      !state.publicCheckInSession
+      && !state.publicCheckInAttempted
+      && new URLSearchParams(window.location.search).get("token")
+    ) {
+      app.innerHTML = `
+        <section class="auth-shell">
+          <div class="auth-panel">
+            <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+            <h1>Check-in wird geladen…</h1>
+            <p class="subtle">Dein Trainingsblock wird vorbereitet.</p>
+          </div>
+        </section>
+      `;
+      loadPublicCheckInSession().catch(handleError);
+      return;
+    }
+    renderPublicCheckIn();
+    return;
+  }
+  if (window.location.pathname.endsWith("/reset-password")) {
+    renderReset();
+    return;
+  }
+  if (!state.token) {
+    renderAuth();
+    return;
+  }
+  if (!state.me) {
+    app.innerHTML = `
+      <section class="auth-shell">
+        <div class="auth-panel">
+          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
+          <h1>Wird initialisiert…</h1>
+          <p class="subtle">Betriebsdaten, Schlossstatus und Alerts werden geladen.</p>
+        </div>
+      </section>
+    `;
+    loadAppData().catch((error) => {
+      localStorage.removeItem("opengym_token");
+      localStorage.removeItem("opengym_role");
+      state.token = "";
+      state.role = "";
+      setMessage(error.message, "bad");
+    });
+    return;
+  }
+  renderApp();
+}
+
+render();

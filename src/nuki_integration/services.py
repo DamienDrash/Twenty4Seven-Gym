@@ -256,6 +256,211 @@ def build_check_in_link(*, access_window_id: int, ends_at: datetime, settings: S
     return f"{settings.app_public_base_url.rstrip('/')}/check-in?token={token}"
 
 
+def issue_checks_token(
+    *,
+    member_id: int,
+    settings: Settings,
+    ttl_seconds: int = 86400,
+) -> str:
+    """Issue a JWT for a member's /checks session (24h default)."""
+    return issue_token(
+        subject=f"checks:{member_id}",
+        role="checks",
+        secret=settings.jwt_secret,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def decode_checks_token(*, token: str, settings: Settings) -> int:
+    """Decode a /checks session JWT and return the member_id."""
+    payload = decode_token(token, settings.jwt_secret)
+    if payload.get("role") != "checks":
+        raise ValueError("Ungültiges Session-Token.")
+    subject = str(payload.get("sub") or "")
+    if not subject.startswith("checks:"):
+        raise ValueError("Ungültiges Session-Token.")
+    return int(subject.split(":", 1)[1])
+
+
+def resolve_checks_session(
+    *,
+    db: Database,
+    settings: Settings,
+    token: str | None = None,
+    email: str | None = None,
+    code: str | None = None,
+) -> dict[str, object]:
+    """Authenticate a member for the /checks shell."""
+    if token:
+        member_id = decode_checks_token(token=token, settings=settings)
+        member = db.get_member_by_id(member_id=member_id)
+        if not member:
+            raise ValueError("Mitglied nicht gefunden.")
+    else:
+        if not email or not code:
+            raise ValueError("E-Mail und Code sind erforderlich.")
+        verified = db.verify_member_access_code(
+            email=email,
+            raw_code=code.strip(),
+            now=datetime.now(UTC),
+        )
+        if not verified:
+            raise ValueError(
+                "Code ungültig oder kein aktives Zugangsfenster gefunden."
+            )
+        member_id = int(verified["member_id"])
+        member = db.get_member_by_id(member_id=member_id)
+        if not member:
+            raise ValueError("Mitglied nicht gefunden.")
+
+    has_checkin_funnel = db.get_funnel_by_type("checkin") is not None
+    has_checkout_funnel = db.get_funnel_by_type("checkout") is not None
+
+    windows_raw = db.list_member_windows_with_status(
+        member_id=member_id,
+        from_dt=datetime.now(UTC) - timedelta(hours=1),
+    )
+
+    session_token = issue_checks_token(
+        member_id=member_id,
+        settings=settings,
+        ttl_seconds=86400,
+    )
+    member_name = (
+        " ".join(
+            str(p)
+            for p in [member.get("first_name"), member.get("last_name")]
+            if p
+        ).strip()
+        or str(member.get("email") or "Member")
+    )
+    return {
+        "token": session_token,
+        "member_name": member_name,
+        "member_email": str(member.get("email") or ""),
+        "windows": [
+            {
+                **w,
+                "has_checkin_funnel": has_checkin_funnel,
+                "has_checkout_funnel": has_checkout_funnel,
+            }
+            for w in windows_raw
+        ],
+    }
+
+
+def get_active_funnel_for_type(
+    *,
+    db: Database,
+    funnel_type: str,
+) -> dict[str, object] | None:
+    """Return the active (most recent) funnel template for a given type."""
+    return db.get_funnel_by_type(funnel_type)
+
+
+def submit_checks_funnel(
+    *,
+    db: Database,
+    settings: Settings,
+    token: str,
+    window_id: int,
+    funnel_type: str,
+    steps_data: list[dict[str, object]],
+) -> dict[str, object]:
+    """Validate and persist a funnel submission (checkin or checkout)."""
+    member_id = decode_checks_token(token=token, settings=settings)
+
+    funnel = db.get_funnel_by_type(funnel_type)
+    if not funnel:
+        raise ValueError(f"Kein aktiver {funnel_type}-Funnel konfiguriert.")
+
+    window = db.get_access_window_detail(access_window_id=window_id)
+    if not window:
+        raise ValueError("Zugangsfenster nicht gefunden.")
+    if int(window["member_id"]) != member_id:
+        raise ValueError("Zugangsfenster gehört nicht zu diesem Mitglied.")
+
+    step_map = {int(s["id"]): s for s in (funnel.get("steps") or [])}
+
+    for step in funnel.get("steps") or []:
+        step_id = int(step["id"])
+        if not step.get("requires_note"):
+            continue
+        answer = next(
+            (d for d in steps_data if int(d.get("step_id", 0)) == step_id),
+            None,
+        )
+        note = (answer.get("note") or "").strip() if answer else ""
+        if not note:
+            raise ValueError(
+                f"Schritt '{step['title']}' erfordert eine Notiz."
+            )
+
+    submission = db.create_funnel_submission(
+        access_window_id=window_id,
+        template_id=int(funnel["id"]),
+        entry_source=f"checks-{funnel_type}",
+        success=True,
+    )
+    for step_data in steps_data:
+        step_id = int(step_data.get("step_id", 0))
+        if step_id not in step_map:
+            continue
+        db.create_funnel_step_event(
+            submission_id=int(submission["id"]),
+            step_id=step_id,
+            status="completed",
+            note=step_data.get("note") or None,
+            photo_path=None,
+        )
+
+    checklist_payload = [
+        {
+            "step_id": d.get("step_id"),
+            "checked": d.get("checked", False),
+            "note": d.get("note", ""),
+        }
+        for d in steps_data
+    ]
+
+    if funnel_type == "checkin":
+        record = db.upsert_access_window_checkin(
+            access_window_id=window_id,
+            member_id=member_id,
+            source="checks-funnel",
+            rules_accepted=True,
+            checklist=checklist_payload,
+        )
+    else:
+        record = db.upsert_window_checkout(
+            access_window_id=window_id,
+            member_id=member_id,
+            source="checks-funnel",
+            checklist=checklist_payload,
+        )
+
+    return {
+        "submitted": True,
+        "funnel_type": funnel_type,
+        "window_id": window_id,
+        "confirmed_at": record.get("confirmed_at"),
+    }
+
+
+def build_checks_link(
+    *,
+    member_id: int,
+    settings: Settings,
+    ttl_seconds: int = 86400,
+) -> str:
+    token = issue_checks_token(
+        member_id=member_id,
+        settings=settings,
+        ttl_seconds=ttl_seconds,
+    )
+    return f"{settings.app_public_base_url.rstrip('/')}/checks?token={token}"
+
+
 def _notify_telegram(
     *,
     db: Database,
@@ -390,6 +595,10 @@ def _issue_window_code(
                     code=code,
                     valid_from=_berlin(window["starts_at"], settings.timezone).isoformat(),
                     valid_until=_berlin(window["ends_at"], settings.timezone).isoformat(),
+                    checks_url=build_checks_link(
+                        member_id=int(window["member_id"]),
+                        settings=settings,
+                    ),
                     check_in_url=(
                         build_check_in_link(
                             access_window_id=int(window["id"]),
@@ -953,6 +1162,10 @@ def provision_due_codes(db: Database, settings: Settings) -> int:
                             code=code,
                             valid_from=starts_at.isoformat(),
                             valid_until=ends_at.isoformat(),
+                            checks_url=build_checks_link(
+                                member_id=int(window["member_id"]),
+                                settings=settings,
+                            ),
                             check_in_url=(
                                 build_check_in_link(
                                     access_window_id=int(window["id"]),

@@ -310,6 +310,70 @@ class FunnelSubmission(BaseModel):
     steps: list[FunnelStepEvent]
 
 
+class ChecksResolveRequest(BaseModel):
+    """Public /checks login: email + current access code."""
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=12)
+
+
+class ChecksWindowInfo(BaseModel):
+    """Summary of a single access window as returned to the member."""
+    id: int
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+    booking_count: int
+    access_reason: str
+    checkin_confirmed_at: datetime | None = None
+    checkout_confirmed_at: datetime | None = None
+    has_checkin_funnel: bool = False
+    has_checkout_funnel: bool = False
+
+
+class ChecksSessionResponse(BaseModel):
+    """Full session payload returned after successful resolve."""
+    token: str
+    member_name: str
+    member_email: str
+    windows: list[ChecksWindowInfo]
+
+
+class ChecksFunnelStepData(BaseModel):
+    """One step answer submitted by the member."""
+    step_id: int
+    checked: bool = False
+    note: str = ""
+
+
+class ChecksSubmitRequest(BaseModel):
+    """Payload for checkin or checkout funnel submission."""
+    token: str = Field(min_length=20)
+    window_id: int
+    funnel_type: str = Field(pattern="^(checkin|checkout)$")
+    steps: list[ChecksFunnelStepData] = Field(default_factory=list)
+
+
+class ChecksFunnelStep(BaseModel):
+    """One step of a funnel template as returned to the public UI."""
+    id: int
+    template_id: int
+    step_order: int
+    title: str
+    body: str | None = None
+    image_path: str | None = None
+    requires_note: bool
+    requires_photo: bool
+
+
+class ChecksFunnelResponse(BaseModel):
+    """Active funnel template with all steps."""
+    template_id: int
+    template_name: str
+    funnel_type: str
+    description: str | None = None
+    steps: list[ChecksFunnelStep]
+
+
 class MagiclineWebhookEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
 

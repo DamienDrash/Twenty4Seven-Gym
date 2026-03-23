@@ -49,6 +49,7 @@ class EmailService:
         valid_from: str,
         valid_until: str,
         check_in_url: str | None = None,
+        checks_url: str | None = None,
     ) -> bool:
         if not self._smtp_config.host or not self._smtp_config.from_email:
             logger.warning("SMTP not configured, skipping access email for %s", to_email)
@@ -58,18 +59,25 @@ class EmailService:
         message["Subject"] = "Dein Zugangscode für Freies Training"
         message["From"] = self._smtp_config.from_email
         message["To"] = to_email
-        check_in_text = (
-            f"\nVor deinem Training bitte Hausregeln lesen und Check-in abschließen:\n"
-            f"{check_in_url}\n"
-            if check_in_url
+        checks_block = (
+            f"\nTrainings-Check-In / Check-Out (bitte vor und nach dem Training):\n"
+            f"{checks_url}\n"
+            if checks_url
             else ""
         )
+        check_in_block = (
+            f"\nAlternativ (alter Check-in Funnel):\n{check_in_url}\n"
+            if check_in_url and not checks_url
+            else ""
+        )
+
         message.set_content(
             f"Hallo {member_name},\n\n"
             f"dein Zugangscode lautet: {code}\n"
             f"Gültig von: {valid_from}\n"
             f"Gültig bis: {valid_until}\n"
-            f"{check_in_text}"
+            f"{checks_block}"
+            f"{check_in_block}"
         )
 
         with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port, timeout=20) as smtp:

@@ -23,6 +23,10 @@ from .models import (
     AlertRecord,
     CheckInSettingsResponse,
     CheckInSettingsUpdateRequest,
+    ChecksFunnelResponse,
+    ChecksResolveRequest,
+    ChecksSessionResponse,
+    ChecksSubmitRequest,
     CompletePasswordResetRequest,
     EmailTestRequest,
     ForgotPasswordRequest,
@@ -65,14 +69,17 @@ from .services import (
     inspect_magicline_member_by_email,
     issue_emergency_access_code,
     list_funnel_templates,
+    get_active_funnel_for_type,
     list_magicline_bookables,
     process_magicline_webhook,
     provision_due_codes,
     request_password_reset,
     resend_access_code,
     resolve_public_check_in,
+    resolve_checks_session,
     save_media_file,
     submit_public_check_in,
+    submit_checks_funnel,
     sync_magicline_bookings,
     sync_magicline_member_by_email,
     upsert_funnel_step_service,
@@ -152,6 +159,118 @@ def root() -> dict[str, str]:
 @app.get("/check-in", include_in_schema=False)
 def frontend_shell() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/checks", include_in_schema=False)
+def checks_shell() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.post("/public/checks/resolve", response_model=ChecksSessionResponse)
+def public_checks_resolve(
+    payload: ChecksResolveRequest,
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> ChecksSessionResponse:
+    try:
+        result = resolve_checks_session(
+            db=db,
+            settings=runtime_settings,
+            email=str(payload.email),
+            code=payload.code.strip(),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return ChecksSessionResponse.model_validate(result)
+
+
+@app.get("/public/checks/session", response_model=ChecksSessionResponse)
+def public_checks_session(
+    token: str = Query(...),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> ChecksSessionResponse:
+    try:
+        result = resolve_checks_session(
+            db=db,
+            settings=runtime_settings,
+            token=token,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return ChecksSessionResponse.model_validate(result)
+
+
+@app.get("/public/checks/funnel/{funnel_type}", response_model=ChecksFunnelResponse)
+def public_checks_funnel_get(
+    funnel_type: str,
+    db: Database = Depends(get_database),
+) -> ChecksFunnelResponse:
+    funnel = get_active_funnel_for_type(db=db, funnel_type=funnel_type)
+    if not funnel:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Kein aktiver {funnel_type}-Funnel konfiguriert.",
+        )
+    return ChecksFunnelResponse(
+        template_id=int(funnel["id"]),
+        template_name=str(funnel["name"]),
+        funnel_type=str(funnel["funnel_type"]),
+        description=funnel.get("description"),
+        steps=funnel.get("steps") or [],
+    )
+
+
+@app.post("/public/checks/window/{window_id}/checkin")
+def public_checks_window_checkin(
+    window_id: int,
+    payload: ChecksSubmitRequest,
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, object]:
+    try:
+        return submit_checks_funnel(
+            db=db,
+            settings=runtime_settings,
+            token=payload.token,
+            window_id=window_id,
+            funnel_type="checkin",
+            steps_data=[s.model_dump() for s in payload.steps],
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@app.post("/public/checks/window/{window_id}/checkout")
+def public_checks_window_checkout(
+    window_id: int,
+    payload: ChecksSubmitRequest,
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, object]:
+    try:
+        return submit_checks_funnel(
+            db=db,
+            settings=runtime_settings,
+            token=payload.token,
+            window_id=window_id,
+            funnel_type="checkout",
+            steps_data=[s.model_dump() for s in payload.steps],
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @app.get("/healthz/live")
