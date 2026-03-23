@@ -30,6 +30,7 @@ env/
 *.sqlite
 *.sqlite3
 *.log
+data/
 
 # Editor / OS noise
 .DS_Store

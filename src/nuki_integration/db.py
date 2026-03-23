@@ -243,28 +243,41 @@ class Database:
             yield conn
 
     def ensure_schema(self) -> None:
+        lock_id = 1234567890
+        schema_needed = False
         with self.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(SCHEMA_SQL)
-                cur.execute(
-                    """
-                    ALTER TABLE access_windows
-                    ADD COLUMN IF NOT EXISTS booking_ids JSONB NOT NULL DEFAULT '[]'::jsonb
-                    """
-                )
-            cur.execute(
-                """
-                ALTER TABLE access_windows
-                ADD COLUMN IF NOT EXISTS booking_count INTEGER NOT NULL DEFAULT 1
-                """
-            )
-            cur.execute(
-                """
-                ALTER TABLE access_window_checkouts
-                ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'checks-funnel'
-                """
-            )
-        conn.commit()
+                cur.execute("SELECT pg_advisory_lock(%s)", (lock_id,))
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT to_regclass('public.users')")
+                    row = cur.fetchone()
+                    schema_needed = row is None or row.get("to_regclass") is None
+                if schema_needed:
+                    with conn.cursor() as cur:
+                        cur.execute(SCHEMA_SQL)
+                        cur.execute(
+                            """
+                            ALTER TABLE access_windows
+                            ADD COLUMN IF NOT EXISTS booking_ids JSONB NOT NULL DEFAULT '[]'::jsonb
+                            """
+                        )
+                        cur.execute(
+                            """
+                            ALTER TABLE access_windows
+                            ADD COLUMN IF NOT EXISTS booking_count INTEGER NOT NULL DEFAULT 1
+                            """
+                        )
+                        cur.execute(
+                            """
+                            ALTER TABLE access_window_checkouts
+                            ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'checks-funnel'
+                            """
+                        )
+            finally:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+            conn.commit()
 
     def health_check(self) -> bool:
         try:
