@@ -14,18 +14,13 @@ const state = {
   lockLog: [],
   emailSettings: null,
   telegramSettings: null,
-  checkInSettings: null,
+  nukiSettings: null,
+  magiclineSettings: null,
+  studioLinks: null,
   view: params.get("view") || "overview",
   selectedMemberId: params.get("member") || "",
   message: "",
   messageType: "",
-  publicCheckInSession: null,
-  publicCheckInAttempted: false,
-  publicCheckInStep: 1,
-  publicCheckInDraft: {
-    rulesAccepted: false,
-    checklist: {},
-  },
   // ── New /checks public shell ───────────────────────────────────
   checksSession: null,
   checksAttempted: false,
@@ -34,6 +29,7 @@ const state = {
   checksFunnel: null,
   checksFunnelStep: 0,
   checksFunnelDraft: {},
+  checksStepError: null,
   checksLoading: false,
   // ── Admin Funnel Builder ───────────────────────────────────────
   funnelsList: [],
@@ -78,9 +74,18 @@ function escapeHtml(value) {
   }[char]));
 }
 
+let _messageDismissTimer = null;
 function setMessage(text, type = "") {
   state.message = text;
   state.messageType = type;
+  clearTimeout(_messageDismissTimer);
+  if (text && type !== "bad") {
+    _messageDismissTimer = setTimeout(() => {
+      state.message = "";
+      state.messageType = "";
+      render();
+    }, 5000);
+  }
   render();
 }
 
@@ -136,8 +141,18 @@ function pill(value) {
   return `<span class="pill ${tone}">${escapeHtml(value)}</span>`;
 }
 
-function icon(symbol) {
-  return `<span class="icon-slot" aria-hidden="true">${symbol}</span>`;
+const STATUS_LABELS = {
+  active: "Aktiv",
+  inactive: "Inaktiv",
+  pending: "Ausstehend",
+  expired: "Abgelaufen",
+  locked: "Gesperrt",
+  done: "Abgeschlossen",
+  unknown: "Unbekannt",
+};
+
+function translateStatus(s) {
+  return STATUS_LABELS[s?.toLowerCase()] ?? s;
 }
 
 function currentMember() {
@@ -156,6 +171,8 @@ function urgentAlerts() {
 
 async function login(event) {
   event.preventDefault();
+  state.message = "";
+  state.messageType = "";
   await withPending(event.currentTarget, async () => {
     const form = new FormData(event.currentTarget);
     const data = await api("./auth/login", {
@@ -202,27 +219,37 @@ async function resetPassword(event) {
 
 async function loadAppData() {
   state.me = await api("./me");
-  const requests = [
-    api("./admin/members?limit=12"),
-    api("./admin/access-windows?limit=12"),
-    api("./admin/alerts?limit=12"),
-    api("./admin/admin-actions?limit=12"),
+  const [members, windows, alerts, actions, lockStatus, lockLog] = await Promise.all([
+    api("./admin/members?limit=50"),
+    api("./admin/access-windows?limit=50"),
+    api("./admin/alerts?limit=50"),
+    api("./admin/admin-actions?limit=50"),
     api("./admin/lock/status"),
-    api("./admin/lock/log?limit=12"),
-  ];
+    api("./admin/lock/log?limit=50"),
+  ]);
+  state.members = members;
+  state.windows = windows;
+  state.alerts = alerts;
+  state.actions = actions;
+  state.lockStatus = lockStatus;
+  state.lockLog = lockLog;
   if (state.role === "admin") {
-    requests.push(
+    const [users, emailSettings, telegramSettings, nukiSettings, magiclineSettings, studioLinks, funnelsList] = await Promise.all([
       api("./admin/users?limit=20"),
       api("./admin/system/email-settings"),
       api("./admin/system/telegram-settings"),
-      api("./admin/system/check-in-settings"),
+      api("./admin/system/nuki-settings"),
+      api("./admin/system/magicline-settings"),
+      api("./admin/system/studio-links"),
       api("./admin/funnels"),
-    );
-  }
-  const results = await Promise.all(requests);
-  [state.members, state.windows, state.alerts, state.actions, state.lockStatus, state.lockLog] = results;
-  if (state.role === "admin") {
-    [state.users, state.emailSettings, state.telegramSettings, state.checkInSettings, state.funnelsList] = results.slice(6);
+    ]);
+    state.users = users;
+    state.emailSettings = emailSettings;
+    state.telegramSettings = telegramSettings;
+    state.nukiSettings = nukiSettings;
+    state.magiclineSettings = magiclineSettings;
+    state.studioLinks = studioLinks;
+    state.funnelsList = funnelsList;
   }
   if (state.selectedMemberId) {
     await loadMemberDetail(state.selectedMemberId, false);
@@ -244,10 +271,32 @@ function setView(view) {
   render();
 }
 
+function showConfirm(message) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "confirm-overlay";
+    overlay.innerHTML = `
+      <div class="confirm-dialog">
+        <p class="confirm-message">${escapeHtml(message)}</p>
+        <div class="action-group">
+          <button type="button" class="secondary" id="confirm-cancel">Abbrechen</button>
+          <button type="button" class="warn" id="confirm-ok">Bestätigen</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const cleanup = (result) => { overlay.remove(); resolve(result); };
+    overlay.querySelector("#confirm-ok").addEventListener("click", () => cleanup(true));
+    overlay.querySelector("#confirm-cancel").addEventListener("click", () => cleanup(false));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) cleanup(false); });
+  });
+}
+
 async function runWindowAction(windowId, action) {
   const config = actionCopy[action] || { success: `${action} abgeschlossen.`, confirm: "" };
-  if (config.confirm && !window.confirm(config.confirm)) {
-    return;
+  if (config.confirm) {
+    const confirmed = await showConfirm(config.confirm);
+    if (!confirmed) return;
   }
   await api(`./admin/access-windows/${windowId}/${action}`, { method: "POST" });
   setMessage(config.success, "good");
@@ -255,7 +304,7 @@ async function runWindowAction(windowId, action) {
 }
 
 async function remoteOpen(trigger) {
-  if (!window.confirm("Remote Open jetzt auslösen bzw. protokollieren?")) {
+  if (!await showConfirm("Remote Open jetzt auslösen bzw. protokollieren?")) {
     return;
   }
   await withPending(trigger, async () => {
@@ -270,7 +319,7 @@ async function remoteOpen(trigger) {
 
 async function runFullSync() {
   await api("./admin/sync", { method: "POST" });
-  setMessage("Magicline-Sync ausgeführt.", "good");
+  setMessage("Magioline-Sync ausgeführt.", "good");
   await loadAppData();
 }
 
@@ -299,7 +348,7 @@ async function syncMember(event) {
     const form = new FormData(event.currentTarget);
     const email = String(form.get("email") || "").trim();
     await api(`./admin/sync/member?email=${encodeURIComponent(email)}`, { method: "POST" });
-    setMessage("Mitgliedssync abgeschlossen.", "good");
+    setMessage("Magioline-Sync für Mitglied abgeschlossen.", "good");
     await loadAppData();
   }, "Sync läuft…");
 }
@@ -333,7 +382,7 @@ async function updateSmtp(event) {
         smtp_port: Number(form.get("smtp_port")),
         smtp_username: form.get("smtp_username"),
         smtp_password: form.get("smtp_password"),
-        smtp_use_tls: true,
+        smtp_use_tls: form.get("smtp_use_tls") === "on",
         smtp_from_email: form.get("smtp_from_email"),
       }),
     });
@@ -356,13 +405,18 @@ async function testEmail(event) {
 
 async function updateTelegram(event) {
   event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const chatId = String(form.get("telegram_chat_id") || "").trim();
+  if (chatId && !/^-?\d+$/.test(chatId)) {
+    setMessage("Chat ID muss eine numerische Telegram-ID sein (z.B. -1001234567890)", "bad");
+    return;
+  }
   await withPending(event.currentTarget, async () => {
-    const form = new FormData(event.currentTarget);
     await api("./admin/system/telegram-settings", {
       method: "PUT",
       body: JSON.stringify({
         telegram_bot_token: form.get("telegram_bot_token"),
-        telegram_chat_id: form.get("telegram_chat_id"),
+        telegram_chat_id: chatId,
       }),
     });
     setMessage("Telegram-Einstellungen gespeichert.", "good");
@@ -382,142 +436,54 @@ async function testTelegram(event) {
   }, "Telegram-Test läuft…");
 }
 
-async function updateCheckInSettings(event) {
+async function updateNukiSettings(event) {
   event.preventDefault();
   await withPending(event.currentTarget, async () => {
     const form = new FormData(event.currentTarget);
-    await api("./admin/system/check-in-settings", {
+    await api("./admin/system/nuki-settings", {
       method: "PUT",
       body: JSON.stringify({
-        enabled: form.get("enabled") === "on",
-        title: form.get("title"),
-        intro: form.get("intro"),
-        rules_heading: form.get("rules_heading"),
-        rules_body: form.get("rules_body"),
-        checklist_heading: form.get("checklist_heading"),
-        checklist_items: checklistItemsFromText(form.get("checklist_items")),
-        success_message: form.get("success_message"),
+        nuki_api_token: form.get("nuki_api_token") || "",
+        nuki_smartlock_id: parseInt(form.get("nuki_smartlock_id") || "0", 10),
+        nuki_dry_run: form.get("nuki_dry_run") === "on",
       }),
     });
-    setMessage("Check-in-Konfiguration gespeichert.", "good");
+    setMessage("Nuki-Einstellungen gespeichert.", "good");
     await loadAppData();
-  }, "Check-in wird gespeichert…");
+  }, "Nuki wird gespeichert…");
 }
 
-async function loadPublicCheckInSession() {
-  const token = new URLSearchParams(window.location.search).get("token");
-  if (!token) {
-    render();
-    return;
-  }
-  state.publicCheckInAttempted = true;
-  const session = await api(`./public/check-in/session?token=${encodeURIComponent(token)}`);
-  state.publicCheckInSession = session;
-  state.publicCheckInStep = session.window.is_confirmed ? 4 : 1;
-  state.publicCheckInDraft = {
-    rulesAccepted: session.window.is_confirmed,
-    checklist: Object.fromEntries(
-      (session.settings?.checklist_items || []).map((item) => [item.id, session.window.is_confirmed]),
-    ),
-  };
-  render();
-}
-
-async function resolvePublicCheckIn(event) {
+async function updateMagiclineSettings(event) {
   event.preventDefault();
   await withPending(event.currentTarget, async () => {
     const form = new FormData(event.currentTarget);
-    const session = await api("./public/check-in/resolve", {
-      method: "POST",
+    await api("./admin/system/magicline-settings", {
+      method: "PUT",
       body: JSON.stringify({
-        email: form.get("email"),
-        code: form.get("code"),
+        magicline_base_url: form.get("magicline_base_url") || "",
+        magicline_api_key: form.get("magicline_api_key") || "",
+        magicline_webhook_api_key: form.get("magicline_webhook_api_key") || "",
+        magicline_studio_id: parseInt(form.get("magicline_studio_id") || "0", 10),
+        magicline_studio_name: form.get("magicline_studio_name") || "",
+        magicline_relevant_appointment_title: form.get("magicline_relevant_appointment_title") || "Freies Training",
       }),
     });
-    state.publicCheckInSession = session;
-    state.publicCheckInAttempted = true;
-    state.publicCheckInStep = session.window.is_confirmed ? 4 : 1;
-    state.publicCheckInDraft = {
-      rulesAccepted: session.window.is_confirmed,
-      checklist: Object.fromEntries(
-        (session.settings?.checklist_items || []).map((item) => [item.id, session.window.is_confirmed]),
-      ),
-    };
-    window.history.replaceState({}, "", `./check-in?token=${encodeURIComponent(session.token)}`);
-    setMessage("", "");
-    render();
-  }, "Check-in wird geladen…");
-}
-
-async function submitPublicCheckIn(event) {
-  event.preventDefault();
-  await withPending(event.currentTarget, async () => {
-    const checklist = (state.publicCheckInSession?.settings?.checklist_items || []).map((item) => ({
-      id: item.id,
-      checked: Boolean(state.publicCheckInDraft.checklist[item.id]),
-    }));
-    const result = await api("./public/check-in/submit", {
-      method: "POST",
-      body: JSON.stringify({
-        token: state.publicCheckInSession.token,
-        rules_accepted: state.publicCheckInDraft.rulesAccepted,
-        checklist,
-        entry_source: state.publicCheckInSession.entry_source,
-      }),
-    });
-    state.publicCheckInSession.window.confirmed_at = result.check_in.confirmed_at;
-    state.publicCheckInSession.window.source = result.check_in.source;
-    state.publicCheckInSession.window.is_confirmed = true;
-    state.publicCheckInStep = 4;
-    setMessage(result.success_message, "good");
-    render();
-  }, "Bestätigung wird gesendet…");
-}
-
-function goToPublicCheckInStep(step) {
-  state.publicCheckInStep = step;
-  render();
-}
-
-function updatePublicRulesAccepted(checked) {
-  state.publicCheckInDraft.rulesAccepted = checked;
-  render();
-}
-
-function updatePublicChecklist(id, checked) {
-  state.publicCheckInDraft.checklist[id] = checked;
-  render();
-}
-
-function publicChecklistComplete() {
-  const items = state.publicCheckInSession?.settings?.checklist_items || [];
-  return items.every((item) => Boolean(state.publicCheckInDraft.checklist[item.id]));
-}
-
-function publicCheckInSteps() {
-  return [
-    { id: 1, label: "Init" },
-    { id: 2, label: "Rules" },
-    { id: 3, label: "Check" },
-    { id: 4, label: "Done" },
-  ];
+    setMessage("Magicline-Einstellungen gespeichert.", "good");
+    await loadAppData();
+  }, "Magicline wird gespeichert…");
 }
 
 function logout() {
   localStorage.removeItem("opengym_token");
   localStorage.removeItem("opengym_role");
-  state.token = "";
-  state.role = "";
-  state.me = null;
-  state.memberDetail = null;
-  state.selectedMemberId = "";
-  state.emailSettings = null;
-  state.telegramSettings = null;
-  state.checkInSettings = null;
-  state.funnelsList = [];
-  state.funnelDetail = null;
-  state.selectedFunnelId = null;
-  state.view = "overview";
+  Object.assign(state, {
+    token: "", role: "", me: null, members: [], windows: [], alerts: [],
+    actions: [], users: [], memberDetail: null, selectedMemberId: "",
+    lockStatus: null, lockLog: [], emailSettings: null, telegramSettings: null,
+    nukiSettings: null, magiclineSettings: null, studioLinks: null, funnelsList: [], funnelDetail: null,
+    selectedFunnelId: null, stepEditorId: null, view: "overview",
+    message: "", messageType: "",
+  });
   syncUrlState();
   render();
 }
@@ -568,15 +534,19 @@ function attachOverviewHandlers() {
   });
 }
 
+function attachWindowActionHandlers() {
+  document.querySelectorAll("[data-window-action]").forEach((button) => {
+    button.addEventListener("click", () => runWindowAction(button.dataset.windowId, button.dataset.windowAction).catch(handleError));
+  });
+}
+
 function attachMembersHandlers() {
   document.getElementById("member-search-form")?.addEventListener("submit", (event) => memberSearch(event).catch(handleError));
   document.getElementById("member-sync-form")?.addEventListener("submit", (event) => syncMember(event).catch(handleError));
   document.querySelectorAll("[data-member-id]").forEach((button) => {
     button.addEventListener("click", () => loadMemberDetail(button.dataset.memberId).catch(handleError));
   });
-  document.querySelectorAll("[data-window-action]").forEach((button) => {
-    button.addEventListener("click", () => runWindowAction(button.dataset.windowId, button.dataset.windowAction).catch(handleError));
-  });
+  attachWindowActionHandlers();
 }
 
 function attachSettingsHandlers() {
@@ -585,14 +555,15 @@ function attachSettingsHandlers() {
   document.getElementById("smtp-test-form")?.addEventListener("submit", (event) => testEmail(event).catch(handleError));
   document.getElementById("telegram-form")?.addEventListener("submit", (event) => updateTelegram(event).catch(handleError));
   document.getElementById("telegram-test-form")?.addEventListener("submit", (event) => testTelegram(event).catch(handleError));
-  document.getElementById("checkin-form")?.addEventListener("submit", (event) => updateCheckInSettings(event).catch(handleError));
+  document.getElementById("nuki-form")?.addEventListener("submit", (event) => updateNukiSettings(event).catch(handleError));
+  document.getElementById("magicline-form")?.addEventListener("submit", (event) => updateMagiclineSettings(event).catch(handleError));
 }
 
 function handleError(error) {
   setMessage(error.message || "Unbekannter Fehler.", "bad");
 }
 
-function navButton(view, label, symbol) {
+function navButton(view, label) {
   const active = state.view === view ? "active" : "";
   const href = `./app?view=${encodeURIComponent(view)}${state.selectedMemberId ? `&member=${encodeURIComponent(state.selectedMemberId)}` : ""}`;
   return `
@@ -600,7 +571,7 @@ function navButton(view, label, symbol) {
       class="nav-button ${active}"
       data-view="${view}"
       href="${href}"
-      aria-current="${state.view === view ? "page" : "false"}"
+      ${state.view === view ? 'aria-current="page"' : ""}
     >
       <span class="nav-label">${escapeHtml(label)}</span>
     </a>
@@ -618,12 +589,15 @@ function renderStatusStrip() {
           <span class="live-dot ${/credentials|unknown/i.test(state.lockStatus?.connectivity || "") ? "warn" : ""}"></span>
           ${escapeHtml(state.lockStatus?.connectivity || "unknown")}
         </div>
-        <div class="subtle">${pill(state.lockStatus?.source || "system")} ${pill(state.lockStatus?.lock_state || "unknown")}</div>
+        <div class="subtle lock-status-row">
+          <span class="lock-status-pair"><span class="lock-status-key">Quelle</span>${pill(state.lockStatus?.source || "–")}</span>
+          <span class="lock-status-pair"><span class="lock-status-key">Schloss</span>${pill(state.lockStatus?.lock_state || "–")}</span>
+        </div>
       </div>
       <div class="live-card">
         <div class="live-label">MITGLIEDER</div>
         <div class="live-value">${state.members.length}</div>
-        <div class="subtle">Aktive Sicht geladen</div>
+        <div class="subtle">${state.members.length > 0 ? "Aktive Sicht geladen" : "Noch keine Mitglieder synchronisiert"}</div>
       </div>
       <div class="live-card">
         <div class="live-label">ALARME</div>
@@ -644,6 +618,7 @@ function renderStatusStrip() {
 
 function renderOverview() {
   const next = upcomingWindow();
+  const urgent = urgentAlerts();
   return `
     <div class="dashboard-grid">
       <section class="metric-card span-3">
@@ -653,7 +628,7 @@ function renderOverview() {
       </section>
       <section class="metric-card span-3">
         <span class="eyebrow">WARNUNGEN</span>
-        <strong>${urgentAlerts().length}</strong>
+        <strong>${urgent.length}</strong>
         <span class="subtle">Fehler + Warnungen</span>
       </section>
       <section class="metric-card span-3">
@@ -675,7 +650,7 @@ function renderOverview() {
           </div>
         </div>
         <div class="stack">
-          ${urgentAlerts().length ? urgentAlerts().map((alert) => `
+          ${urgent.length ? urgent.map((alert) => `
             <div class="list-item">
               <div class="split">${pill(alert.severity)}<span class="subtle numberish">${fmtDate(alert.created_at)}</span></div>
               <h3>${escapeHtml(alert.kind)}</h3>
@@ -729,13 +704,25 @@ function renderOverview() {
             <p class="panel-kicker">Direkter Sprung zu Diagnose und manuellen Aktionen.</p>
           </div>
         </div>
-        <div class="entity-list">
-          ${state.members.map((member) => `
+        <div class="stack">
+          <a class="list-item quick-link" data-view="lock" href="./app?view=lock">
+            <div class="split"><strong>Schloss öffnen</strong><span class="subtle">${escapeHtml(state.lockStatus?.connectivity || "–")}</span></div>
+            <p class="subtle">Nuki-Steuerung und Remote Open</p>
+          </a>
+          <a class="list-item quick-link" data-view="alerts" href="./app?view=alerts">
+            <div class="split"><strong>Alerts prüfen</strong>${urgentAlerts().length > 0 ? pill(`${urgentAlerts().length} offen`) : '<span class="subtle">Keine Alarme</span>'}</div>
+            <p class="subtle">Warnungen, Fehler und Betriebslog</p>
+          </a>
+          <a class="list-item quick-link" data-view="members" href="./app?view=members">
+            <div class="split"><strong>Mitglieder synchronisieren</strong><span class="subtle">${state.members.length} geladen</span></div>
+            <p class="subtle">Magioline-Sync und Mitgliederverwaltung</p>
+          </a>
+          ${state.members.length > 0 ? state.members.slice(0, 3).map((member) => `
             <button type="button" class="list-item entity-button" data-member-id="${member.id}">
               <div class="split"><strong>${escapeHtml(`${member.first_name || ""} ${member.last_name || ""}`.trim() || member.email || `Member ${member.id}`)}</strong>${pill(member.status || "unknown")}</div>
-              <p class="subtle">${escapeHtml(member.email || "Keine E-Mail")} · ML-ID ${escapeHtml(member.magicline_customer_id)}</p>
+              <p class="subtle">${escapeHtml(member.email || "Keine E-Mail")}</p>
             </button>
-          `).join("") || '<div class="empty">Keine Mitglieder geladen</div>'}
+          `).join("") : ""}
         </div>
       </section>
     </div>
@@ -749,7 +736,7 @@ function renderMemberCards() {
     return `
       <button type="button" class="list-item entity-button ${active}" data-member-id="${member.id}">
         <div class="split"><strong>${escapeHtml(label)}</strong>${pill(member.status || "unknown")}</div>
-        <p class="subtle">${escapeHtml(member.email || "Keine E-Mail")} · ML-ID ${escapeHtml(member.magicline_customer_id)}</p>
+        <p class="subtle">${escapeHtml(member.email || "Keine E-Mail")} · Magioline-ID ${escapeHtml(member.magicline_customer_id)}</p>
       </button>
     `;
   }).join("");
@@ -757,7 +744,7 @@ function renderMemberCards() {
 
 function renderWindowActions(w) {
   return `
-    <div class="action-group" style="margin-top:8px;">
+    <div class="action-group mt-8">
       <button type="button" class="secondary" data-window-id="${w.id}" data-window-action="resend">Code Neu Senden</button>
       <button type="button" class="warn" data-window-id="${w.id}" data-window-action="emergency-code">Notfallcode</button>
       <button type="button" class="bad" data-window-id="${w.id}" data-window-action="deactivate">Deaktivieren</button>
@@ -786,12 +773,12 @@ function renderMembersView() {
             </form>
             <form id="member-sync-form" class="stack">
               <label for="member-sync-email">Gezielter Sync
-                <input id="member-sync-email" name="email" type="email" autocomplete="off" spellcheck="false" inputmode="email" placeholder="Magicline-Sync für E-Mail…" required />
+                <input id="member-sync-email" name="email" type="email" autocomplete="off" spellcheck="false" inputmode="email" placeholder="Magioline-Sync für E-Mail…" required />
               </label>
               <button type="submit" class="secondary">Mitglied Syncen</button>
             </form>
           </div>
-          <div class="entity-list" style="margin-top:14px;">
+          <div class="entity-list" class="mt-14">
             ${renderMemberCards() || '<div class="empty">Keine Mitglieder vorhanden</div>'}
           </div>
         </section>
@@ -804,7 +791,7 @@ function renderMembersView() {
             <h2 class="panel-title">${escapeHtml(`${detail.member.first_name || ""} ${detail.member.last_name || ""}`.trim() || detail.member.email || `Member ${detail.member.id}`)}</h2>
             <div class="detail-meta">
               ${pill(detail.member.status || "unknown")}
-              <span>ML-ID ${escapeHtml(detail.member.magicline_customer_id)}</span>
+              <span>Magioline-ID ${escapeHtml(detail.member.magicline_customer_id)}</span>
               <span>${escapeHtml(detail.member.email || "Keine E-Mail")}</span>
               <span class="numberish">Sync ${fmtDate(detail.member.last_synced_at)}</span>
             </div>
@@ -843,7 +830,7 @@ function renderMembersView() {
                   <p class="subtle">${fmtDate(w.starts_at)} → ${fmtDate(w.ends_at)}</p>
                   <p class="subtle">Check-in: ${w.check_in_confirmed_at ? `bestätigt ${fmtDate(w.check_in_confirmed_at)}` : "offen"}</p>
                   ${w.check_in_checklist?.length ? `
-                    <div class="stack compact-stack" style="margin-top:6px;">
+                    <div class="stack compact-stack" class="mt-6">
                       ${w.check_in_checklist.map((item) => `<p class="subtle">${item.checked ? "✓" : "✗"} ${escapeHtml(item.label)}</p>`).join("")}
                     </div>
                   ` : ""}
@@ -922,10 +909,10 @@ function renderLockView() {
               <strong>Smartlock ${escapeHtml(state.lockStatus?.smartlock_id || "—")}</strong>
               ${pill(state.lockStatus?.source || "system")}
             </div>
-            <div class="row" style="margin-top:8px;">
-              ${pill(state.lockStatus?.connectivity || "unknown")}
-              ${pill(state.lockStatus?.lock_state || "unknown")}
-              ${pill(state.lockStatus?.battery_state || "unknown")}
+            <div class="lock-detail-grid mt-8">
+              <span class="lock-detail-pair"><span class="lock-status-key">Verbindung</span>${pill(state.lockStatus?.connectivity || "–")}</span>
+              <span class="lock-detail-pair"><span class="lock-status-key">Schloss</span>${pill(state.lockStatus?.lock_state || "–")}</span>
+              <span class="lock-detail-pair"><span class="lock-status-key">Akku</span>${pill(state.lockStatus?.battery_state || "–")}</span>
             </div>
           </div>
           <div class="list-item">
@@ -949,7 +936,7 @@ function renderLockView() {
             <div class="list-item">
               <div class="split"><strong>${escapeHtml(entry.action)}</strong><span class="subtle numberish">${fmtDate(entry.created_at)}</span></div>
               <p class="subtle">${escapeHtml(entry.actor_email)}</p>
-              <p class="code">${escapeHtml(JSON.stringify(entry.payload || {}))}</p>
+              ${Object.keys(entry.payload || {}).length ? `<p class="code">${escapeHtml(Object.entries(entry.payload).map(([k, v]) => `${k}: ${v}`).join(" · "))}</p>` : ""}
             </div>
           `).join("") || '<div class="empty">Keine Schlossereignisse</div>'}
         </div>
@@ -1033,7 +1020,7 @@ function renderSettingsView() {
           </label>
           <button type="submit">Benutzer Anlegen</button>
         </form>
-        <div class="stack" style="margin-top:14px;">
+        <div class="stack" class="mt-14">
           ${state.users.map((user) => `
             <div class="list-item">
               <div class="split"><strong>${escapeHtml(user.email)}</strong>${pill(user.role)}</div>
@@ -1052,7 +1039,7 @@ function renderSettingsView() {
         </div>
         <form id="smtp-form" class="stack">
           <label for="smtp-host">Host
-            <input id="smtp-host" name="smtp_host" type="text" autocomplete="off" value="${escapeHtml(state.emailSettings?.smtp_host || "")}" placeholder="smtp.example.com" />
+            <input id="smtp-host" name="smtp_host" type="text" autocomplete="off" value="${escapeHtml(state.emailSettings?.smtp_host || "")}" placeholder="z.B. smtp.gmail.com" />
           </label>
           <label for="smtp-port">Port
             <input id="smtp-port" name="smtp_port" type="number" inputmode="numeric" value="${escapeHtml(state.emailSettings?.smtp_port || 587)}" />
@@ -1066,9 +1053,13 @@ function renderSettingsView() {
           <label for="smtp-from">Absenderadresse
             <input id="smtp-from" name="smtp_from_email" type="email" autocomplete="email" spellcheck="false" inputmode="email" value="${escapeHtml(state.emailSettings?.smtp_from_email || "")}" />
           </label>
+          <label class="checkbox-row" for="smtp-use-tls">
+            <input id="smtp-use-tls" name="smtp_use_tls" type="checkbox" ${state.emailSettings?.smtp_use_tls !== false ? "checked" : ""} />
+            <span>TLS verwenden</span>
+          </label>
           <button type="submit">SMTP Speichern</button>
         </form>
-        <form id="smtp-test-form" class="stack" style="margin-top:14px;">
+        <form id="smtp-test-form" class="stack" class="mt-14">
           <label for="smtp-test-email">Testempfänger
             <input id="smtp-test-email" name="to_email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="test@example.com" required />
           </label>
@@ -1088,11 +1079,16 @@ function renderSettingsView() {
             <input id="telegram-bot-token" name="telegram_bot_token" type="password" autocomplete="off" placeholder="${state.telegramSettings?.has_bot_token ? "Token gesetzt — neu eingeben zum Überschreiben" : "Telegram Bot Token"}" />
           </label>
           <label for="telegram-chat-id">Chat ID
-            <input id="telegram-chat-id" name="telegram_chat_id" type="text" autocomplete="off" spellcheck="false" value="${escapeHtml(state.telegramSettings?.telegram_chat_id || "")}" placeholder="Telegram Chat ID" />
+            <input id="telegram-chat-id" name="telegram_chat_id" type="text" autocomplete="off" spellcheck="false" inputmode="numeric"
+              value="${escapeHtml(state.telegramSettings?.telegram_chat_id || "")}"
+              placeholder="z.B. -1001234567890"
+              pattern="-?[0-9]+"
+              title="Chat ID muss eine numerische Telegram-ID sein (z.B. -1001234567890)" />
+            <span class="field-hint">Die Chat ID findest du über @userinfobot in Telegram</span>
           </label>
           <button type="submit">Telegram Speichern</button>
         </form>
-        <form id="telegram-test-form" class="stack" style="margin-top:14px;">
+        <form id="telegram-test-form" class="stack" class="mt-14">
           <label for="telegram-test-message">Testnachricht
             <textarea id="telegram-test-message" name="message" placeholder="[T247GYM] Testalarm">[T247GYM] Testalarm</textarea>
           </label>
@@ -1100,61 +1096,69 @@ function renderSettingsView() {
         </form>
       </section>
 
-      <section class="panel span-12">
+      <section class="panel span-4">
         <div class="panel-header">
           <div>
-            <h2 class="panel-title">Check-in &amp; Hausregeln</h2>
-            <p class="panel-kicker">Öffentliche Member-Seite vor jedem Freies-Training-Block. Inkl. Studio-QR und Mail-Link.</p>
+            <h2 class="panel-title">Nuki</h2>
+            <p class="panel-kicker">Smartlock-API und Trockenlauffunktion konfigurieren.</p>
           </div>
         </div>
-        <div class="dashboard-grid">
-          <div class="span-7">
-            <form id="checkin-form" class="stack">
-              <label class="checkbox-row" for="checkin-enabled">
-                <input id="checkin-enabled" name="enabled" type="checkbox" ${state.checkInSettings?.enabled ? "checked" : ""} />
-                <span>Check-in öffentlich aktivieren</span>
-              </label>
-              <label for="checkin-title">Titel
-                <input id="checkin-title" name="title" type="text" autocomplete="off" value="${escapeHtml(state.checkInSettings?.title || "")}" required />
-              </label>
-              <label for="checkin-intro">Einleitung
-                <textarea id="checkin-intro" name="intro" required>${escapeHtml(state.checkInSettings?.intro || "")}</textarea>
-              </label>
-              <label for="checkin-rules-heading">Hausregel-Überschrift
-                <input id="checkin-rules-heading" name="rules_heading" type="text" autocomplete="off" value="${escapeHtml(state.checkInSettings?.rules_heading || "")}" required />
-              </label>
-              <label for="checkin-rules-body">Hausregeln
-                <textarea id="checkin-rules-body" name="rules_body" required>${escapeHtml(state.checkInSettings?.rules_body || "")}</textarea>
-              </label>
-              <label for="checkin-checklist-heading">Checklisten-Überschrift
-                <input id="checkin-checklist-heading" name="checklist_heading" type="text" autocomplete="off" value="${escapeHtml(state.checkInSettings?.checklist_heading || "")}" required />
-              </label>
-              <label for="checkin-items">Checklistenpunkte (je Zeile ein Punkt)
-                <textarea id="checkin-items" name="checklist_items" required>${escapeHtml((state.checkInSettings?.checklist_items || []).map((item) => item.label).join("\n"))}</textarea>
-              </label>
-              <label for="checkin-success-message">Erfolgstext
-                <textarea id="checkin-success-message" name="success_message" required>${escapeHtml(state.checkInSettings?.success_message || "")}</textarea>
-              </label>
-              <button type="submit">Check-in Speichern</button>
-            </form>
-          </div>
-          <div class="span-5">
-            <div class="stack">
-              <div class="list-item">
-                <p class="eyebrow">// ÖFFENTLICHER LINK</p>
-                <p class="code">${escapeHtml(state.checkInSettings?.studio_check_in_url || "")}</p>
-              </div>
-              <div class="list-item qr-panel">
-                <p class="eyebrow">// STUDIO QR-CODE</p>
-                ${state.checkInSettings?.studio_qr_svg
-                  ? `<img class="qr-image" src="${state.checkInSettings.studio_qr_svg}" alt="QR-Code für öffentlichen Check-in" />`
-                  : '<div class="empty">QR nicht verfügbar</div>'
-                }
-              </div>
-            </div>
-          </div>
-        </div>
+        <form id="nuki-form" class="stack">
+          <label for="nuki-api-token">API Token
+            <input id="nuki-api-token" name="nuki_api_token" type="password" autocomplete="off"
+              placeholder="${state.nukiSettings?.has_api_token ? "Token gesetzt — neu eingeben zum Überschreiben" : "Nuki Web API Token"}" />
+          </label>
+          <label for="nuki-smartlock-id">Smartlock ID
+            <input id="nuki-smartlock-id" name="nuki_smartlock_id" type="number" inputmode="numeric"
+              value="${escapeHtml(state.nukiSettings?.nuki_smartlock_id ?? 0)}" />
+          </label>
+          <label class="checkbox-row" for="nuki-dry-run">
+            <input id="nuki-dry-run" name="nuki_dry_run" type="checkbox" ${state.nukiSettings?.nuki_dry_run !== false ? "checked" : ""} />
+            <span>Dry Run (kein echtes Öffnen)</span>
+          </label>
+          <button type="submit">Nuki Speichern</button>
+        </form>
       </section>
+
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Magicline</h2>
+            <p class="panel-kicker">Mitgliederverwaltung und Webhook-Anbindung konfigurieren.</p>
+          </div>
+        </div>
+        <form id="magicline-form" class="stack">
+          <label for="magicline-base-url">API-URL
+            <input id="magicline-base-url" name="magicline_base_url" type="text" autocomplete="off"
+              value="${escapeHtml(state.magiclineSettings?.magicline_base_url || "")}"
+              placeholder="https://app.magicline.com" />
+          </label>
+          <label for="magicline-api-key">API Key
+            <input id="magicline-api-key" name="magicline_api_key" type="password" autocomplete="off"
+              placeholder="${state.magiclineSettings?.has_api_key ? "Key gesetzt — neu eingeben zum Überschreiben" : "Magicline API Key"}" />
+          </label>
+          <label for="magicline-webhook-key">Webhook Key
+            <input id="magicline-webhook-key" name="magicline_webhook_api_key" type="password" autocomplete="off"
+              placeholder="${state.magiclineSettings?.has_webhook_key ? "Key gesetzt — neu eingeben zum Überschreiben" : "Magicline Webhook Key"}" />
+          </label>
+          <label for="magicline-studio-id">Studio ID
+            <input id="magicline-studio-id" name="magicline_studio_id" type="number" inputmode="numeric"
+              value="${escapeHtml(state.magiclineSettings?.magicline_studio_id ?? 0)}" />
+          </label>
+          <label for="magicline-studio-name">Studio Name
+            <input id="magicline-studio-name" name="magicline_studio_name" type="text"
+              value="${escapeHtml(state.magiclineSettings?.magicline_studio_name || "")}"
+              placeholder="z.B. Twenty4Seven GmbH" />
+          </label>
+          <label for="magicline-appointment-title">Terminbezeichnung
+            <input id="magicline-appointment-title" name="magicline_relevant_appointment_title" type="text"
+              value="${escapeHtml(state.magiclineSettings?.magicline_relevant_appointment_title || "Freies Training")}"
+              placeholder="z.B. Freies Training" />
+          </label>
+          <button type="submit">Magicline Speichern</button>
+        </form>
+      </section>
+
     </div>
   `;
 }
@@ -1180,7 +1184,7 @@ function renderAuth() {
         </div>
         <div class="auth-panel">
           <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "Anmeldung mit Admin- oder Operator-Konto.")}</div>
-          <form id="login-form" class="stack" style="margin-top:14px;">
+          <form id="login-form" class="stack" class="mt-14">
             <label for="login-email">E-Mail
               <input id="login-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="admin@example.com" required />
             </label>
@@ -1189,7 +1193,7 @@ function renderAuth() {
             </label>
             <button type="submit">Anmelden</button>
           </form>
-          <form id="forgot-form" class="stack" style="margin-top:14px;">
+          <form id="forgot-form" class="stack" class="mt-14">
             <label for="forgot-email">Passwort zurücksetzen
               <input id="forgot-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="E-Mail für Reset-Link" required />
             </label>
@@ -1203,197 +1207,6 @@ function renderAuth() {
   document.getElementById("forgot-form").addEventListener("submit", (event) => forgotPassword(event).catch(handleError));
 }
 
-function renderPublicCheckIn() {
-  const session = state.publicCheckInSession;
-  if (!session) {
-    app.innerHTML = `
-      <section class="public-shell">
-        <div class="public-hero">
-          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
-          <h1 class="hero-title">Member Check-in.</h1>
-          <p class="subtle">Scanne den QR-Code im Studio oder nutze den Link aus deiner Zugangs-Mail.</p>
-        </div>
-        <div style="padding:20px 26px;">
-          <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "E-Mail und Zugangscode eingeben.")}</div>
-          <form id="public-checkin-resolve-form" class="stack" style="margin-top:14px;">
-            <label for="public-email">E-Mail
-              <input id="public-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="deine@email.de" required />
-            </label>
-            <label for="public-code">Zugangscode
-              <input id="public-code" name="code" type="text" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" placeholder="6-stelliger Code aus deiner Mail" required />
-            </label>
-            <button type="submit">Trainingsblock Laden</button>
-          </form>
-        </div>
-      </section>
-    `;
-    document.getElementById("public-checkin-resolve-form")?.addEventListener("submit", (event) => resolvePublicCheckIn(event).catch(handleError));
-    return;
-  }
-
-  const steps = publicCheckInSteps();
-  const step = session.window.is_confirmed ? 4 : state.publicCheckInStep;
-  const checklistItems = session.settings.checklist_items || [];
-  const checklistComplete = publicChecklistComplete();
-  const completedCount = checklistItems.filter((item) => state.publicCheckInDraft.checklist[item.id]).length;
-  let content = "";
-
-  if (step === 1) {
-    content = `
-      <section class="detail-card funnel-card" style="margin:18px 20px;">
-        <p class="eyebrow">// SCHRITT 1/4 — INIT</p>
-        <h2 class="panel-title">Trainingsblock prüfen</h2>
-        <p class="subtle">Vor jedem gebuchten Freies-Training-Block führst du hier den Check-in durch. Der Zugangscode wurde separat versendet.</p>
-        <div class="funnel-summary" style="margin-top:14px;">
-          <div class="summary-item">
-            <span class="summary-label">Mitglied</span>
-            <strong>${escapeHtml(session.window.member_first_name || "Member")}</strong>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Zeitfenster</span>
-            <strong>${fmtDate(session.window.starts_at)} → ${fmtDate(session.window.ends_at)}</strong>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Status</span>
-            <strong>${pill(session.window.status)}</strong>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Einstieg</span>
-            <strong>${escapeHtml(session.entry_source === "studio-qr" ? "Studio QR" : "Mail-Link")}</strong>
-          </div>
-        </div>
-        <div class="funnel-actions" style="margin-top:16px;">
-          <button type="button" id="public-step-next">Check-in starten</button>
-        </div>
-      </section>
-    `;
-  } else if (step === 2) {
-    content = `
-      <section class="detail-card funnel-card" style="margin:18px 20px;">
-        <p class="eyebrow">// SCHRITT 2/4 — RULES</p>
-        <h2 class="panel-title">${escapeHtml(session.settings.rules_heading)}</h2>
-        <p class="subtle">Lies die Regeln vollständig und bestätige sie bewusst, bevor du fortfährst.</p>
-        <div class="rules-panel" style="margin-top:12px;">
-          <div class="rules-body">${escapeHtml(session.settings.rules_body).replace(/\n/g, "<br />")}</div>
-        </div>
-        <label class="checkbox-row funnel-checkbox" for="rules-accepted-step" style="margin-top:12px;">
-          <input id="rules-accepted-step" type="checkbox" ${state.publicCheckInDraft.rulesAccepted ? "checked" : ""} />
-          <span>Ich habe die Hausregeln gelesen und bestätige die Einhaltung.</span>
-        </label>
-        <div class="funnel-actions" style="margin-top:16px;">
-          <button type="button" id="public-step-back" class="secondary">Zurück</button>
-          <button type="button" id="public-step-next" ${state.publicCheckInDraft.rulesAccepted ? "" : "disabled"}>Weiter zur Checkliste</button>
-        </div>
-      </section>
-    `;
-  } else if (step === 3) {
-    content = `
-      <section class="detail-card funnel-card" style="margin:18px 20px;">
-        <p class="eyebrow">// SCHRITT 3/4 — CHECKLIST</p>
-        <h2 class="panel-title">${escapeHtml(session.settings.checklist_heading)}</h2>
-        <p class="subtle">Bestätige jeden Punkt einzeln — dokumentiert den Studiozustand vor deinem Block.</p>
-        <p class="funnel-progress-note" style="margin-top:10px;">${completedCount} / ${checklistItems.length} bestätigt</p>
-        <div class="checklist-stack funnel-checklist" style="margin-top:12px;">
-          ${checklistItems.map((item, index) => `
-            <label class="checklist-tile" for="check-${escapeHtml(item.id)}">
-              <span class="checklist-index">${String(index + 1).padStart(2, "0")}</span>
-              <input id="check-${escapeHtml(item.id)}" data-check-item="${escapeHtml(item.id)}" type="checkbox" ${state.publicCheckInDraft.checklist[item.id] ? "checked" : ""} />
-              <span class="checklist-copy">${escapeHtml(item.label)}</span>
-            </label>
-          `).join("")}
-        </div>
-        <div class="funnel-actions" style="margin-top:16px;">
-          <button type="button" id="public-step-back" class="secondary">Zurück</button>
-          <button type="button" id="public-step-next" ${checklistComplete ? "" : "disabled"}>Weiter zum Abschluss</button>
-        </div>
-      </section>
-    `;
-  } else {
-    content = `
-      <section class="detail-card funnel-card" style="margin:18px 20px;">
-        <p class="eyebrow">// SCHRITT 4/4 — DONE</p>
-        <h2 class="panel-title">${session.window.is_confirmed ? "Check-in abgeschlossen" : "Abschluss und Bestätigung"}</h2>
-        <div class="message ${state.messageType}" aria-live="polite" style="margin-top:12px;">${escapeHtml(state.message || (session.window.is_confirmed ? session.settings.success_message : "Prüfe deine Angaben und bestätige den Check-in verbindlich."))}</div>
-        <div class="funnel-summary review-grid" style="margin-top:14px;">
-          <div class="summary-item">
-            <span class="summary-label">Hausregeln</span>
-            <strong>${state.publicCheckInDraft.rulesAccepted ? "Bestätigt" : "Offen"}</strong>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Checkliste</span>
-            <strong>${completedCount} / ${checklistItems.length} OK</strong>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Trainingsblock</span>
-            <strong>${fmtDate(session.window.starts_at)} → ${fmtDate(session.window.ends_at)}</strong>
-          </div>
-          <div class="summary-item">
-            <span class="summary-label">Quelle</span>
-            <strong>${escapeHtml(session.window.source || session.entry_source)}</strong>
-          </div>
-        </div>
-        ${session.window.is_confirmed
-          ? `
-            <div class="list-item" style="margin-top:14px;">
-              <p class="eyebrow">// BESTÄTIGT</p>
-              <p class="subtle numberish">${fmtDate(session.window.confirmed_at)} · ${escapeHtml(session.window.source || "public-check-in")}</p>
-            </div>
-          `
-          : `
-            <form id="public-checkin-submit-form" class="stack" style="margin-top:14px;">
-              <div class="funnel-actions">
-                <button type="button" id="public-step-back" class="secondary">Zurück</button>
-                <button type="submit">Verbindlich bestätigen</button>
-              </div>
-            </form>
-          `}
-      </section>
-    `;
-  }
-
-  app.innerHTML = `
-    <section class="public-shell">
-      <div class="public-hero">
-        <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
-        <h1 class="hero-title">${escapeHtml(session.settings.title)}</h1>
-        <p class="subtle">${escapeHtml(session.settings.intro)}</p>
-        <div class="public-meta">
-          ${pill(session.window.status)}
-          <span>${escapeHtml(session.window.member_first_name || "Member")}</span>
-          <span class="numberish">${fmtDate(session.window.starts_at)} → ${fmtDate(session.window.ends_at)}</span>
-        </div>
-        <div class="funnel-steps" aria-label="Check-in Fortschritt">
-          ${steps.map((item) => `
-            <div class="funnel-step ${step === item.id ? "active" : ""} ${step > item.id || session.window.is_confirmed ? "done" : ""}">
-              <span class="funnel-step-index">${item.id}</span>
-              <span>${escapeHtml(item.label)}</span>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-      ${content}
-    </section>
-  `;
-  document.getElementById("public-checkin-submit-form")?.addEventListener("submit", (event) => submitPublicCheckIn(event).catch(handleError));
-  document.getElementById("public-step-next")?.addEventListener("click", () => {
-    if (step < 4) {
-      goToPublicCheckInStep(step + 1);
-    }
-  });
-  document.getElementById("public-step-back")?.addEventListener("click", () => {
-    if (step > 1) {
-      goToPublicCheckInStep(step - 1);
-    }
-  });
-  document.getElementById("rules-accepted-step")?.addEventListener("change", (event) => {
-    updatePublicRulesAccepted(event.currentTarget.checked);
-  });
-  document.querySelectorAll("[data-check-item]").forEach((input) => {
-    input.addEventListener("change", (event) => {
-      updatePublicChecklist(input.dataset.checkItem, event.currentTarget.checked);
-    });
-  });
-}
 
 function renderReset() {
   const token = new URLSearchParams(window.location.search).get("token") || "";
@@ -1406,7 +1219,7 @@ function renderReset() {
       </div>
       <div class="auth-panel">
         <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "Setze hier ein neues Passwort für dein Konto.")}</div>
-        <form id="reset-form" class="stack" style="margin-top:14px;">
+        <form id="reset-form" class="stack" class="mt-14">
           <label for="reset-password">Neues Passwort
             <input id="reset-password" name="password" type="password" autocomplete="new-password" placeholder="Mindestens 12 Zeichen" required />
           </label>
@@ -1432,30 +1245,30 @@ function renderApp() {
         </div>
 
         <div class="mobile-toolbar" aria-label="Mobile Navigation">
-          ${navButton("overview", "Betrieb", "◎")}
-          ${navButton("members", "Members", "◌")}
-          ${navButton("windows", "Windows", "◐")}
-          ${navButton("lock", "Schloss", "◍")}
-          ${navButton("alerts", "Alerts", "△")}
-          ${navButton("funnels", "Funnels", "◈")}
-          ${navButton("settings", "Config", "□")}
+          ${navButton("overview", "Betrieb")}
+          ${navButton("members", "Mitglieder")}
+          ${navButton("windows", "Windows")}
+          ${navButton("lock", "Schloss")}
+          ${navButton("alerts", "Alerts")}
+          ${navButton("funnels", "Funnels")}
+          ${navButton("settings", "Config")}
         </div>
 
         <nav class="sidebar-nav" aria-label="Primäre Navigation">
-          ${navButton("overview", "Betrieb", "◎")}
-          ${navButton("members", "Mitglieder", "◌")}
-          ${navButton("windows", "Access Windows", "◐")}
-          ${navButton("lock", "Schloss", "◍")}
-          ${navButton("alerts", "Alerts & Audit", "△")}
-          ${navButton("funnels", "Funnels", "◈")}
-          ${navButton("settings", "Einstellungen", "□")}
+          ${navButton("overview", "Betrieb")}
+          ${navButton("members", "Mitglieder")}
+          ${navButton("windows", "Windows")}
+          ${navButton("lock", "Schloss")}
+          ${navButton("alerts", "Alerts")}
+          ${navButton("funnels", "Funnels")}
+          ${navButton("settings", "Einstellungen")}
         </nav>
 
         <div class="sidebar-footer">
           <p class="eyebrow">// SESSION</p>
           <strong>${escapeHtml(state.me?.email || "")}</strong>
-          <div class="row" style="margin-top:8px;">${pill(state.me?.role || "unknown")} ${pill("Nuki dry-run")}</div>
-          ${current ? `<p class="subtle" style="margin-top:10px;">&gt; ${escapeHtml(current.email || `Member ${current.id}`)}</p>` : ""}
+          <div class="row" class="mt-8">${pill(state.me?.role || "unknown")} ${pill("Nuki dry-run")}</div>
+          ${current ? `<p class="subtle" class="mt-10">&gt; ${escapeHtml(current.email || `Member ${current.id}`)}</p>` : ""}
         </div>
       </aside>
 
@@ -1470,7 +1283,7 @@ function renderApp() {
               <p class="subtle">Kritische Zustände zuerst. Klare Eingriffe. Mobile Bedienbarkeit ohne Funktionsverlust.</p>
               <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "System bereit. Wähle links einen Bereich oder prüfe die nächsten Freischaltungen.")}</div>
               <div class="hero-actions">
-                <button type="button" id="sync-button">ML Sync</button>
+                <button type="button" id="sync-button">Magioline Sync</button>
                 <button type="button" id="provision-button" class="secondary">Due Codes</button>
                 ${state.role === "admin" ? '<button type="button" class="warn" data-remote-open>Remote Open</button>' : ""}
                 <button type="button" id="logout-button" class="secondary">Logout</button>
@@ -1502,6 +1315,7 @@ function renderApp() {
   attachCommonHandlers();
   if (state.view === "overview") attachOverviewHandlers();
   if (state.view === "members") attachMembersHandlers();
+  if (state.view === "windows") attachWindowActionHandlers();
   if (state.view === "settings") attachSettingsHandlers();
   if (state.view === "funnels") attachFunnelHandlers();
 }
@@ -1559,6 +1373,7 @@ async function startChecksFunnel(windowId, funnelType) {
   state.checksFunnelStep = 0;
   state.checksFunnelDraft = {};
   state.checksFunnel = null;
+  state.checksStepError = null;
   render();
   try {
     const funnel = await api(`./public/checks/funnel/${funnelType}`);
@@ -1583,15 +1398,33 @@ function backToChecksWindowList() {
   state.checksFunnel = null;
   state.checksFunnelStep = 0;
   state.checksFunnelDraft = {};
+  state.checksStepError = null;
   render();
 }
 
-function updateChecksDraft(stepId, field, value) {
+function updateChecksDraft(stepId, field, value, skipRender = false) {
   if (!state.checksFunnelDraft[stepId]) {
     state.checksFunnelDraft[stepId] = { checked: false, note: "" };
   }
   state.checksFunnelDraft[stepId][field] = value;
-  render();
+  if (!skipRender) render();
+}
+
+let _draftDebounce = null;
+function updateChecksDraftDebounced(stepId, field, value) {
+  if (!state.checksFunnelDraft[stepId]) {
+    state.checksFunnelDraft[stepId] = { checked: false, note: "" };
+  }
+  state.checksFunnelDraft[stepId][field] = value;
+  clearTimeout(_draftDebounce);
+  _draftDebounce = setTimeout(() => {
+    const step = state.checksFunnel?.steps?.find((s) => s.id === stepId);
+    if (step) {
+      const canProceed = !step.requires_note || (value && value.trim().length > 0);
+      const btn = document.getElementById("checks-funnel-next");
+      if (btn) btn.disabled = !canProceed;
+    }
+  }, 120);
 }
 
 async function submitChecksFunnel() {
@@ -1626,12 +1459,13 @@ function checksProgressBar() {
   const steps = state.checksFunnel?.steps || [];
   const total = steps.length;
   const items = [
-    { label: "Übersicht", step: 0 },
+    { label: "Übersicht", full: "Übersicht", step: 0 },
     ...steps.map((s, i) => ({
-      label: s.title.length > 10 ? s.title.slice(0, 10) + "…" : s.title,
+      label: s.title,
+      full: s.title,
       step: i + 1,
     })),
-    { label: "Abschluss", step: total + 1 },
+    { label: "Abschluss", full: "Abschluss", step: total + 1 },
   ];
   return `
     <div class="checks-funnel-progress" aria-label="Fortschritt">
@@ -1639,7 +1473,7 @@ function checksProgressBar() {
         <div class="checks-progress-step
           ${state.checksFunnelStep === item.step ? "active" : ""}
           ${state.checksFunnelStep > item.step ? "done" : ""}
-        ">${state.checksFunnelStep > item.step ? "✓ " : ""}${escapeHtml(item.label)}</div>
+        " title="${escapeHtml(item.full)}">${state.checksFunnelStep > item.step ? "✓ " : ""}${escapeHtml(item.label)}</div>
       `).join("")}
     </div>
   `;
@@ -1652,8 +1486,8 @@ function renderChecksStepOverview() {
   return `
     <section class="detail-card funnel-card">
       <p class="eyebrow">// ${funnelLabel.toUpperCase()} — ÜBERSICHT</p>
-      <h2 class="panel-title">${escapeHtml(funnel.template_name)}</h2>
-      ${funnel.description ? `<p class="subtle" style="margin-top:6px;">${escapeHtml(funnel.description)}</p>` : ""}
+      <h2 class="panel-title">Dein Trainingsfenster</h2>
+      ${funnel.description ? `<p class="subtle" class="mt-6">${escapeHtml(funnel.description)}</p>` : ""}
       <div class="funnel-overview-grid">
         <div class="summary-item">
           <span class="summary-label">Zeitfenster</span>
@@ -1661,7 +1495,7 @@ function renderChecksStepOverview() {
         </div>
         <div class="summary-item">
           <span class="summary-label">Status</span>
-          <strong>${pill(win?.status || "unknown")}</strong>
+          <strong>${pill(translateStatus(win?.status || "unknown"))}</strong>
         </div>
         <div class="summary-item">
           <span class="summary-label">Schritte</span>
@@ -1672,7 +1506,7 @@ function renderChecksStepOverview() {
           <strong>${escapeHtml(funnelLabel)}</strong>
         </div>
       </div>
-      <div class="funnel-actions" style="margin-top:18px;">
+      <div class="funnel-actions" class="mt-18">
         <button type="button" id="checks-funnel-back" class="secondary">Zurück</button>
         <button type="button" id="checks-funnel-next">${funnelLabel} starten</button>
       </div>
@@ -1686,31 +1520,39 @@ function renderChecksStepN(stepIndex) {
   const draft = state.checksFunnelDraft[step.id] || { checked: false, note: "" };
   const totalSteps = state.checksFunnel.steps.length;
   const isLast = stepIndex === totalSteps;
-  const canProceed = !step.requires_note || (draft.note && draft.note.trim().length > 0);
+  const canProceed = step.requires_note
+    ? Boolean(draft.note && draft.note.trim().length > 0)
+    : Boolean(draft.checked);
+  const stepError = state.checksStepError;
   return `
     <section class="detail-card funnel-card">
       <p class="eyebrow">// SCHRITT ${stepIndex} VON ${totalSteps}</p>
       <h2 class="panel-title">${escapeHtml(step.title)}</h2>
-      ${step.body ? `<div class="step-body-content" style="margin-top:12px;">${escapeHtml(step.body).replace(/\n/g, "<br />")}</div>` : ""}
+      ${step.body ? `<div class="step-body-content" class="mt-12">${escapeHtml(step.body).replace(/\n/g, "<br />")}</div>` : ""}
       ${step.image_path ? `<img class="step-image" src="${escapeHtml(step.image_path)}" alt="${escapeHtml(step.title)}" />` : ""}
       ${step.requires_note ? `
-        <div style="margin-top:14px;">
-          <label for="step-note-${step.id}">Notiz (erforderlich)
-            <textarea id="step-note-${step.id}" class="step-note-field" data-checks-note="${step.id}"
-              placeholder="Beschreibe kurz deine Beobachtung…">${escapeHtml(draft.note || "")}</textarea>
+        <div class="mt-14">
+          <label for="step-note-${step.id}">Deine Beobachtung (Pflichtfeld)
+            <textarea id="step-note-${step.id}" class="step-note-field${stepError ? " input-error" : ""}" data-checks-note="${step.id}"
+              placeholder="Beschreibe kurz deine Beobachtung…"
+              aria-required="true" aria-describedby="step-note-error-${step.id}">${escapeHtml(draft.note || "")}</textarea>
           </label>
+          ${stepError ? `<span id="step-note-error-${step.id}" class="field-error-msg" role="alert" aria-live="polite">${escapeHtml(stepError)}</span>` : ""}
         </div>
       ` : `
-        <label class="checkbox-row" style="margin-top:14px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-strong);"
+        <label class="checkbox-row checkbox-row-block"
           for="checks-check-${step.id}">
           <input id="checks-check-${step.id}" type="checkbox" data-checks-check="${step.id}"
             ${draft.checked ? "checked" : ""} />
           <span>Punkt bestätigt</span>
         </label>
+        ${stepError ? `<span class="field-error-msg" role="alert" aria-live="polite">${escapeHtml(stepError)}</span>` : ""}
       `}
-      <div class="funnel-actions" style="margin-top:16px;">
+      <div class="funnel-actions" class="mt-16">
         <button type="button" id="checks-funnel-back" class="secondary">Zurück</button>
-        <button type="button" id="checks-funnel-next" ${canProceed ? "" : "disabled"}>
+        <button type="button" id="checks-funnel-next"
+          ${canProceed ? "" : 'disabled aria-disabled="true"'}
+          title="${canProceed ? "" : "Bitte zuerst bestätigen"}">
           ${isLast ? "Abschließen" : "Weiter"}
         </button>
       </div>
@@ -1728,8 +1570,8 @@ function renderChecksStepDone() {
     <section class="detail-card funnel-card">
       <p class="eyebrow">// ${funnelLabel.toUpperCase()} ABGESCHLOSSEN</p>
       <h2 class="panel-title">${escapeHtml(funnelLabel)} bestätigt.</h2>
-      <div class="message good" style="margin-top:12px;">${escapeHtml(successText)}</div>
-      <div class="funnel-overview-grid" style="margin-top:14px;">
+      <div class="message good" class="mt-12">${escapeHtml(successText)}</div>
+      <div class="funnel-overview-grid" class="mt-14">
         <div class="summary-item">
           <span class="summary-label">Zeitfenster</span>
           <strong>${fmtDate(win?.starts_at)} → ${fmtDate(win?.ends_at)}</strong>
@@ -1739,7 +1581,7 @@ function renderChecksStepDone() {
           <strong>${state.checksFunnel?.steps?.length || 0} abgeschlossen</strong>
         </div>
       </div>
-      <div class="funnel-actions" style="margin-top:16px;">
+      <div class="funnel-actions" class="mt-16">
         <button type="button" id="checks-funnel-back-list">Zurück zur Übersicht</button>
       </div>
     </section>
@@ -1752,15 +1594,15 @@ function renderChecksWindowList() {
     <section class="public-shell">
       <div class="public-hero">
         <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
-        <h1 class="hero-title">Hallo, ${escapeHtml(session.member_name)}.</h1>
+        <h1 class="hero-title">Hallo, ${escapeHtml(session.member_name?.trim() || "Mitglied")}.</h1>
         <p class="subtle">Deine Trainingsfenster. Starte den Check-In vor dem Training und den Check-Out danach.</p>
         <div class="public-meta">
-          <span>${escapeHtml(session.member_email)}</span>
+          <span>${escapeHtml(session.member_email?.trim() || "–")}</span>
           <span>${session.windows.length} Fenster geladen</span>
         </div>
       </div>
-      <div style="padding:18px 20px;">
-        ${state.message ? `<div class="message ${state.messageType}" aria-live="polite" style="margin-bottom:14px;">${escapeHtml(state.message)}</div>` : ""}
+      <div class="public-form-wrap">
+        ${state.message ? `<div class="message ${state.messageType} mb-14" aria-live="polite">${escapeHtml(state.message)}</div>` : ""}
         ${session.windows.length ? session.windows.map((win) => {
           const checkinDone = !!win.checkin_confirmed_at;
           const checkoutDone = !!win.checkout_confirmed_at;
@@ -1770,9 +1612,9 @@ function renderChecksWindowList() {
             <div class="checks-window-card">
               <div class="split">
                 <strong>${fmtDate(win.starts_at)} → ${fmtDate(win.ends_at)}</strong>
-                ${pill(win.status)}
+                ${pill(translateStatus(win.status))}
               </div>
-              <p class="subtle" style="margin-top:4px;">${win.booking_count > 1 ? `${win.booking_count} Buchungen · ` : ""}${escapeHtml(win.access_reason)}</p>
+              <p class="subtle" class="mt-4">${win.booking_count > 1 ? `${win.booking_count} Buchungen · ` : ""}${escapeHtml(win.access_reason)}</p>
               <div class="checks-status-row">
                 <div class="checks-status-badge ${checkinDone ? "done" : "pending"}">
                   ${checkinDone ? "✓" : "○"} Check-In
@@ -1783,18 +1625,18 @@ function renderChecksWindowList() {
                   ${checkoutDone ? `<span>${fmtDate(win.checkout_confirmed_at)}</span>` : ""}
                 </div>
               </div>
-              <div class="action-group" style="margin-top:12px;">
+              <div class="action-group" class="mt-12">
                 ${canCheckin
                   ? `<button type="button" class="good" data-checks-checkin data-window-id="${win.id}">Check-In starten</button>`
                   : win.has_checkin_funnel
-                    ? `<button type="button" disabled class="secondary">✓ Check-In erledigt</button>`
+                    ? `<div class="status-done-badge" aria-label="Check-In abgeschlossen">✓ Check-In abgeschlossen</div>`
                     : ""}
                 ${canCheckout
                   ? `<button type="button" class="secondary" data-checks-checkout data-window-id="${win.id}">Check-Out starten</button>`
                   : win.has_checkout_funnel && checkinDone
-                    ? `<button type="button" disabled class="secondary">✓ Check-Out erledigt</button>`
+                    ? `<div class="status-done-badge" aria-label="Check-Out abgeschlossen">✓ Check-Out abgeschlossen</div>`
                     : win.has_checkout_funnel
-                      ? `<button type="button" disabled class="secondary" title="Erst Check-In abschließen">Check-Out gesperrt</button>`
+                      ? `<button type="button" disabled aria-disabled="true" class="secondary" title="Erst Check-In abschließen">Check-Out gesperrt</button>`
                       : ""}
               </div>
             </div>
@@ -1841,7 +1683,7 @@ function renderChecksFunnel() {
         <h1 class="hero-title">${escapeHtml(funnel.template_name)}</h1>
         ${checksProgressBar()}
       </div>
-      <div style="padding:14px 16px;">${stepContent}</div>
+      <div class="funnel-step-wrap">${stepContent}</div>
     </section>
   `;
 
@@ -1850,6 +1692,22 @@ function renderChecksFunnel() {
     return;
   }
   document.getElementById("checks-funnel-next")?.addEventListener("click", () => {
+    const step = funnel.steps[state.checksFunnelStep - 1];
+    if (step) {
+      const draft = state.checksFunnelDraft[step.id] || { checked: false, note: "" };
+      if (step.requires_note && !draft.note?.trim()) {
+        state.checksStepError = "Bitte beschreibe kurz deine Beobachtung.";
+        render();
+        document.getElementById(`step-note-${step.id}`)?.focus();
+        return;
+      }
+      if (!step.requires_note && !draft.checked) {
+        state.checksStepError = "Bitte bestätige diesen Punkt bevor du weitermachst.";
+        render();
+        return;
+      }
+    }
+    state.checksStepError = null;
     if (state.checksFunnelStep >= totalSteps) {
       submitChecksFunnel().catch(handleError);
     } else {
@@ -1858,6 +1716,7 @@ function renderChecksFunnel() {
     }
   });
   document.getElementById("checks-funnel-back")?.addEventListener("click", () => {
+    state.checksStepError = null;
     if (state.checksFunnelStep <= 0) {
       backToChecksWindowList();
     } else {
@@ -1866,12 +1725,16 @@ function renderChecksFunnel() {
     }
   });
   document.querySelectorAll("[data-checks-note]").forEach((ta) => {
-    ta.addEventListener("input", (e) =>
-      updateChecksDraft(parseInt(ta.dataset.checksNote), "note", e.currentTarget.value));
+    ta.addEventListener("input", (e) => {
+      state.checksStepError = null;
+      updateChecksDraftDebounced(parseInt(ta.dataset.checksNote), "note", e.currentTarget.value);
+    });
   });
   document.querySelectorAll("[data-checks-check]").forEach((cb) => {
-    cb.addEventListener("change", (e) =>
-      updateChecksDraft(parseInt(cb.dataset.checksCheck), "checked", e.currentTarget.checked));
+    cb.addEventListener("change", (e) => {
+      state.checksStepError = null;
+      updateChecksDraft(parseInt(cb.dataset.checksCheck), "checked", e.currentTarget.checked);
+    });
   });
 }
 
@@ -1883,16 +1746,16 @@ function renderChecksResolve() {
         <h1 class="hero-title">Studio Check-In / Check-Out.</h1>
         <p class="subtle">Melde dich mit deiner E-Mail und deinem Zugangscode an.</p>
       </div>
-      <div style="padding:22px 26px;">
-        <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "E-Mail und aktuellen Zugangscode aus deiner Mail eingeben.")}</div>
-        <form id="checks-resolve-form" class="stack" style="margin-top:16px;">
+      <div class="public-form-wrap">
+        <div class="message ${state.messageType}" aria-live="polite">${escapeHtml(state.message || "E-Mail und Zugangscode aus deiner Mail eingeben.")}</div>
+        <form id="checks-resolve-form" class="stack" class="mt-16">
           <label for="checks-email">E-Mail
             <input id="checks-email" name="email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="deine@email.de" required />
           </label>
           <label for="checks-code">Zugangscode
-            <input id="checks-code" name="code" type="text" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" placeholder="6-stelliger Code" required />
+            <input id="checks-code" name="code" type="text" autocomplete="one-time-code" inputmode="numeric" spellcheck="false" placeholder="6-stelliger Code aus deiner Mail" required />
           </label>
-          <button type="submit">Trainingssession laden</button>
+          <button type="submit">Anmelden</button>
         </form>
       </div>
     </section>
@@ -1974,7 +1837,7 @@ async function saveFunnelStep(event, templateId, stepEditorId) {
 }
 
 async function deleteFunnelStep(templateId, stepId) {
-  if (!window.confirm("Schritt löschen?")) return;
+  if (!await showConfirm("Schritt löschen?")) return;
   await api(`./admin/funnels/${templateId}/steps/${stepId}`, { method: "DELETE" });
   state.funnelDetail = await api(`./admin/funnels/${templateId}`);
   state.stepEditorId = null;
@@ -2009,6 +1872,10 @@ function attachFunnelHandlers() {
     btn.addEventListener("click", () =>
       deleteFunnelStep(state.selectedFunnelId, parseInt(btn.dataset.stepDelete)).catch(handleError));
   });
+  document.getElementById("qr-download-btn")?.addEventListener("click", downloadChecksQr);
+  document.getElementById("qr-download-png-medium")?.addEventListener("click", () => downloadChecksQrPng("medium"));
+  document.getElementById("qr-download-png-large")?.addEventListener("click", () => downloadChecksQrPng("large"));
+  document.getElementById("qr-download-png-print")?.addEventListener("click", () => downloadChecksQrPng("print"));
 }
 
 function renderStepEditor() {
@@ -2057,6 +1924,26 @@ function renderStepEditor() {
   `;
 }
 
+function downloadChecksQr() {
+  const dataUri = state.studioLinks?.checks_qr_svg;
+  if (!dataUri) return;
+  const a = document.createElement("a");
+  a.href = dataUri;
+  a.download = "t247gym-checks-qr.svg";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function downloadChecksQrPng(size) {
+  const link = document.createElement("a");
+  link.href = `./admin/system/checks-qr.png?size=${size}`;
+  link.download = `t247gym-checks-qr-${size}.png`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 function renderFunnelsView() {
   const templates = state.funnelsList || [];
   const detail = state.funnelDetail;
@@ -2091,7 +1978,7 @@ function renderFunnelsView() {
             </label>
             <button type="submit">Funnel Erstellen</button>
           </form>
-          <div class="entity-list" style="margin-top:16px;">
+          <div class="entity-list" class="mt-16">
             ${templates.length ? templates.map((t) => `
               <button type="button"
                 class="list-item entity-button ${state.selectedFunnelId === t.id ? "active" : ""}"
@@ -2113,9 +2000,9 @@ function renderFunnelsView() {
             <p class="eyebrow">// ${detail.template.funnel_type.toUpperCase()}-FUNNEL</p>
             <h2 class="panel-title">${escapeHtml(detail.template.name)}</h2>
             ${detail.template.description
-              ? `<p class="subtle" style="margin-top:4px;">${escapeHtml(detail.template.description)}</p>`
+              ? `<p class="subtle" class="mt-4">${escapeHtml(detail.template.description)}</p>`
               : ""}
-            <div class="detail-meta" style="margin-top:10px;">
+            <div class="detail-meta" class="mt-10">
               ${pill(detail.template.funnel_type)}
               <span class="code">${escapeHtml(detail.template.slug)}</span>
               <span>${detail.steps.length} Schritte</span>
@@ -2142,9 +2029,9 @@ function renderFunnelsView() {
                     </div>
                   </div>
                   ${step.body
-                    ? `<p class="subtle" style="margin-top:4px;">${escapeHtml(step.body.slice(0, 100))}${step.body.length > 100 ? "…" : ""}</p>`
+                    ? `<p class="subtle" class="mt-4">${escapeHtml(step.body.slice(0, 100))}${step.body.length > 100 ? "…" : ""}</p>`
                     : ""}
-                  <div class="action-group" style="margin-top:8px;">
+                  <div class="action-group mt-8">
                     <button type="button" class="secondary" data-step-edit="${step.id}">Bearbeiten</button>
                     <button type="button" class="bad" data-step-delete="${step.id}">Löschen</button>
                   </div>
@@ -2159,9 +2046,41 @@ function renderFunnelsView() {
             <p class="eyebrow">// FUNNEL EDITOR</p>
             <h2 class="panel-title">Funnel auswählen</h2>
             <p class="subtle">Wähle links einen Funnel um Schritte zu bearbeiten, oder lege einen neuen an.</p>
-            <p class="subtle" style="margin-top:10px;">Der jeweils neueste Funnel pro Typ ist aktiv auf <span class="code">/checks</span>.</p>
+            <p class="subtle mt-10">Der jeweils neueste Funnel pro Typ ist aktiv auf <a class="code code-link" href="../checks" target="_blank">/checks</a>.</p>
           </section>
         `}
+
+        <section class="detail-card">
+          <p class="eyebrow">// ÖFFENTLICHER LINK</p>
+          <h3 class="panel-title">Studio Check-In/Out</h3>
+          <p class="subtle mt-6">Dieser Link führt Mitglieder direkt zu ihrer Check-In/Check-Out-Seite. QR-Code für Aushang, Flyerdruck oder digitale Kommunikation.</p>
+          <div class="studio-link-block mt-12">
+            <p class="code studio-link-url">${escapeHtml(state.studioLinks?.checks_url || "–")}</p>
+          </div>
+          <div class="qr-download-panel mt-14">
+            ${state.studioLinks?.checks_qr_svg
+              ? `<img class="qr-image-lg" src="${state.studioLinks.checks_qr_svg}" alt="QR-Code für /checks" />`
+              : '<div class="empty">QR wird geladen…</div>'
+            }
+            <div class="qr-download-actions mt-10">
+              <div class="action-group">
+                <button type="button" id="qr-download-btn" class="secondary" ${state.studioLinks?.checks_qr_svg ? "" : "disabled"}>
+                  SVG
+                </button>
+                <button type="button" id="qr-download-png-medium" class="secondary" ${state.studioLinks?.checks_qr_svg ? "" : "disabled"}>
+                  PNG 600 px
+                </button>
+                <button type="button" id="qr-download-png-large" class="secondary" ${state.studioLinks?.checks_qr_svg ? "" : "disabled"}>
+                  PNG 1000 px
+                </button>
+                <button type="button" id="qr-download-png-print" class="secondary" ${state.studioLinks?.checks_qr_svg ? "" : "disabled"}>
+                  PNG 2000 px
+                </button>
+              </div>
+              <p class="subtle mt-6">SVG: Vektorformat, beliebig skalierbar. PNG: für E-Mail (600 px), Aushang (1000 px) oder Druckqualität (2000 px).</p>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   `;
@@ -2193,27 +2112,6 @@ function render() {
     renderChecks();
     return;
   }
-  if (window.location.pathname.endsWith("/check-in")) {
-    if (
-      !state.publicCheckInSession
-      && !state.publicCheckInAttempted
-      && new URLSearchParams(window.location.search).get("token")
-    ) {
-      app.innerHTML = `
-        <section class="auth-shell">
-          <div class="auth-panel">
-            <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
-            <h1>Check-in wird geladen…</h1>
-            <p class="subtle">Dein Trainingsblock wird vorbereitet.</p>
-          </div>
-        </section>
-      `;
-      loadPublicCheckInSession().catch(handleError);
-      return;
-    }
-    renderPublicCheckIn();
-    return;
-  }
   if (window.location.pathname.endsWith("/reset-password")) {
     renderReset();
     return;
@@ -2237,57 +2135,8 @@ function render() {
       localStorage.removeItem("opengym_role");
       state.token = "";
       state.role = "";
-      setMessage(error.message, "bad");
-    });
-    return;
-  }
-  renderApp();
-}
-  if (window.location.pathname.endsWith("/check-in")) {
-    if (
-      !state.publicCheckInSession
-      && !state.publicCheckInAttempted
-      && new URLSearchParams(window.location.search).get("token")
-    ) {
-      app.innerHTML = `
-        <section class="auth-shell">
-          <div class="auth-panel">
-            <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
-            <h1>Check-in wird geladen…</h1>
-            <p class="subtle">Dein Trainingsblock wird vorbereitet.</p>
-          </div>
-        </section>
-      `;
-      loadPublicCheckInSession().catch(handleError);
-      return;
-    }
-    renderPublicCheckIn();
-    return;
-  }
-  if (window.location.pathname.endsWith("/reset-password")) {
-    renderReset();
-    return;
-  }
-  if (!state.token) {
-    renderAuth();
-    return;
-  }
-  if (!state.me) {
-    app.innerHTML = `
-      <section class="auth-shell">
-        <div class="auth-panel">
-          <p class="eyebrow">// TWENTY4SEVEN-GYM</p>
-          <h1>Wird initialisiert…</h1>
-          <p class="subtle">Betriebsdaten, Schlossstatus und Alerts werden geladen.</p>
-        </div>
-      </section>
-    `;
-    loadAppData().catch((error) => {
-      localStorage.removeItem("opengym_token");
-      localStorage.removeItem("opengym_role");
-      state.token = "";
-      state.role = "";
-      setMessage(error.message, "bad");
+      const isAuthError = /expired|signature|bearer|credentials|inactive/i.test(error.message);
+      setMessage(isAuthError ? "Sitzung abgelaufen. Bitte erneut anmelden." : error.message, isAuthError ? "" : "bad");
     });
     return;
   }

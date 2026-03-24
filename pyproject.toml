@@ -18,6 +18,7 @@ dependencies = [
     "psycopg[binary]>=3.2.0,<4.0.0",
     "psycopg-pool>=3.2.0,<4.0.0",
     "qrcode>=7.4,<9.0",
+    "pillow>=10.0,<13.0",
     "python-multipart>=0.0.11,<0.0.23",
 ]
 
@@ -42,7 +43,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-nuki_integration = ["static/*"]
+nuki_integration = ["static/*", "static/assets/*"]
 
 [tool.ruff]
 line-length = 100

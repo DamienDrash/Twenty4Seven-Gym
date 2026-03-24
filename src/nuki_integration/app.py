@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .auth import decode_token, issue_token, verify_password
@@ -37,9 +37,13 @@ from .models import (
     FunnelTemplateResponse,
     LoginRequest,
     LoginResponse,
+    MagiclineSettingsResponse,
+    MagiclineSettingsUpdateRequest,
     MagiclineWebhookEnvelope,
     MemberDetail,
     MemberSummary,
+    NukiSettingsResponse,
+    NukiSettingsUpdateRequest,
     PasswordResetRequest,
     PublicCheckInResolveRequest,
     PublicCheckInSessionResponse,
@@ -60,7 +64,11 @@ from .services import (
     complete_password_reset,
     deactivate_access_window,
     delete_funnel_step,
+    generate_qr_data_uri,
+    generate_qr_png_bytes,
     get_effective_check_in_settings,
+    get_effective_magicline_config,
+    get_effective_nuki_config,
     get_effective_smtp_config,
     get_effective_telegram_config,
     get_funnel_template,
@@ -141,7 +149,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Studio Access Platform", version="0.1.0", lifespan=lifespan)
-app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
+app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
 @app.get("/")
@@ -638,6 +646,110 @@ def admin_put_check_in_settings(
     )
 
 
+@app.get("/admin/system/studio-links")
+def admin_studio_links(
+    _admin: UserRecord = Depends(require_admin),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, str]:
+    checks_url = f"{runtime_settings.app_public_base_url.rstrip('/')}/checks"
+    return {
+        "checks_url": checks_url,
+        "checks_qr_svg": generate_qr_data_uri(checks_url),
+    }
+
+
+@app.get("/admin/system/checks-qr.png")
+def admin_checks_qr_png(
+    _admin: UserRecord = Depends(require_admin),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+    size: str = Query(default="medium", pattern="^(small|medium|large|print)$"),
+) -> Response:
+    checks_url = f"{runtime_settings.app_public_base_url.rstrip('/')}/checks"
+    box_sizes = {"small": 8, "medium": 15, "large": 25, "print": 50}
+    png_bytes = generate_qr_png_bytes(checks_url, box_size=box_sizes[size])
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Content-Disposition": f'attachment; filename="t247gym-checks-qr-{size}.png"'},
+    )
+
+
+@app.get("/admin/system/nuki-settings", response_model=NukiSettingsResponse)
+def admin_get_nuki_settings(
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> NukiSettingsResponse:
+    cfg = get_effective_nuki_config(db, runtime_settings)
+    return NukiSettingsResponse(
+        nuki_smartlock_id=int(cfg["nuki_smartlock_id"]),
+        nuki_dry_run=bool(cfg["nuki_dry_run"]),
+        has_api_token=bool(cfg["nuki_api_token"]),
+    )
+
+
+@app.put("/admin/system/nuki-settings", response_model=NukiSettingsResponse)
+def admin_put_nuki_settings(
+    payload: NukiSettingsUpdateRequest,
+    admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> NukiSettingsResponse:
+    db.set_system_setting(key="nuki", value=payload.model_dump(mode="json"))
+    db.create_admin_action(
+        actor_email=str(admin.email),
+        action="update-nuki-settings",
+        payload={"smartlock_id": payload.nuki_smartlock_id, "dry_run": payload.nuki_dry_run},
+    )
+    cfg = get_effective_nuki_config(db, runtime_settings)
+    return NukiSettingsResponse(
+        nuki_smartlock_id=int(cfg["nuki_smartlock_id"]),
+        nuki_dry_run=bool(cfg["nuki_dry_run"]),
+        has_api_token=bool(cfg["nuki_api_token"]),
+    )
+
+
+@app.get("/admin/system/magicline-settings", response_model=MagiclineSettingsResponse)
+def admin_get_magicline_settings(
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> MagiclineSettingsResponse:
+    cfg = get_effective_magicline_config(db, runtime_settings)
+    return MagiclineSettingsResponse(
+        magicline_base_url=str(cfg["magicline_base_url"]),
+        magicline_studio_id=int(cfg["magicline_studio_id"]),
+        magicline_studio_name=str(cfg["magicline_studio_name"]),
+        magicline_relevant_appointment_title=str(cfg["magicline_relevant_appointment_title"]),
+        has_api_key=bool(cfg["magicline_api_key"]),
+        has_webhook_key=bool(cfg["magicline_webhook_api_key"]),
+    )
+
+
+@app.put("/admin/system/magicline-settings", response_model=MagiclineSettingsResponse)
+def admin_put_magicline_settings(
+    payload: MagiclineSettingsUpdateRequest,
+    admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> MagiclineSettingsResponse:
+    db.set_system_setting(key="magicline", value=payload.model_dump(mode="json"))
+    db.create_admin_action(
+        actor_email=str(admin.email),
+        action="update-magicline-settings",
+        payload={"studio_id": payload.magicline_studio_id, "base_url": payload.magicline_base_url},
+    )
+    cfg = get_effective_magicline_config(db, runtime_settings)
+    return MagiclineSettingsResponse(
+        magicline_base_url=str(cfg["magicline_base_url"]),
+        magicline_studio_id=int(cfg["magicline_studio_id"]),
+        magicline_studio_name=str(cfg["magicline_studio_name"]),
+        magicline_relevant_appointment_title=str(cfg["magicline_relevant_appointment_title"]),
+        has_api_key=bool(cfg["magicline_api_key"]),
+        has_webhook_key=bool(cfg["magicline_webhook_api_key"]),
+    )
+
+
 @app.get("/admin/users", response_model=list[UserSummary])
 def admin_list_users(
     _admin: UserRecord = Depends(require_admin),
@@ -897,7 +1009,7 @@ def admin_remote_open(
     db: Database = Depends(get_database),
     runtime_settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, object]:
-    nuki = NukiClient(runtime_settings)
+    nuki = NukiClient(runtime_settings.model_copy(update=get_effective_nuki_config(db, runtime_settings)))
     try:
         result = nuki.remote_open()
     finally:
@@ -913,9 +1025,10 @@ def admin_remote_open(
 @app.get("/admin/lock/status")
 def admin_lock_status(
     _current_user: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
     runtime_settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, object]:
-    nuki = NukiClient(runtime_settings)
+    nuki = NukiClient(runtime_settings.model_copy(update=get_effective_nuki_config(db, runtime_settings)))
     try:
         return nuki.get_lock_status()
     finally:

@@ -186,6 +186,36 @@ class TelegramTestRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
 
 
+class NukiSettingsUpdateRequest(BaseModel):
+    nuki_api_token: str = ""
+    nuki_smartlock_id: int = 0
+    nuki_dry_run: bool = True
+
+
+class NukiSettingsResponse(BaseModel):
+    nuki_smartlock_id: int
+    nuki_dry_run: bool
+    has_api_token: bool
+
+
+class MagiclineSettingsUpdateRequest(BaseModel):
+    magicline_base_url: str = ""
+    magicline_api_key: str = ""
+    magicline_webhook_api_key: str = ""
+    magicline_studio_id: int = 0
+    magicline_studio_name: str = ""
+    magicline_relevant_appointment_title: str = "Freies Training"
+
+
+class MagiclineSettingsResponse(BaseModel):
+    magicline_base_url: str
+    magicline_studio_id: int
+    magicline_studio_name: str
+    magicline_relevant_appointment_title: str
+    has_api_key: bool
+    has_webhook_key: bool
+
+
 class CheckInChecklistItem(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=200)

@@ -3,8 +3,6 @@
    Design System v2 — Dark Operational Theme
    ================================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap");
-
 /* ----------------------------------------------------------------
    DESIGN TOKENS
    ---------------------------------------------------------------- */
@@ -251,10 +249,10 @@ body::after {
 .app-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-rows: minmax(calc(100dvh - 40px), auto);
   gap: 0;
   overflow: hidden;
   border-radius: var(--radius-lg);
-  min-height: calc(100vh - 40px);
 }
 
 /* ----------------------------------------------------------------
@@ -273,9 +271,9 @@ body::after {
    BRAND BLOCK
    ---------------------------------------------------------------- */
 .brand {
-  padding: 12px 10px 28px;
+  padding: 12px 10px 16px;
   border-bottom: 1px solid var(--line);
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .brand-terminal {
@@ -346,9 +344,9 @@ h1.brand-title {
    SIDEBAR NAVIGATION
    ---------------------------------------------------------------- */
 .sidebar-nav {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 4px;
-  flex: 1;
 }
 
 .sidebar-nav button {
@@ -358,8 +356,8 @@ h1.brand-title {
 }
 
 .sidebar-footer {
-  margin-top: 16px;
-  padding: 16px 10px 6px;
+  margin-top: auto;
+  padding: 12px 10px 6px;
   border-top: 1px solid var(--line);
 }
 
@@ -553,10 +551,13 @@ h1.brand-title {
 
 .metric-card strong {
   font-family: var(--font-mono);
-  font-size: 2rem;
+  font-size: clamp(1rem, 2.5vw, 2rem);
   font-weight: 700;
-  line-height: 1;
+  line-height: 1.2;
   color: var(--text-bright);
+  overflow-wrap: break-word;
+  word-break: break-word;
+  hyphens: auto;
 }
 
 /* ----------------------------------------------------------------
@@ -1170,8 +1171,8 @@ button.good {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
-  padding: 10px 12px;
+  height: 40px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   text-decoration: none;
@@ -1182,11 +1183,19 @@ button.good {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  white-space: nowrap;
   cursor: pointer;
   transition: background 150ms, border-color 150ms, color 150ms;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   position: relative;
+  flex-shrink: 0;
+}
+
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-button::before {
@@ -1698,5 +1707,277 @@ button.good {
 
   .checks-status-row {
     flex-direction: column;
+  }
+}
+
+/* ----------------------------------------------------------------
+   UTILITY SPACING
+   ---------------------------------------------------------------- */
+.mt-4  { margin-top: 4px; }
+.mt-6  { margin-top: 6px; }
+.mt-8  { margin-top: 8px; }
+.mt-10 { margin-top: 10px; }
+.mt-12 { margin-top: 12px; }
+.mt-14 { margin-top: 14px; }
+.mt-16 { margin-top: 16px; }
+.mt-18 { margin-top: 18px; }
+.mb-14 { margin-bottom: 14px; }
+
+/* ----------------------------------------------------------------
+   CONFIRM DIALOG
+   ---------------------------------------------------------------- */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(2px);
+}
+
+.confirm-dialog {
+  background: var(--surface-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xl);
+  padding: 24px 28px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: var(--shadow-lg);
+}
+
+.confirm-message {
+  font-size: 15px;
+  color: var(--text-bright);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+/* ----------------------------------------------------------------
+   PUBLIC FUNNEL UTILITIES
+   ---------------------------------------------------------------- */
+.public-form-wrap {
+  padding: 20px 26px;
+}
+
+.funnel-step-wrap {
+  padding: 14px 16px;
+}
+
+.funnel-card-padded {
+  margin: 18px 20px;
+}
+
+.checkbox-row-block {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+}
+
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+
+/* ----------------------------------------------------------------
+   LOCK STATUS LABELS
+   ---------------------------------------------------------------- */
+.lock-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.lock-status-pair,
+.lock-detail-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lock-status-key {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.lock-detail-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* ----------------------------------------------------------------
+   QUICK-LINK ITEMS
+   ---------------------------------------------------------------- */
+.quick-link {
+  display: block;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.quick-link:hover {
+  background: var(--surface-hover);
+}
+
+/* ----------------------------------------------------------------
+   INLINE CODE LINK
+   ---------------------------------------------------------------- */
+.code-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-accent);
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.code-link:hover {
+  color: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+/* ----------------------------------------------------------------
+   FUNNEL STEP VALIDATION
+   ---------------------------------------------------------------- */
+.input-error {
+  border-color: #ff4d4d !important;
+  box-shadow: 0 0 0 1px #ff4d4d !important;
+}
+
+.field-error-msg {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: #ff4d4d;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+/* ----------------------------------------------------------------
+   STATUS DONE BADGE (non-interactive, replaces disabled button)
+   ---------------------------------------------------------------- */
+.status-done-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 200, 100, 0.08);
+  border: 1px solid rgba(0, 200, 100, 0.25);
+  color: var(--good);
+  font-size: 0.82rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: default;
+  user-select: none;
+}
+
+/* ----------------------------------------------------------------
+   QR CODE PANEL (Funnels view)
+   ---------------------------------------------------------------- */
+.studio-link-url {
+  word-break: break-all;
+  font-size: 0.78rem;
+  padding: 10px 12px;
+  background: var(--surface-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.qr-download-panel {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.qr-image-lg {
+  width: 160px;
+  height: 160px;
+  border: 2px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.qr-download-actions {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+/* ----------------------------------------------------------------
+   RESPONSIVE FIXES
+   ---------------------------------------------------------------- */
+
+/* Split flex rows: wrap on narrow screens */
+.split {
+  flex-wrap: wrap;
+}
+
+/* action-group: wrap on mobile */
+.action-group {
+  flex-wrap: wrap;
+}
+
+/* checks-window-card action-group: full-width buttons on very narrow */
+@media (max-width: 480px) {
+  .checks-window-card .action-group {
+    flex-direction: column;
+  }
+
+  .checks-window-card .action-group > * {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .status-done-badge {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Funnel progress bar: allow wrapping on smallest screens */
+  .checks-funnel-progress {
+    flex-wrap: wrap;
+  }
+
+  /* Auth grid: single column */
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* QR panel: stack vertically */
+  .qr-download-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .qr-image-lg {
+    width: 100%;
+    max-width: 200px;
+    height: auto;
+  }
+}
+
+/* Metric cards: ensure wrapping text on desktop too */
+@media (max-width: 860px) {
+  /* funnel-steps: 2 columns at this bp already set; also fix funnel-overview-grid */
+  .funnel-overview-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* QR download panel stays horizontal until very narrow */
+  .qr-download-panel {
+    gap: 14px;
   }
 }

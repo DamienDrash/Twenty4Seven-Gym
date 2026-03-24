@@ -227,6 +227,38 @@ def generate_qr_data_uri(url: str) -> str:
     return f"data:image/svg+xml;base64,{b64encode(svg_bytes).decode('ascii')}"
 
 
+def generate_qr_png_bytes(url: str, box_size: int = 10) -> bytes:
+    import io
+    from PIL import Image  # type: ignore[import-untyped]
+    img: Image.Image = qrcode.make(url, box_size=box_size, border=4)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def get_effective_nuki_config(db: Database, settings: Settings) -> dict[str, object]:
+    raw = db.get_system_setting("nuki") or {}
+    return {
+        "nuki_api_token": str(raw.get("nuki_api_token") or settings.nuki_api_token),
+        "nuki_smartlock_id": int(raw.get("nuki_smartlock_id") or settings.nuki_smartlock_id),
+        "nuki_dry_run": bool(raw["nuki_dry_run"] if "nuki_dry_run" in raw else settings.nuki_dry_run),
+    }
+
+
+def get_effective_magicline_config(db: Database, settings: Settings) -> dict[str, object]:
+    raw = db.get_system_setting("magicline") or {}
+    return {
+        "magicline_base_url": str(raw.get("magicline_base_url") or settings.magicline_base_url),
+        "magicline_api_key": str(raw.get("magicline_api_key") or settings.magicline_api_key),
+        "magicline_webhook_api_key": str(raw.get("magicline_webhook_api_key") or settings.magicline_webhook_api_key),
+        "magicline_studio_id": int(raw.get("magicline_studio_id") or settings.magicline_studio_id),
+        "magicline_studio_name": str(raw.get("magicline_studio_name") or settings.magicline_studio_name),
+        "magicline_relevant_appointment_title": str(
+            raw.get("magicline_relevant_appointment_title") or settings.magicline_relevant_appointment_title
+        ),
+    }
+
+
 def issue_check_in_token(*, access_window_id: int, settings: Settings, ttl_seconds: int) -> str:
     return issue_token(
         subject=f"checkin:{access_window_id}",
