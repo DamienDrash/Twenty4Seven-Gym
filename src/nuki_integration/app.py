@@ -460,6 +460,24 @@ def admin_email_test(
     return {"sent": sent, "to_email": str(payload.to_email)}
 
 
+@app.post("/admin/system/email-test-reset")
+def admin_email_test_reset(
+    payload: EmailTestRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, bool | str]:
+    smtp = get_effective_smtp_config(db, runtime_settings)
+    email_service = EmailService(runtime_settings, smtp)
+    reset_url = f"{runtime_settings.app_public_base_url.rstrip('/')}/reset-password?token=TESTTOKEN"
+    sent = email_service.send_password_reset_email(
+        to_email=payload.to_email,
+        reset_url=reset_url,
+        html_body=build_password_reset_email_html(db, reset_url=reset_url),
+    )
+    return {"sent": sent, "to_email": str(payload.to_email)}
+
+
 @app.get("/admin/system/email-template", response_model=EmailTemplateResponse)
 def admin_get_email_template(
     _admin: UserRecord = Depends(require_admin),

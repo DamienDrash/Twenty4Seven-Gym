@@ -406,6 +406,18 @@ async function testEmail(event) {
   }, "Testmail wird gesendet…");
 }
 
+async function testResetEmail(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/email-test-reset", {
+      method: "POST",
+      body: JSON.stringify({ to_email: form.get("to_email_reset") }),
+    });
+    setMessage("Passwort-Reset-Testmail versendet.", "good");
+  }, "Testmail wird gesendet…");
+}
+
 async function updateTelegram(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -573,6 +585,7 @@ function attachSettingsHandlers() {
   document.getElementById("create-user-form")?.addEventListener("submit", (event) => createUser(event).catch(handleError));
   document.getElementById("smtp-form")?.addEventListener("submit", (event) => updateSmtp(event).catch(handleError));
   document.getElementById("smtp-test-form")?.addEventListener("submit", (event) => testEmail(event).catch(handleError));
+  document.getElementById("smtp-test-reset-form")?.addEventListener("submit", (event) => testResetEmail(event).catch(handleError));
   document.getElementById("telegram-form")?.addEventListener("submit", (event) => updateTelegram(event).catch(handleError));
   document.getElementById("telegram-test-form")?.addEventListener("submit", (event) => testTelegram(event).catch(handleError));
   document.getElementById("nuki-form")?.addEventListener("submit", (event) => updateNukiSettings(event).catch(handleError));
@@ -1089,10 +1102,16 @@ function renderSettingsView() {
           <button type="submit">SMTP Speichern</button>
         </form>
         <form id="smtp-test-form" class="stack" class="mt-14">
-          <label for="smtp-test-email">Testempfänger
+          <label for="smtp-test-email">Testempfänger (Newsletter-Template)
             <input id="smtp-test-email" name="to_email" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="test@example.com" required />
           </label>
-          <button type="submit" class="secondary">Testmail Senden</button>
+          <button type="submit" class="secondary">Test-Newsletter-Mail senden</button>
+        </form>
+        <form id="smtp-test-reset-form" class="stack" style="margin-top:12px;">
+          <label for="smtp-test-reset-email">Testempfänger (Passwort-Reset-Template)
+            <input id="smtp-test-reset-email" name="to_email_reset" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="test@example.com" required />
+          </label>
+          <button type="submit" class="secondary">Test-Passwort-Reset-Mail senden</button>
         </form>
       </section>
 

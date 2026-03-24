@@ -97,7 +97,7 @@ class EmailService:
             return False
 
         message = EmailMessage()
-        message["Subject"] = "OpenGym SMTP Test"
+        message["Subject"] = "Test-E-Mail – Twenty4Seven Gym"
         message["From"] = self._smtp_config.from_email
         message["To"] = to_email
         message.set_content(
@@ -121,7 +121,7 @@ class EmailService:
             return False
 
         message = EmailMessage()
-        message["Subject"] = "OpenGym Passwort zuruecksetzen"
+        message["Subject"] = "Passwort zurücksetzen – Twenty4Seven Gym"
         message["From"] = self._smtp_config.from_email
         message["To"] = to_email
         message.set_content(
