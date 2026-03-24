@@ -455,9 +455,13 @@ class EmailTemplateUpdateRequest(BaseModel):
     header_html: str
     body_html: str
     footer_html: str
+    access_code_body_html: str
+    reset_body_html: str
 
 
 class EmailTemplateResponse(BaseModel):
     header_html: str
     body_html: str
     footer_html: str
+    access_code_body_html: str
+    reset_body_html: str

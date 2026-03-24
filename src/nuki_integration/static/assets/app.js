@@ -510,6 +510,8 @@ async function updateEmailTemplate(event) {
         header_html: form.get("header_html") || "",
         body_html: form.get("body_html") || "",
         footer_html: form.get("footer_html") || "",
+        access_code_body_html: form.get("access_code_body_html") || "",
+        reset_body_html: form.get("reset_body_html") || "",
       }),
     });
     setMessage("E-Mail-Template gespeichert.", "good");
@@ -1248,6 +1250,14 @@ function renderSettingsView() {
               <label for="tpl-footer">Footer HTML
                 <span class="field-hint">Footer-Zeile + schließende Tabellen-Tags</span>
                 <textarea id="tpl-footer" name="footer_html" class="code-editor" rows="10" spellcheck="false" autocomplete="off">${escapeHtml(state.emailTemplate?.footer_html || "")}</textarea>
+              </label>
+              <label for="tpl-access-code-body">Zugangscode-Mail Body HTML
+                <span class="field-hint">Platzhalter: {member_name}, {code}, {valid_from}, {valid_until}, {checks_row}</span>
+                <textarea id="tpl-access-code-body" name="access_code_body_html" class="code-editor" rows="14" spellcheck="false" autocomplete="off">${escapeHtml(state.emailTemplate?.access_code_body_html || "")}</textarea>
+              </label>
+              <label for="tpl-reset-body">Passwort-Reset-Mail Body HTML
+                <span class="field-hint">Platzhalter: {reset_url}</span>
+                <textarea id="tpl-reset-body" name="reset_body_html" class="code-editor" rows="10" spellcheck="false" autocomplete="off">${escapeHtml(state.emailTemplate?.reset_body_html || "")}</textarea>
               </label>
               <button type="submit">Template Speichern</button>
             </div>

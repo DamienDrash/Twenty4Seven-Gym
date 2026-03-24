@@ -443,6 +443,8 @@ _BUILTIN_EMAIL_TEMPLATE: dict[str, str] = {
     "header_html": _DEFAULT_EMAIL_HEADER,
     "body_html": _DEFAULT_EMAIL_BODY,
     "footer_html": _DEFAULT_EMAIL_FOOTER,
+    "access_code_body_html": _ACCESS_CODE_BODY_TMPL,
+    "reset_body_html": _RESET_BODY_TMPL,
 }
 
 
@@ -456,6 +458,8 @@ def get_email_template(db: "Database") -> dict[str, str]:
         "header_html": str(raw.get("header_html") or _DEFAULT_EMAIL_HEADER),
         "body_html": str(raw.get("body_html") or _DEFAULT_EMAIL_BODY),
         "footer_html": str(raw.get("footer_html") or _DEFAULT_EMAIL_FOOTER),
+        "access_code_body_html": str(raw.get("access_code_body_html") or _ACCESS_CODE_BODY_TMPL),
+        "reset_body_html": str(raw.get("reset_body_html") or _RESET_BODY_TMPL),
     }
 
 
@@ -488,7 +492,7 @@ def build_access_code_email_html(
 ) -> str:
     tpl = get_email_template(db)
     checks_row = _ACCESS_CODE_CHECKS_ROW.replace("{checks_url}", checks_url) if checks_url else ""
-    body = _ACCESS_CODE_BODY_TMPL.format(
+    body = tpl["access_code_body_html"].format(
         member_name=member_name,
         code=code,
         valid_from=valid_from,
@@ -500,7 +504,7 @@ def build_access_code_email_html(
 
 def build_password_reset_email_html(db: "Database", *, reset_url: str) -> str:
     tpl = get_email_template(db)
-    body = _RESET_BODY_TMPL.replace("{reset_url}", reset_url)
+    body = tpl["reset_body_html"].replace("{reset_url}", reset_url)
     return _assemble_email_html(tpl["header_html"], body, tpl["footer_html"])
 
 
