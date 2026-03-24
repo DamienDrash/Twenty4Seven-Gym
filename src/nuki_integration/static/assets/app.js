@@ -418,6 +418,18 @@ async function testResetEmail(event) {
   }, "Testmail wird gesendet…");
 }
 
+async function testCodeEmail(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/email-test-code", {
+      method: "POST",
+      body: JSON.stringify({ to_email: form.get("to_email_code") }),
+    });
+    setMessage("Zugangscode-Testmail versendet.", "good");
+  }, "Testmail wird gesendet…");
+}
+
 async function updateTelegram(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -586,6 +598,7 @@ function attachSettingsHandlers() {
   document.getElementById("smtp-form")?.addEventListener("submit", (event) => updateSmtp(event).catch(handleError));
   document.getElementById("smtp-test-form")?.addEventListener("submit", (event) => testEmail(event).catch(handleError));
   document.getElementById("smtp-test-reset-form")?.addEventListener("submit", (event) => testResetEmail(event).catch(handleError));
+  document.getElementById("smtp-test-code-form")?.addEventListener("submit", (event) => testCodeEmail(event).catch(handleError));
   document.getElementById("telegram-form")?.addEventListener("submit", (event) => updateTelegram(event).catch(handleError));
   document.getElementById("telegram-test-form")?.addEventListener("submit", (event) => testTelegram(event).catch(handleError));
   document.getElementById("nuki-form")?.addEventListener("submit", (event) => updateNukiSettings(event).catch(handleError));
@@ -1112,6 +1125,12 @@ function renderSettingsView() {
             <input id="smtp-test-reset-email" name="to_email_reset" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="test@example.com" required />
           </label>
           <button type="submit" class="secondary">Test-Passwort-Reset-Mail senden</button>
+        </form>
+        <form id="smtp-test-code-form" class="stack" style="margin-top:12px;">
+          <label for="smtp-test-code-email">Testempfänger (Zugangscode-Template)
+            <input id="smtp-test-code-email" name="to_email_code" type="email" autocomplete="email" spellcheck="false" inputmode="email" placeholder="test@example.com" required />
+          </label>
+          <button type="submit" class="secondary">Test-Zugangscode-Mail senden</button>
         </form>
       </section>
 

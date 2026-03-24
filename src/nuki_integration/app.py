@@ -460,6 +460,35 @@ def admin_email_test(
     return {"sent": sent, "to_email": str(payload.to_email)}
 
 
+@app.post("/admin/system/email-test-code")
+def admin_email_test_code(
+    payload: EmailTestRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+    runtime_settings: Settings = Depends(get_runtime_settings),
+) -> dict[str, bool | str]:
+    smtp = get_effective_smtp_config(db, runtime_settings)
+    email_service = EmailService(runtime_settings, smtp)
+    checks_url = f"{runtime_settings.app_public_base_url.rstrip('/')}/checks"
+    sent = email_service.send_access_code(
+        to_email=payload.to_email,
+        member_name="Test Mitglied",
+        code="12345",
+        valid_from="24. März 2026, 10:00 Uhr",
+        valid_until="25. März 2026, 08:00 Uhr",
+        checks_url=checks_url,
+        html_body=build_access_code_email_html(
+            db,
+            member_name="Test Mitglied",
+            code="12345",
+            valid_from="24. März 2026, 10:00 Uhr",
+            valid_until="25. März 2026, 08:00 Uhr",
+            checks_url=checks_url,
+        ),
+    )
+    return {"sent": sent, "to_email": str(payload.to_email)}
+
+
 @app.post("/admin/system/email-test-reset")
 def admin_email_test_reset(
     payload: EmailTestRequest,
