@@ -872,8 +872,8 @@ def _issue_window_code(
                     to_email=str(window["email"]),
                     member_name=_member_name(window),
                     code=code,
-                    valid_from=_berlin(window["starts_at"], settings.timezone).isoformat(),
-                    valid_until=_berlin(window["ends_at"], settings.timezone).isoformat(),
+                    valid_from=_fmt_dt(_berlin(window["starts_at"], settings.timezone)),
+                    valid_until=_fmt_dt(_berlin(window["ends_at"], settings.timezone)),
                     checks_url=_checks_url,
                     check_in_url=(
                         build_check_in_link(
@@ -888,8 +888,8 @@ def _issue_window_code(
                         db,
                         member_name=_member_name(window),
                         code=code,
-                        valid_from=_berlin(window["starts_at"], settings.timezone).isoformat(),
-                        valid_until=_berlin(window["ends_at"], settings.timezone).isoformat(),
+                        valid_from=_fmt_dt(_berlin(window["starts_at"], settings.timezone)),
+                        valid_until=_fmt_dt(_berlin(window["ends_at"], settings.timezone)),
                         checks_url=_checks_url,
                     ),
                 )
@@ -1059,6 +1059,16 @@ def issue_emergency_access_code(
 
 def _berlin(dt: datetime, tz_name: str) -> datetime:
     return dt.astimezone(ZoneInfo(tz_name))
+
+
+_DE_MONTHS = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+]
+
+
+def _fmt_dt(dt: datetime) -> str:
+    return f"{dt.day}. {_DE_MONTHS[dt.month - 1]} {dt.year}, {dt.strftime('%H:%M')} Uhr"
 
 
 def _cluster_bookings(bookings: list) -> list[list]:
@@ -1464,8 +1474,8 @@ def provision_due_codes(db: Database, settings: Settings) -> int:
                                 db,
                                 member_name=member_name,
                                 code=code,
-                                valid_from=starts_at.isoformat(),
-                                valid_until=ends_at.isoformat(),
+                                valid_from=_fmt_dt(_berlin(starts_at, settings.timezone)),
+                                valid_until=_fmt_dt(_berlin(ends_at, settings.timezone)),
                                 checks_url=_prov_checks_url,
                             ),
                         )
