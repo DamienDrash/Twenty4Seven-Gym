@@ -439,8 +439,19 @@ _RESET_BODY_TMPL = """<tr>
 </tr>"""
 
 
+_BUILTIN_EMAIL_TEMPLATE: dict[str, str] = {
+    "header_html": _DEFAULT_EMAIL_HEADER,
+    "body_html": _DEFAULT_EMAIL_BODY,
+    "footer_html": _DEFAULT_EMAIL_FOOTER,
+}
+
+
 def get_email_template(db: "Database") -> dict[str, str]:
-    raw = db.get_system_setting("email_template") or {}
+    raw = db.get_system_setting("email_template")
+    if raw is None:
+        # First use: persist the built-in template to DB so it lives there from now on.
+        db.set_system_setting(key="email_template", value=_BUILTIN_EMAIL_TEMPLATE)
+        return dict(_BUILTIN_EMAIL_TEMPLATE)
     return {
         "header_html": str(raw.get("header_html") or _DEFAULT_EMAIL_HEADER),
         "body_html": str(raw.get("body_html") or _DEFAULT_EMAIL_BODY),

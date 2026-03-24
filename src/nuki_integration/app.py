@@ -148,6 +148,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = get_database()
     db.ensure_schema()
     db.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
+    get_email_template(db)  # seed DB with built-in template on first run
     logger.info("Access platform starting")
     yield
     logger.info("Access platform shutting down")
