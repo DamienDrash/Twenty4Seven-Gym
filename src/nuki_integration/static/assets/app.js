@@ -13,6 +13,7 @@ const state = {
   lockStatus: null,
   lockLog: [],
   emailSettings: null,
+  emailTemplate: null,
   telegramSettings: null,
   nukiSettings: null,
   magiclineSettings: null,
@@ -234,9 +235,10 @@ async function loadAppData() {
   state.lockStatus = lockStatus;
   state.lockLog = lockLog;
   if (state.role === "admin") {
-    const [users, emailSettings, telegramSettings, nukiSettings, magiclineSettings, studioLinks, funnelsList] = await Promise.all([
+    const [users, emailSettings, emailTemplate, telegramSettings, nukiSettings, magiclineSettings, studioLinks, funnelsList] = await Promise.all([
       api("./admin/users?limit=20"),
       api("./admin/system/email-settings"),
+      api("./admin/system/email-template"),
       api("./admin/system/telegram-settings"),
       api("./admin/system/nuki-settings"),
       api("./admin/system/magicline-settings"),
@@ -245,6 +247,7 @@ async function loadAppData() {
     ]);
     state.users = users;
     state.emailSettings = emailSettings;
+    state.emailTemplate = emailTemplate;
     state.telegramSettings = telegramSettings;
     state.nukiSettings = nukiSettings;
     state.magiclineSettings = magiclineSettings;
@@ -473,13 +476,30 @@ async function updateMagiclineSettings(event) {
   }, "Magicline wird gespeichert…");
 }
 
+async function updateEmailTemplate(event) {
+  event.preventDefault();
+  await withPending(event.currentTarget, async () => {
+    const form = new FormData(event.currentTarget);
+    await api("./admin/system/email-template", {
+      method: "PUT",
+      body: JSON.stringify({
+        header_html: form.get("header_html") || "",
+        body_html: form.get("body_html") || "",
+        footer_html: form.get("footer_html") || "",
+      }),
+    });
+    setMessage("E-Mail-Template gespeichert.", "good");
+    await loadAppData();
+  }, "Template wird gespeichert…");
+}
+
 function logout() {
   localStorage.removeItem("opengym_token");
   localStorage.removeItem("opengym_role");
   Object.assign(state, {
     token: "", role: "", me: null, members: [], windows: [], alerts: [],
     actions: [], users: [], memberDetail: null, selectedMemberId: "",
-    lockStatus: null, lockLog: [], emailSettings: null, telegramSettings: null,
+    lockStatus: null, lockLog: [], emailSettings: null, emailTemplate: null, telegramSettings: null,
     nukiSettings: null, magiclineSettings: null, studioLinks: null, funnelsList: [], funnelDetail: null,
     selectedFunnelId: null, stepEditorId: null, view: "overview",
     message: "", messageType: "",
@@ -557,6 +577,15 @@ function attachSettingsHandlers() {
   document.getElementById("telegram-test-form")?.addEventListener("submit", (event) => testTelegram(event).catch(handleError));
   document.getElementById("nuki-form")?.addEventListener("submit", (event) => updateNukiSettings(event).catch(handleError));
   document.getElementById("magicline-form")?.addEventListener("submit", (event) => updateMagiclineSettings(event).catch(handleError));
+  document.getElementById("email-template-form")?.addEventListener("submit", (event) => updateEmailTemplate(event).catch(handleError));
+  document.getElementById("email-template-preview-btn")?.addEventListener("click", () => {
+    const header = document.getElementById("tpl-header")?.value || "";
+    const body = document.getElementById("tpl-body")?.value || "";
+    const footer = document.getElementById("tpl-footer")?.value || "";
+    const html = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${header}${body}${footer}</body></html>`;
+    const frame = document.getElementById("email-preview-frame");
+    if (frame) frame.srcdoc = html;
+  });
 }
 
 function handleError(error) {
@@ -1156,6 +1185,39 @@ function renderSettingsView() {
               placeholder="z.B. Freies Training" />
           </label>
           <button type="submit">Magicline Speichern</button>
+        </form>
+      </section>
+
+      <section class="panel span-12">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">E-Mail Template</h2>
+            <p class="panel-kicker">Professionelles HTML-Layout für alle ausgehenden E-Mails.</p>
+          </div>
+          <button type="button" id="email-template-preview-btn" class="secondary">Vorschau</button>
+        </div>
+        <form id="email-template-form" class="stack">
+          <div class="template-editor-grid">
+            <div class="template-editor-col">
+              <label for="tpl-header">Header HTML
+                <span class="field-hint">Styles + Außentabelle + Marken-Header-Zeile</span>
+                <textarea id="tpl-header" name="header_html" class="code-editor" rows="12" spellcheck="false" autocomplete="off">${escapeHtml(state.emailTemplate?.header_html || "")}</textarea>
+              </label>
+              <label for="tpl-body">Body HTML
+                <span class="field-hint">Inhalt-Zeilen (&lt;tr&gt;-Elemente). Platzhalter: {{&nbsp;contact.first_name&nbsp;}}</span>
+                <textarea id="tpl-body" name="body_html" class="code-editor" rows="16" spellcheck="false" autocomplete="off">${escapeHtml(state.emailTemplate?.body_html || "")}</textarea>
+              </label>
+              <label for="tpl-footer">Footer HTML
+                <span class="field-hint">Footer-Zeile + schließende Tabellen-Tags</span>
+                <textarea id="tpl-footer" name="footer_html" class="code-editor" rows="10" spellcheck="false" autocomplete="off">${escapeHtml(state.emailTemplate?.footer_html || "")}</textarea>
+              </label>
+              <button type="submit">Template Speichern</button>
+            </div>
+            <div class="template-preview-col">
+              <p class="eyebrow">// VORSCHAU</p>
+              <iframe id="email-preview-frame" class="email-preview-frame" title="E-Mail Vorschau" sandbox="allow-same-origin"></iframe>
+            </div>
+          </div>
         </form>
       </section>
 

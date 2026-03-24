@@ -449,3 +449,15 @@ class ProvisioningResult(BaseModel):
     member_email: str | None
     code_last4: str
     dispatched: bool
+
+
+class EmailTemplateUpdateRequest(BaseModel):
+    header_html: str
+    body_html: str
+    footer_html: str
+
+
+class EmailTemplateResponse(BaseModel):
+    header_html: str
+    body_html: str
+    footer_html: str

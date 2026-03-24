@@ -50,6 +50,7 @@ class EmailService:
         valid_until: str,
         check_in_url: str | None = None,
         checks_url: str | None = None,
+        html_body: str | None = None,
     ) -> bool:
         if not self._smtp_config.host or not self._smtp_config.from_email:
             logger.warning("SMTP not configured, skipping access email for %s", to_email)
@@ -79,6 +80,8 @@ class EmailService:
             f"{checks_block}"
             f"{check_in_block}"
         )
+        if html_body:
+            message.add_alternative(html_body, subtype="html")
 
         with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port, timeout=20) as smtp:
             if self._smtp_config.use_tls:
@@ -88,7 +91,7 @@ class EmailService:
             smtp.send_message(message)
         return True
 
-    def send_test_email(self, *, to_email: str) -> bool:
+    def send_test_email(self, *, to_email: str, html_body: str | None = None) -> bool:
         if not self._smtp_config.host or not self._smtp_config.from_email:
             logger.warning("SMTP not configured, skipping test email for %s", to_email)
             return False
@@ -101,6 +104,8 @@ class EmailService:
             "Dies ist eine Test-E-Mail von OpenGym.\n\n"
             "Wenn du diese Nachricht erhältst, funktioniert der SMTP-Versand."
         )
+        if html_body:
+            message.add_alternative(html_body, subtype="html")
 
         with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port, timeout=20) as smtp:
             if self._smtp_config.use_tls:
@@ -110,7 +115,7 @@ class EmailService:
             smtp.send_message(message)
         return True
 
-    def send_password_reset_email(self, *, to_email: str, reset_url: str) -> bool:
+    def send_password_reset_email(self, *, to_email: str, reset_url: str, html_body: str | None = None) -> bool:
         if not self._smtp_config.host or not self._smtp_config.from_email:
             logger.warning("SMTP not configured, skipping password reset email for %s", to_email)
             return False
@@ -124,6 +129,8 @@ class EmailService:
             f"Nutze diesen Link, um dein Passwort zu setzen:\n{reset_url}\n\n"
             "Der Link ist 60 Minuten gueltig."
         )
+        if html_body:
+            message.add_alternative(html_body, subtype="html")
 
         with smtplib.SMTP(self._smtp_config.host, self._smtp_config.port, timeout=20) as smtp:
             if self._smtp_config.use_tls:

@@ -1981,3 +1981,66 @@ button.good {
     gap: 14px;
   }
 }
+
+/* ----------------------------------------------------------------
+   EMAIL TEMPLATE EDITOR
+   ---------------------------------------------------------------- */
+.template-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.template-editor-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.template-preview-col {
+  position: sticky;
+  top: 20px;
+}
+
+.code-editor {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  background: #0a0e12;
+  color: #c4d0dc;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  resize: vertical;
+  width: 100%;
+  tab-size: 2;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.code-editor:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.email-preview-frame {
+  width: 100%;
+  height: 700px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #f0ede9;
+}
+
+@media (max-width: 1180px) {
+  .template-editor-grid {
+    grid-template-columns: 1fr;
+  }
+  .template-preview-col {
+    position: static;
+  }
+  .email-preview-frame {
+    height: 500px;
+  }
+}

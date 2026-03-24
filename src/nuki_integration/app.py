@@ -28,6 +28,8 @@ from .models import (
     ChecksSessionResponse,
     ChecksSubmitRequest,
     CompletePasswordResetRequest,
+    EmailTemplateResponse,
+    EmailTemplateUpdateRequest,
     EmailTestRequest,
     ForgotPasswordRequest,
     FunnelStep,
@@ -61,6 +63,9 @@ from .models import (
 from .notifications import EmailService, TelegramService
 from .nuki_client import NukiClient
 from .services import (
+    build_access_code_email_html,
+    build_password_reset_email_html,
+    build_test_email_html,
     complete_password_reset,
     deactivate_access_window,
     delete_funnel_step,
@@ -71,6 +76,7 @@ from .services import (
     get_effective_nuki_config,
     get_effective_smtp_config,
     get_effective_telegram_config,
+    get_email_template,
     get_funnel_template,
     get_media_url,
     get_member_detail,
@@ -447,8 +453,30 @@ def admin_email_test(
 ) -> dict[str, bool | str]:
     smtp = get_effective_smtp_config(db, runtime_settings)
     email_service = EmailService(runtime_settings, smtp)
-    sent = email_service.send_test_email(to_email=payload.to_email)
+    sent = email_service.send_test_email(
+        to_email=payload.to_email,
+        html_body=build_test_email_html(db),
+    )
     return {"sent": sent, "to_email": str(payload.to_email)}
+
+
+@app.get("/admin/system/email-template", response_model=EmailTemplateResponse)
+def admin_get_email_template(
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> EmailTemplateResponse:
+    tpl = get_email_template(db)
+    return EmailTemplateResponse(**tpl)
+
+
+@app.put("/admin/system/email-template", response_model=EmailTemplateResponse)
+def admin_put_email_template(
+    payload: EmailTemplateUpdateRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> EmailTemplateResponse:
+    db.set_system_setting(key="email_template", value=payload.model_dump(mode="json"))
+    return EmailTemplateResponse(**payload.model_dump())
 
 
 @app.get("/admin/system/telegram-settings", response_model=TelegramSettingsResponse)
