@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "filePathMatches": "**/*",
+      "rulesPaths": "AGENTS.md"
+    },
+    {
+      "filePathMatches": "**/*",
+      "rulesPaths": ".ruler/AGENTS.md"
+    }
+  ]
+}

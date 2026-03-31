@@ -1,0 +1,81 @@
+<h2>Phase 1: 24/7 Zutrittsplattform fuer das Fitnessstudio</h2>
+<p class="subtitle">Scope gemaess deiner Auswahl: Mitgliedsverwaltung, Nuki Keypad 2, Audit-Log und Betreiber-Webinterface. Kameras, Presence Sensoren und Shelly bleiben fuer spaetere Phasen ausserhalb des Kerns.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Systemkern</div>
+  <div class="mockup-body">
+    <div class="pros-cons">
+      <div class="pros">
+        <h4>Im Scope</h4>
+        <ul>
+          <li>Mitglied anlegen, sperren, verlaengern</li>
+          <li>Zutrittsrechte und Zeitfenster verwalten</li>
+          <li>Nuki Pro und Keypad 2 anbinden</li>
+          <li>PIN-/Code-Lebenszyklus steuern</li>
+          <li>Check-in, Zutrittsversuche und Admin-Aktionen protokollieren</li>
+          <li>Webinterface fuer Betreiber auf Synology per Docker Compose</li>
+        </ul>
+      </div>
+      <div class="cons">
+        <h4>Bewusst spaeter</h4>
+        <ul>
+          <li>Tapo-Kamera-Orchestrierung</li>
+          <li>Aqara-Praesenzlogik</li>
+          <li>Shelly-Automationen</li>
+          <li>Alarmregeln und Energie-Szenen</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">Betriebsfluss</div>
+    <div class="mockup-body">
+      <ol>
+        <li>Mitglied wird im Admin-UI angelegt oder freigeschaltet.</li>
+        <li>System erzeugt oder aktualisiert den Zutrittscode fuer Keypad 2.</li>
+        <li>Mitglied kommt ans Studio und oeffnet ueber Keypad 2.</li>
+        <li>System protokolliert Status, Zeit, Mitglied und Ergebnis.</li>
+        <li>Betreiber sieht Audit-Log und kann Rechte sofort aendern.</li>
+      </ol>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Technischer Kern</div>
+    <div class="mockup-body">
+      <ol>
+        <li>Web-App im Docker-Container auf Synology NAS</li>
+        <li>PostgreSQL oder SQLite je nach Betriebsanspruch</li>
+        <li>Nuki-Integration fuer Schlossstatus und Codeverwaltung</li>
+        <li>Job-/Sync-Komponente fuer Zuverlaessigkeit und Retries</li>
+        <li>Rollen fuer Betreiber, ggf. spaeter Standortleiter</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="manual_member_admin" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Manuelle Mitgliederpflege</h3>
+      <p>Betreiber pflegen Mitglieder direkt im neuen Webinterface. Schnellster Start, geringste Integrationslast.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="existing_system_sync" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Sync aus bestehendem Studio-System</h3>
+      <p>Mitglieder kommen aus externer Quelle, das Zutrittssystem bleibt fokussiert auf Rechte und Audit.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="hybrid" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Hybrid</h3>
+      <p>Externe Quelle ist fuehrend, Betreiber koennen lokal Ausnahmefaelle und Overrides setzen.</p>
+    </div>
+  </div>
+</div>

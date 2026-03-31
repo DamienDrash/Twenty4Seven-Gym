@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 from enum import StrEnum
-
 
 class UserRole(StrEnum):
     ADMIN = "admin"
     OPERATOR = "operator"
-
 
 class AccessWindowStatus(StrEnum):
     SCHEDULED = "scheduled"
@@ -14,7 +11,6 @@ class AccessWindowStatus(StrEnum):
     EXPIRED = "expired"
     CANCELED = "canceled"
     FLAGGED = "flagged"
-
 
 class AccessCodeStatus(StrEnum):
     PENDING = "pending"
@@ -24,12 +20,10 @@ class AccessCodeStatus(StrEnum):
     FAILED = "failed"
     EXPIRED = "expired"
 
-
 class AlertSeverity(StrEnum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
-
 
 class MagiclineBookingStatus(StrEnum):
     BOOKED = "BOOKED"

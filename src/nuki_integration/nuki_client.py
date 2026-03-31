@@ -1,3 +1,5 @@
+"""Nuki Web API client with dry-run support."""
+
 from __future__ import annotations
 
 import logging
@@ -23,37 +25,35 @@ class NukiClient:
     def close(self) -> None:
         self._client.close()
 
-    def _request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> Any:
+    # ── Low-level request ─────────────────────────────────────────
+
+    def _request(
+        self, method: str, path: str, *, json_body: dict[str, Any] | None = None,
+    ) -> Any:
         token = self._settings.active_nuki_token
         if not token and not self._settings.nuki_dry_run:
             raise NukiApiError("No Nuki bearer token configured.")
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        
-        logger.info("Nuki API Request: %s %s | Payload: %s", method, path, json_body)
-        
+
+        logger.info("Nuki %s %s", method, path)
         try:
             response = self._client.request(method, path, json=json_body, headers=headers)
-            logger.info("Nuki API Response: %s | Content: %s", response.status_code, response.text[:200])
         except httpx.HTTPError as exc:
-            logger.error("Nuki HTTP Communication Error: %s", exc)
             raise NukiApiError(f"Nuki request failed: {exc}") from exc
-            
+
         if response.status_code >= 400:
-            raise NukiApiError(f"Nuki API error {response.status_code}: {response.text[:500]}")
+            raise NukiApiError(f"Nuki API {response.status_code}: {response.text[:500]}")
         if not response.content:
             return None
         return response.json()
 
+    # ── Keypad code CRUD ──────────────────────────────────────────
+
     def create_keypad_code(
-        self,
-        *,
-        name: str,
-        code: str,
-        allowed_from: str,
-        allowed_until: str,
+        self, *, name: str, code: str, allowed_from: str, allowed_until: str,
     ) -> int | None:
         if self._settings.nuki_dry_run:
-            logger.info("NUKI_DRY_RUN enabled, skipping live keypad code creation for %s", name)
+            logger.info("DRY_RUN: skip keypad code create for %s", name)
             return None
         payload = {
             "name": name,
@@ -69,18 +69,10 @@ class NukiClient:
         return None
 
     def update_keypad_code(
-        self,
-        *,
-        auth_id: int,
-        name: str,
-        allowed_from: str,
-        allowed_until: str,
+        self, *, auth_id: int, name: str, allowed_from: str, allowed_until: str,
     ) -> None:
         if self._settings.nuki_dry_run:
-            logger.info(
-                "NUKI_DRY_RUN enabled, skipping live keypad code update for auth_id=%s",
-                auth_id,
-            )
+            logger.info("DRY_RUN: skip keypad code update auth_id=%s", auth_id)
             return
         payload = {
             "name": name,
@@ -90,22 +82,28 @@ class NukiClient:
         }
         self._request("POST", f"/smartlock/auth/{auth_id}", json_body=payload)
 
+    def delete_keypad_code(self, *, auth_id: int) -> None:
+        """Remove a keypad code from the smartlock."""
+        if self._settings.nuki_dry_run:
+            logger.info("DRY_RUN: skip keypad code delete auth_id=%s", auth_id)
+            return
+        self._request(
+            "DELETE",
+            f"/smartlock/{self._settings.nuki_smartlock_id}/auth/{auth_id}",
+        )
+
+    # ── Lock actions ──────────────────────────────────────────────
+
     def remote_open(self) -> dict[str, Any]:
         if self._settings.nuki_dry_run:
-            logger.info("NUKI_DRY_RUN enabled, skipping live remote open")
+            logger.info("DRY_RUN: skip remote open")
             return {"dry_run": True, "smartlock_id": self._settings.nuki_smartlock_id}
-        
-        # Nuki API: POST /smartlock/{smartlockId}/action/unlock
-        # Action 1 = unlock, 3 = unlatch
-        # We usually want 3 (unlatch) for entrance doors
         path = f"/smartlock/{self._settings.nuki_smartlock_id}/action"
-        payload = {"action": 3} 
         try:
-            self._request("POST", path, json_body=payload)
+            self._request("POST", path, json_body={"action": 3})
             return {"success": True, "smartlock_id": self._settings.nuki_smartlock_id}
         except Exception as exc:
-            logger.error("Failed to remote open Nuki: %s", exc)
-            raise NukiApiError(f"Remote open failed: {exc}")
+            raise NukiApiError(f"Remote open failed: {exc}") from exc
 
     def get_lock_status(self) -> dict[str, Any]:
         if self._settings.nuki_dry_run:
@@ -113,67 +111,54 @@ class NukiClient:
                 "dry_run": True,
                 "smartlock_id": self._settings.nuki_smartlock_id,
                 "connectivity": "credentials-pending",
+                "stateName": "Testmodus",
                 "lock_state": "unknown",
                 "battery_state": "unknown",
                 "source": "dry-run",
             }
-        
-        # Nuki API: GET /smartlock/{smartlockId}
-        path = f"/smartlock/{self._settings.nuki_smartlock_id}"
         try:
-            data = self._request("GET", path)
-            # Web API for Smartlock v2/v3 often puts the current state in 'state' object
-            # fallback to 'lastKnownState' if 'state' is not what we expect
+            data = self._request("GET", f"/smartlock/{self._settings.nuki_smartlock_id}")
             state = data.get("state") or data.get("lastKnownState") or {}
-            lock_state_name = self._map_lock_state(state.get("state"))
-            
+            lock_state = self._map_lock_state(state.get("state"))
             return {
                 "dry_run": False,
                 "smartlock_id": self._settings.nuki_smartlock_id,
                 "connectivity": "online",
-                "lock_state": lock_state_name,
-                "stateName": lock_state_name,
+                "lock_state": lock_state,
+                "stateName": lock_state,
                 "door_state": self._map_door_state(state.get("doorState")),
-                "battery_state": f"{state.get('batteryCharge', state.get('batteryChargeState', 0))}%",
+                "battery_state": f"{state.get('batteryCharge', 0)}%",
                 "battery_critical": state.get("batteryCritical", False),
                 "batteryCritical": state.get("batteryCritical", False),
                 "last_update": data.get("updateDate"),
                 "source": "nuki-api",
             }
         except Exception as exc:
-            logger.error("Failed to get Nuki status: %s", exc)
+            logger.error("Nuki status failed: %s", exc)
             return {
                 "dry_run": False,
                 "smartlock_id": self._settings.nuki_smartlock_id,
                 "connectivity": "error",
+                "stateName": "Verbindungsfehler",
                 "lock_state": "error",
                 "error": str(exc),
                 "source": "nuki-api",
             }
 
-    def _map_door_state(self, state_code: int | None) -> str:
-        # Nuki door sensor states
-        mapping = {
-            1: "Deaktiviert",
-            2: "Geschlossen",
-            3: "Geöffnet",
-            4: "Unbekannt",
-            5: "Kalibrierung...",
-        }
-        return mapping.get(state_code if state_code is not None else 0, "Kein Sensor")
+    # ── State mappers ─────────────────────────────────────────────
 
-    def _map_lock_state(self, state_code: int | None) -> str:
-        # Nuki state codes translated to German for SaaS Gold Standard
-        mapping = {
-            0: "Nicht kalibriert",
-            1: "Abgeschlossen",
-            2: "Wird geöffnet...",
-            3: "Entriegelt",
-            4: "Wird abgeschlossen...",
-            5: "Falle gezogen",
-            6: "Lock 'n' Go aktiv",
-            7: "Öffnet Falle...",
-            254: "Motor blockiert",
-            255: "Unbekannt"
-        }
-        return mapping.get(state_code if state_code is not None else 255, f"Unbekannt ({state_code})")
+    @staticmethod
+    def _map_door_state(code: int | None) -> str:
+        return {
+            1: "Deaktiviert", 2: "Geschlossen", 3: "Geöffnet",
+            4: "Unbekannt", 5: "Kalibrierung…",
+        }.get(code or 0, "Kein Sensor")
+
+    @staticmethod
+    def _map_lock_state(code: int | None) -> str:
+        return {
+            0: "Nicht kalibriert", 1: "Abgeschlossen", 2: "Wird geöffnet…",
+            3: "Entriegelt", 4: "Wird abgeschlossen…", 5: "Falle gezogen",
+            6: "Lock 'n' Go aktiv", 7: "Öffnet Falle…",
+            254: "Motor blockiert", 255: "Unbekannt",
+        }.get(code if code is not None else 255, f"Unbekannt ({code})")

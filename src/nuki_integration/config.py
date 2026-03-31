@@ -9,19 +9,13 @@ from .exceptions import ConfigurationError
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=True,
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
 
     app_env: str = Field(default="development", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     host: str = Field(default="0.0.0.0", alias="HOST")
     port: int = Field(default=8080, alias="PORT")
     timezone: str = Field(default="Europe/Berlin", alias="APP_TIMEZONE")
-
     database_url: str = Field(alias="DATABASE_URL")
 
     magicline_base_url: str = Field(alias="MAGICLINE_BASE_URL")
@@ -29,20 +23,10 @@ class Settings(BaseSettings):
     magicline_webhook_api_key: str = Field(default="", alias="MAGICLINE_WEBHOOK_API_KEY")
     magicline_studio_id: int = Field(alias="MAGICLINE_STUDIO_ID")
     magicline_studio_name: str = Field(default="", alias="MAGICLINE_STUDIO_NAME")
-    magicline_sync_interval_minutes: int = Field(
-        default=30,
-        alias="MAGICLINE_SYNC_INTERVAL_MINUTES",
-    )
-    magicline_relevant_appointment_title: str = Field(
-        default="Freies Training", alias="MAGICLINE_RELEVANT_APPOINTMENT_TITLE"
-    )
-    magicline_entitlement_rate_name: str = Field(
-        default="XXLARGE",
-        alias="MAGICLINE_ENTITLEMENT_RATE_NAME",
-    )
-    magicline_entitlement_product_name: str = Field(
-        default="Freies Training", alias="MAGICLINE_ENTITLEMENT_PRODUCT_NAME"
-    )
+    magicline_sync_interval_minutes: int = Field(default=30, alias="MAGICLINE_SYNC_INTERVAL_MINUTES")
+    magicline_relevant_appointment_title: str = Field(default="Freies Training", alias="MAGICLINE_RELEVANT_APPOINTMENT_TITLE")
+    magicline_entitlement_rate_name: str = Field(default="XXLARGE", alias="MAGICLINE_ENTITLEMENT_RATE_NAME")
+    magicline_entitlement_product_name: str = Field(default="Freies Training", alias="MAGICLINE_ENTITLEMENT_PRODUCT_NAME")
 
     nuki_base_url: str = Field(default="https://api.nuki.io", alias="NUKI_BASE_URL")
     nuki_timeout_seconds: int = Field(default=15, alias="NUKI_TIMEOUT_SECONDS")
@@ -66,13 +50,9 @@ class Settings(BaseSettings):
     smtp_from_email: str = Field(default="", alias="SMTP_FROM_EMAIL")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
-    app_public_base_url: str = Field(
-        default="https://services.frigew.ski/opengym",
-        alias="APP_PUBLIC_BASE_URL",
-    )
+    app_public_base_url: str = Field(default="https://services.frigew.ski/opengym", alias="APP_PUBLIC_BASE_URL")
     media_storage_path: str = Field(default="./media/uploads", alias="MEDIA_STORAGE_PATH")
     media_url_base: str = Field(default="/media", alias="MEDIA_URL_BASE")
-
 
     @property
     def active_nuki_token(self) -> str:
@@ -81,7 +61,7 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def _validate_database_url(cls, value: str) -> str:
-        if not value.startswith("postgresql://") and not value.startswith("postgres://"):
+        if not value.startswith(("postgresql://", "postgres://")):
             raise ConfigurationError("DATABASE_URL must be a PostgreSQL DSN.")
         return value
 

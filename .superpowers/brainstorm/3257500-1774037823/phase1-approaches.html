@@ -1,0 +1,82 @@
+<h2>Phase 1: Architekturansaetze fuer die Zutrittsplattform</h2>
+<p class="subtitle">Kontext: Magicline ist die fuehrende Quelle. Das System laeuft auf einer Synology per Docker Compose, steuert Nuki Pro + Keypad 2, vergibt persoenliche zeitlich begrenzte Codes und bietet ein Betreiber-Webinterface mit Audit-Log und Remote-Open fuer Admins.</p>
+
+<div class="cards">
+  <div class="card" data-choice="monolith-fastapi" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>A. Monolithischer Web-Service</h3>
+      <p>Ein FastAPI-Dienst mit Admin-UI, Magicline-Sync, Webhooks, Nuki-Integration, Scheduler und Audit-Log in einem Deployable.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Staerken</h4>
+          <ul>
+            <li>Schnellster Weg zu Phase 1</li>
+            <li>Einfachster Docker-Compose-Betrieb auf Synology</li>
+            <li>Weniger bewegliche Teile, einfacheres Debugging</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Schwaechen</h4>
+          <ul>
+            <li>Mehr Verantwortung in einem Prozess</li>
+            <li>Langfristig weniger elegant fuer Kamera-/Sensor-Ausbau</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="modular-monolith" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>B. Modularer Monolith</h3>
+      <p>Ein Web-Service fuer UI und API, plus ein separater Worker fuer Sync, Code-Lifecycle, E-Mail und Retries; gemeinsame Datenbank und klare interne Module.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Staerken</h4>
+          <ul>
+            <li>Besser trennbare Verantwortung</li>
+            <li>Zuverlaessiger fuer zeitkritische Jobs</li>
+            <li>Guter Pfad fuer spaetere Kamera-/Sensor-Module</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Schwaechen</h4>
+          <ul>
+            <li>Etwas mehr Betriebsaufwand</li>
+            <li>Mehr Initialaufwand als A</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="service-split" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>C. Frueh getrennte Services</h3>
+      <p>Eigene Services fuer Admin-UI/API, Sync-Orchestrierung, Nuki-Adapter und Notifications mit Event-basierter Kopplung.</p>
+      <div class="pros-cons">
+        <div class="pros">
+          <h4>Staerken</h4>
+          <ul>
+            <li>Sauberste technische Entkopplung</li>
+            <li>Sehr gute Erweiterbarkeit</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>Schwaechen</h4>
+          <ul>
+            <li>Zu schwer fuer Phase 1 auf Synology</li>
+            <li>Hoeheres Betriebs- und Fehlerrisiko am Start</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup">
+  <div class="mockup-header">Empfehlung</div>
+  <div class="mockup-body">
+    <p><strong>B. Modularer Monolith</strong> ist hier der beste Kompromiss. Die Zugangslogik ist sicherheitskritisch und zeitgebunden, daher sollte der Worker fuer Sync, Aktivierung, Deaktivierung, Retry und E-Mail nicht im selben Ausfuehrungspfad wie das Admin-UI haengen. Gleichzeitig bleibt das System fuer Synology und Docker Compose noch klar beherrschbar.</p>
+  </div>
+</div>

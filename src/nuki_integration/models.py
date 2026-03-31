@@ -1,22 +1,16 @@
 from __future__ import annotations
-
 from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-
 from .enums import UserRole
-
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-
 class LoginResponse(BaseModel):
     access_token: str
-    token_type: str = Field(default="bearer")  # noqa: S105
+    token_type: str = Field(default="bearer")
     role: str
-
 
 class UserRecord(BaseModel):
     id: int
@@ -24,13 +18,11 @@ class UserRecord(BaseModel):
     role: str
     is_active: bool
 
-
 class UserSummary(BaseModel):
     id: int
     email: EmailStr
     role: UserRole
     is_active: bool
-
 
 class UserCreateRequest(BaseModel):
     email: EmailStr
@@ -38,24 +30,19 @@ class UserCreateRequest(BaseModel):
     role: UserRole
     is_active: bool = True
 
-
 class UserUpdateRequest(BaseModel):
     role: UserRole
     is_active: bool
 
-
 class PasswordResetRequest(BaseModel):
     password: str = Field(min_length=12)
-
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
-
 class CompletePasswordResetRequest(BaseModel):
     token: str = Field(min_length=20)
     password: str = Field(min_length=12)
-
 
 class MemberSummary(BaseModel):
     id: int
@@ -68,7 +55,6 @@ class MemberSummary(BaseModel):
     has_xxlarge: bool | None = None
     has_free_training_product: bool | None = None
 
-
 class BookingRecord(BaseModel):
     id: int
     magicline_booking_id: int
@@ -79,7 +65,6 @@ class BookingRecord(BaseModel):
     start_at: datetime
     end_at: datetime
     source_received_at: datetime
-
 
 class AccessCodeRecord(BaseModel):
     id: int
@@ -93,7 +78,6 @@ class AccessCodeRecord(BaseModel):
     expires_at: datetime | None = None
     replaced_by_code_id: int | None = None
     created_at: datetime
-
 
 class AccessWindowDetail(BaseModel):
     id: int
@@ -111,13 +95,11 @@ class AccessWindowDetail(BaseModel):
     check_in_source: str | None = None
     check_in_checklist: list[dict] = Field(default_factory=list)
 
-
 class MemberDetail(BaseModel):
     member: MemberSummary
     bookings: list[BookingRecord]
     access_windows: list[AccessWindowDetail]
     access_codes: list[AccessCodeRecord]
-
 
 class AccessWindowSummary(BaseModel):
     id: int
@@ -133,14 +115,12 @@ class AccessWindowSummary(BaseModel):
     check_in_confirmed_at: datetime | None = None
     check_in_source: str | None = None
 
-
 class AlertRecord(BaseModel):
     id: int
     severity: str
     kind: str
     message: str
     created_at: datetime
-
 
 class AdminActionRecord(BaseModel):
     id: int
@@ -151,7 +131,6 @@ class AdminActionRecord(BaseModel):
     payload: dict = Field(default_factory=dict)
     created_at: datetime
 
-
 class SMTPSettingsUpdateRequest(BaseModel):
     smtp_host: str
     smtp_port: int = 587
@@ -159,7 +138,6 @@ class SMTPSettingsUpdateRequest(BaseModel):
     smtp_password: str = ""
     smtp_use_tls: bool = True
     smtp_from_email: EmailStr
-
 
 class SMTPSettingsResponse(BaseModel):
     smtp_host: str
@@ -169,36 +147,29 @@ class SMTPSettingsResponse(BaseModel):
     smtp_from_email: EmailStr | None = None
     has_password: bool
 
-
 class EmailTestRequest(BaseModel):
     to_email: EmailStr
-
 
 class TelegramSettingsUpdateRequest(BaseModel):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
-
 class TelegramSettingsResponse(BaseModel):
     telegram_chat_id: str
     has_bot_token: bool
 
-
 class TelegramTestRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
-
 
 class NukiSettingsUpdateRequest(BaseModel):
     nuki_api_token: str = ""
     nuki_smartlock_id: int = 0
     nuki_dry_run: bool = True
 
-
 class NukiSettingsResponse(BaseModel):
     nuki_smartlock_id: int
     nuki_dry_run: bool
     has_api_token: bool
-
 
 class MagiclineSettingsUpdateRequest(BaseModel):
     magicline_base_url: str = ""
@@ -208,7 +179,6 @@ class MagiclineSettingsUpdateRequest(BaseModel):
     magicline_studio_name: str = ""
     magicline_relevant_appointment_title: str = "Freies Training"
 
-
 class MagiclineSettingsResponse(BaseModel):
     magicline_base_url: str
     magicline_studio_id: int
@@ -217,11 +187,9 @@ class MagiclineSettingsResponse(BaseModel):
     has_api_key: bool
     has_webhook_key: bool
 
-
 class CheckInChecklistItem(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=200)
-
 
 class CheckInSettingsUpdateRequest(BaseModel):
     enabled: bool = False
@@ -233,28 +201,23 @@ class CheckInSettingsUpdateRequest(BaseModel):
     checklist_items: list[CheckInChecklistItem] = Field(default_factory=list, max_length=20)
     success_message: str = Field(min_length=1, max_length=1000)
 
-
 class CheckInSettingsResponse(CheckInSettingsUpdateRequest):
     studio_check_in_url: str
     studio_qr_svg: str
-
 
 class PublicCheckInResolveRequest(BaseModel):
     email: EmailStr
     code: str = Field(min_length=4, max_length=12)
 
-
 class PublicCheckInChecklistAnswer(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     checked: bool
-
 
 class PublicCheckInSubmitRequest(BaseModel):
     token: str = Field(min_length=20)
     rules_accepted: bool
     entry_source: str = Field(min_length=1, max_length=40)
     checklist: list[PublicCheckInChecklistAnswer] = Field(default_factory=list, max_length=20)
-
 
 class PublicCheckInWindow(BaseModel):
     access_window_id: int
@@ -267,28 +230,17 @@ class PublicCheckInWindow(BaseModel):
     source: str | None = None
     is_confirmed: bool
 
-
 class PublicCheckInSessionResponse(BaseModel):
     token: str
     entry_source: str
     settings: CheckInSettingsResponse
     window: PublicCheckInWindow
 
-
-class AccessWindowCheckInRecord(BaseModel):
-    access_window_id: int
-    confirmed_at: datetime
-    source: str
-    rules_accepted: bool
-    checklist: list[dict] = Field(default_factory=list)
-
-
 class FunnelTemplateSummary(BaseModel):
     id: int
     name: str
     slug: str
     funnel_type: str
-
 
 class FunnelStep(BaseModel):
     id: int
@@ -300,18 +252,15 @@ class FunnelStep(BaseModel):
     requires_note: bool
     requires_photo: bool
 
-
 class FunnelTemplateDetail(BaseModel):
     template: FunnelTemplateSummary
     steps: list[FunnelStep]
-
 
 class FunnelTemplateCreateRequest(BaseModel):
     name: str
     slug: str
     funnel_type: str
     description: str | None = None
-
 
 class FunnelStepCreateRequest(BaseModel):
     template_id: int
@@ -322,34 +271,14 @@ class FunnelStepCreateRequest(BaseModel):
     requires_note: bool = False
     requires_photo: bool = False
 
-
 class FunnelTemplateResponse(FunnelTemplateSummary):
     description: str | None = None
-class FunnelStepEvent(BaseModel):
-    step_id: int
-    status: str
-    note: str | None = None
-    photo_path: str | None = None
-
-
-class FunnelSubmission(BaseModel):
-    id: int
-    access_window_id: int
-    template_id: int
-    entry_source: str
-    success: bool
-    created_at: datetime
-    steps: list[FunnelStepEvent]
-
 
 class ChecksResolveRequest(BaseModel):
-    """Public /checks login: email + current access code."""
     email: EmailStr
     code: str = Field(min_length=4, max_length=12)
 
-
 class ChecksWindowInfo(BaseModel):
-    """Summary of a single access window as returned to the member."""
     id: int
     starts_at: datetime
     ends_at: datetime
@@ -361,32 +290,24 @@ class ChecksWindowInfo(BaseModel):
     has_checkin_funnel: bool = False
     has_checkout_funnel: bool = False
 
-
 class ChecksSessionResponse(BaseModel):
-    """Full session payload returned after successful resolve."""
     token: str
     member_name: str
     member_email: str
     windows: list[ChecksWindowInfo]
 
-
 class ChecksFunnelStepData(BaseModel):
-    """One step answer submitted by the member."""
     step_id: int
     checked: bool = False
     note: str = ""
 
-
 class ChecksSubmitRequest(BaseModel):
-    """Payload for checkin or checkout funnel submission."""
     token: str = Field(min_length=20)
     window_id: int
     funnel_type: str = Field(pattern="^(checkin|checkout)$")
     steps: list[ChecksFunnelStepData] = Field(default_factory=list)
 
-
 class ChecksFunnelStep(BaseModel):
-    """One step of a funnel template as returned to the public UI."""
     id: int
     template_id: int
     step_order: int
@@ -396,19 +317,15 @@ class ChecksFunnelStep(BaseModel):
     requires_note: bool
     requires_photo: bool
 
-
 class ChecksFunnelResponse(BaseModel):
-    """Active funnel template with all steps."""
     template_id: int
     template_name: str
     funnel_type: str
     description: str | None = None
     steps: list[ChecksFunnelStep]
 
-
 class MagiclineWebhookEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
-
     id: str | None = None
     event_id: str | None = Field(default=None, alias="eventId")
     event_type: str | None = Field(default=None, alias="eventType")
@@ -416,25 +333,18 @@ class MagiclineWebhookEnvelope(BaseModel):
     entity_id: int | None = Field(default=None, alias="entityId")
     payload: list[dict] | dict | None = None
 
-
 class MagiclineCustomer(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
     id: int
     email: str | None = None
     first_name: str | None = Field(default=None, alias="firstName")
     last_name: str | None = Field(default=None, alias="lastName")
     status: str | None = None
     created_datetime: datetime | None = Field(default=None, alias="createdDateTime")
-    additional_information_field_assignments: list[dict] = Field(
-        default_factory=list,
-        alias="additionalInformationFieldAssignments",
-    )
-
+    additional_information_field_assignments: list[dict] = Field(default_factory=list, alias="additionalInformationFieldAssignments")
 
 class MagiclineBooking(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-
     booking_id: int = Field(alias="bookingId")
     booking_status: str = Field(alias="bookingStatus")
     start_date_time: datetime = Field(alias="startDateTime")
@@ -444,14 +354,6 @@ class MagiclineBooking(BaseModel):
     category: str | None = None
     appointment_status: str | None = Field(default=None, alias="appointmentStatus")
     participant_status: str | None = Field(default=None, alias="participantStatus")
-
-
-class ProvisioningResult(BaseModel):
-    access_window_id: int
-    member_email: str | None
-    code_last4: str
-    dispatched: bool
-
 
 class BrandingSettingsUpdateRequest(BaseModel):
     logo_url: str | None = None
@@ -464,8 +366,7 @@ class BrandingSettingsUpdateRequest(BaseModel):
     body_bg_color: str | None = "#f9f9f9"
     footer_bg_color: str | None = "#ffffff"
     footer_text: str | None = None
-    accent_color: str | None = "#2563eb"
-
+    accent_color: str | None = "#b5ac9e"
 
 class BrandingSettingsResponse(BaseModel):
     logo_url: str | None = None
@@ -478,8 +379,7 @@ class BrandingSettingsResponse(BaseModel):
     body_bg_color: str | None = "#f9f9f9"
     footer_bg_color: str | None = "#ffffff"
     footer_text: str | None = None
-    accent_color: str | None = "#2563eb"
-
+    accent_color: str | None = "#b5ac9e"
 
 class EmailTemplateUpdateRequest(BaseModel):
     header_html: str
@@ -487,7 +387,6 @@ class EmailTemplateUpdateRequest(BaseModel):
     footer_html: str
     access_code_body_html: str
     reset_body_html: str
-
 
 class EmailTemplateResponse(BaseModel):
     header_html: str
