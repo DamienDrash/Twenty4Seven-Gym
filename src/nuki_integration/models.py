@@ -65,6 +65,8 @@ class MemberSummary(BaseModel):
     last_name: str | None = None
     status: str | None = None
     last_synced_at: datetime | None = None
+    has_xxlarge: bool | None = None
+    has_free_training_product: bool | None = None
 
 
 class BookingRecord(BaseModel):
@@ -449,6 +451,34 @@ class ProvisioningResult(BaseModel):
     member_email: str | None
     code_last4: str
     dispatched: bool
+
+
+class BrandingSettingsUpdateRequest(BaseModel):
+    logo_url: str | None = None
+    logo_link_url: str | None = None
+    instagram_url: str | None = None
+    facebook_url: str | None = None
+    tiktok_url: str | None = None
+    youtube_url: str | None = None
+    header_bg_color: str | None = "#ffffff"
+    body_bg_color: str | None = "#f9f9f9"
+    footer_bg_color: str | None = "#ffffff"
+    footer_text: str | None = None
+    accent_color: str | None = "#2563eb"
+
+
+class BrandingSettingsResponse(BaseModel):
+    logo_url: str | None = None
+    logo_link_url: str | None = None
+    instagram_url: str | None = None
+    facebook_url: str | None = None
+    tiktok_url: str | None = None
+    youtube_url: str | None = None
+    header_bg_color: str | None = "#ffffff"
+    body_bg_color: str | None = "#f9f9f9"
+    footer_bg_color: str | None = "#ffffff"
+    footer_text: str | None = None
+    accent_color: str | None = "#2563eb"
 
 
 class EmailTemplateUpdateRequest(BaseModel):

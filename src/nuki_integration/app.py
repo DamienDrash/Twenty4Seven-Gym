@@ -21,6 +21,8 @@ from .models import (
     AccessWindowSummary,
     AdminActionRecord,
     AlertRecord,
+    BrandingSettingsResponse,
+    BrandingSettingsUpdateRequest,
     CheckInSettingsResponse,
     CheckInSettingsUpdateRequest,
     ChecksFunnelResponse,
@@ -97,6 +99,7 @@ from .services import (
     sync_magicline_bookings,
     sync_magicline_member_by_email,
     upsert_funnel_step_service,
+    get_branding_settings,
     upsert_funnel_template_service,
 )
 
@@ -157,6 +160,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Studio Access Platform", version="0.1.0", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+# Ensure media directory exists before mounting
+media_path = Path(settings.media_storage_path).resolve()
+media_path.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=media_path), name="media")
 
 
 @app.get("/")
@@ -456,7 +464,7 @@ def admin_email_test(
     email_service = EmailService(runtime_settings, smtp)
     sent = email_service.send_test_email(
         to_email=payload.to_email,
-        html_body=build_test_email_html(db),
+        html_body=build_test_email_html(db, runtime_settings),
     )
     return {"sent": sent, "to_email": str(payload.to_email)}
 
@@ -480,6 +488,7 @@ def admin_email_test_code(
         checks_url=checks_url,
         html_body=build_access_code_email_html(
             db,
+            runtime_settings,
             member_name="Test Mitglied",
             code="12345",
             valid_from="24. März 2026, 10:00 Uhr",
@@ -503,7 +512,7 @@ def admin_email_test_reset(
     sent = email_service.send_password_reset_email(
         to_email=payload.to_email,
         reset_url=reset_url,
-        html_body=build_password_reset_email_html(db, reset_url=reset_url),
+        html_body=build_password_reset_email_html(db, runtime_settings, reset_url=reset_url),
     )
     return {"sent": sent, "to_email": str(payload.to_email)}
 
@@ -720,6 +729,24 @@ def admin_put_check_in_settings(
     return CheckInSettingsResponse.model_validate(
         get_effective_check_in_settings(db, runtime_settings)
     )
+
+
+@app.get("/admin/system/branding", response_model=BrandingSettingsResponse)
+def admin_get_branding(
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> BrandingSettingsResponse:
+    return BrandingSettingsResponse(**get_branding_settings(db))
+
+
+@app.put("/admin/system/branding", response_model=BrandingSettingsResponse)
+def admin_put_branding(
+    payload: BrandingSettingsUpdateRequest,
+    _admin: UserRecord = Depends(require_admin),
+    db: Database = Depends(get_database),
+) -> BrandingSettingsResponse:
+    db.set_system_setting(key="branding", value=payload.model_dump(exclude_unset=True))
+    return BrandingSettingsResponse(**get_branding_settings(db))
 
 
 @app.get("/admin/system/studio-links")
@@ -1104,9 +1131,18 @@ def admin_lock_status(
     db: Database = Depends(get_database),
     runtime_settings: Settings = Depends(get_runtime_settings),
 ) -> dict[str, object]:
+    from .exceptions import NukiApiError
     nuki = NukiClient(runtime_settings.model_copy(update=get_effective_nuki_config(db, runtime_settings)))
     try:
         return nuki.get_lock_status()
+    except NukiApiError as exc:
+        logger.warning(f"Nuki status request failed: {exc}")
+        return {
+            "stateName": "Nicht bereit",
+            "connectivity": "offline",
+            "batteryCritical": False,
+            "error": str(exc)
+        }
     finally:
         nuki.close()
 

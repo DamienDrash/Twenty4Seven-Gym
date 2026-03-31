@@ -415,22 +415,26 @@ class Database:
             if email_filter:
                 cur.execute(
                     """
-                    SELECT id, magicline_customer_id, email, first_name,
-                           last_name, status, last_synced_at
-                    FROM members
-                    WHERE lower(email) = lower(%s)
-                    ORDER BY last_synced_at DESC, id DESC
+                    SELECT m.id, m.magicline_customer_id, m.email, m.first_name,
+                           m.last_name, m.status, m.last_synced_at,
+                           e.has_xxlarge, e.has_free_training_product
+                    FROM members m
+                    LEFT JOIN member_entitlements e ON m.id = e.member_id
+                    WHERE lower(m.email) LIKE lower(%s)
+                    ORDER BY m.last_synced_at DESC, m.id DESC
                     LIMIT %s OFFSET %s
                     """,
-                    (email_filter, limit, offset),
+                    (f"%{email_filter}%", limit, offset),
                 )
             else:
                 cur.execute(
                     """
-                    SELECT id, magicline_customer_id, email, first_name,
-                           last_name, status, last_synced_at
-                    FROM members
-                    ORDER BY last_synced_at DESC, id DESC
+                    SELECT m.id, m.magicline_customer_id, m.email, m.first_name,
+                           m.last_name, m.status, m.last_synced_at,
+                           e.has_xxlarge, e.has_free_training_product
+                    FROM members m
+                    LEFT JOIN member_entitlements e ON m.id = e.member_id
+                    ORDER BY m.last_synced_at DESC, m.id DESC
                     LIMIT %s OFFSET %s
                     """,
                     (limit, offset),
@@ -1305,6 +1309,23 @@ class Database:
                     (AccessCodeStatus.EMAILED, code_id),
                 )
             conn.commit()
+
+    def is_code_recently_used(self, raw_code: str, days: int = 180) -> bool:
+        from .auth import verify_password
+        last4 = raw_code[-4:]
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT code_hash FROM access_codes
+                WHERE code_last4 = %s AND created_at > NOW() - INTERVAL '%s days'
+                """,
+                (last4, days),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                if verify_password(raw_code, row["code_hash"]):
+                    return True
+        return False
 
     def expire_finished_windows(self, now: datetime) -> int:
         with self.connection() as conn:

@@ -448,6 +448,23 @@ _BUILTIN_EMAIL_TEMPLATE: dict[str, str] = {
 }
 
 
+def get_branding_settings(db: "Database") -> dict[str, str | None]:
+    raw = db.get_system_setting("branding") or {}
+    return {
+        "logo_url": raw.get("logo_url"),
+        "logo_link_url": raw.get("logo_link_url"),
+        "instagram_url": raw.get("instagram_url"),
+        "facebook_url": raw.get("facebook_url"),
+        "tiktok_url": raw.get("tiktok_url"),
+        "youtube_url": raw.get("youtube_url"),
+        "header_bg_color": raw.get("header_bg_color", "#ffffff"),
+        "body_bg_color": raw.get("body_bg_color", "#f9f9f9"),
+        "footer_bg_color": raw.get("footer_bg_color", "#ffffff"),
+        "footer_text": raw.get("footer_text"),
+        "accent_color": raw.get("accent_color", "#2563eb"),
+    }
+
+
 def get_email_template(db: "Database") -> dict[str, str]:
     raw = db.get_system_setting("email_template")
     if raw is None:
@@ -463,26 +480,183 @@ def get_email_template(db: "Database") -> dict[str, str]:
     }
 
 
-def _assemble_email_html(header: str, body_rows: str, footer: str) -> str:
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="de">\n'
-        "<head>\n"
-        '<meta charset="UTF-8">\n'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
-        '<meta name="color-scheme" content="light">\n'
-        "</head>\n"
-        "<body>\n"
-        f"{header}\n"
-        f"{body_rows}\n"
-        f"{footer}\n"
-        "</body>\n"
-        "</html>"
-    )
+_DEFAULT_EMAIL_HEADER = """
+<style type="text/css">
+  body, table, td, p, a, li { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+  table, td { mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }
+  img { -ms-interpolation-mode:bicubic; border:0; display:block; outline:none; }
+  * { box-sizing:border-box; }
+  :root { color-scheme:light only; supported-color-schemes:light; }
+  body { margin:0!important; padding:0!important; background-color:#f0ede9!important; color:#000000!important; width:100%!important; }
+  [data-ogsc] .fbb { background-color:#f0ede9!important; }
+  [data-ogsc] .fbw { background-color:#ffffff!important; }
+  [data-ogsc] .fbk { background-color:#000000!important; }
+  [data-ogsc] .fcw { color:#ffffff!important; }
+  [data-ogsc] .fcb { color:#000000!important; }
+  [data-ogsc] .fcd { color:#3a3a3a!important; }
+  [data-ogsc] .fcm { color:#7a7a7a!important; }
+  [data-ogsc] .fbd { border-color:#e4e0db!important; }
+  [data-ogsc] .fbtn { background-color:#b5ac9e!important; }
+  @media (prefers-color-scheme:dark) {
+    body { background-color:#f0ede9!important; }
+    .fbb { background-color:#f0ede9!important; }
+    .fbw { background-color:#ffffff!important; }
+    .fbk { background-color:#000000!important; }
+    .fcw { color:#ffffff!important; }
+    .fcb { color:#000000!important; }
+    .fcd { color:#3a3a3a!important; }
+    .fcm { color:#7a7a7a!important; }
+    .fbd { border-color:#e4e0db!important; }
+    .fbtn { background-color:#b5ac9e!important; }
+  }
+  @media only screen and (max-width:620px) {
+    .wrapper { width:100%!important; max-width:100%!important; }
+    .h1 { font-size:27px!important; line-height:1.25!important; }
+    .ph { padding-left:24px!important; padding-right:24px!important; }
+    .p-hero { padding:36px 24px 28px!important; }
+    .p-sec { padding:28px 24px!important; }
+    .p-cta { padding:4px 24px 40px!important; }
+  }
+</style>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0ede9;" class="fbb">
+<tr><td align="center" style="padding:28px 16px;">
+<table role="presentation" class="wrapper" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
+<tr>
+  <td class="fbk" style="background-color:#000000;padding:22px 40px;text-align:center;">
+    <a href="{logo_link_url}" style="font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:700;letter-spacing:4px;color:#ffffff;text-decoration:none;text-transform:uppercase;" class="fcw">{logo_placeholder}</a>
+  </td>
+</tr>
+"""
+
+_DEFAULT_EMAIL_FOOTER = """
+<tr>
+  <td class="fbk" style="background-color:#000000;padding:40px 40px 32px;text-align:center;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 28px auto;">
+      <tr>
+        {social_icons}
+      </tr>
+    </table>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px;">
+      <tr><td style="border-top:1px solid #2c2c2c;font-size:0;line-height:0;">&nbsp;</td></tr>
+    </table>
+    <p class="fcw" style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:#ffffff;margin:0 0 10px 0;line-height:1.5;letter-spacing:0.5px;">Get-Impulse Berlin GmbH</p>
+    <div class="fcm" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#7a7a7a;margin:0 0 24px 0;line-height:1.7;">
+      {footer_text}
+    </div>
+    <div class="legal">
+      &copy; {datetime.now().year} TWENTY4SEVEN-GYM
+    </div>
+  </td>
+</tr>
+</table>
+</td></tr>
+</table>
+"""
+
+_ACCESS_CODE_BODY_TMPL = """
+<tr>
+  <td class="fbw p-hero" style="background-color:#ffffff;padding:52px 56px 36px;text-align:center;">
+    <h1 class="h1 fcb" style="font-family:Arial,Helvetica,sans-serif;font-size:36px;font-weight:700;color:#000000;margin:0 0 22px 0;line-height:1.2;">Dein Zugangscode</h1>
+    <p class="fcd" style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#3a3a3a;margin:0;line-height:1.7;">Hallo {member_name},<br><br>dein Training kann starten! Hier ist dein pers&ouml;nlicher Zugangscode f&uuml;r deinen gebuchten Slot.</p>
+  </td>
+</tr>
+<tr>
+  <td class="fbw ph" style="background-color:#ffffff;padding:0 56px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="fbd" style="border-top:1px solid #e4e0db;font-size:0;line-height:0;">&nbsp;</td></tr></table>
+  </td>
+</tr>
+<tr>
+  <td class="fbw p-sec" style="background-color:#ffffff;padding:36px 56px;text-align:center;">
+    <h3 class="fcb" style="font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;color:#000000;margin:0 0 12px 0;line-height:1.3;">Code: {code}</h3>
+    <p class="fcd" style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#3a3a3a;margin:0 0 18px 0;line-height:1.7;">
+      G&uuml;ltig von: {valid_from}<br>
+      G&uuml;ltig bis: {valid_until}
+    </p>
+  </td>
+</tr>
+<tr>
+  <td class="fbw p-cta" style="background-color:#ffffff;padding:4px 56px 52px;text-align:center;">
+    {checks_row}
+  </td>
+</tr>
+"""
+
+_ACCESS_CODE_CHECKS_ROW = """
+    <a href="{checks_url}" class="fbtn" style="display:inline-block;background-color:#b5ac9e;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">Check-In & Hausordnung</a>
+"""
+
+_RESET_BODY_TMPL = """
+<tr>
+  <td class="fbw p-hero" style="background-color:#ffffff;padding:52px 56px 36px;text-align:center;">
+    <h1 class="h1 fcb" style="font-family:Arial,Helvetica,sans-serif;font-size:36px;font-weight:700;color:#000000;margin:0 0 22px 0;line-height:1.2;">Passwort zurücksetzen</h1>
+    <p class="fcd" style="font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#3a3a3a;margin:0;line-height:1.7;">Klicke auf den Button unten, um dein Passwort neu zu setzen.</p>
+  </td>
+</tr>
+<tr>
+  <td class="fbw p-cta" style="background-color:#ffffff;padding:4px 56px 52px;text-align:center;">
+    <a href="{reset_url}" class="fbtn" style="display:inline-block;background-color:#b5ac9e;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">Passwort neu setzen</a>
+  </td>
+</tr>
+"""
+
+_BUILTIN_EMAIL_TEMPLATE = {
+    "header_html": _DEFAULT_EMAIL_HEADER,
+    "body_html": "<tr><td class='fbw' style='padding:40px; background:#fff;'>Standard Textnachricht</td></tr>",
+    "footer_html": _DEFAULT_EMAIL_FOOTER,
+    "access_code_body_html": _ACCESS_CODE_BODY_TMPL,
+    "reset_body_html": _RESET_BODY_TMPL,
+}
+
+
+def _assemble_email_html(db: "Database", settings: Settings, body_content: str) -> str:
+    branding = get_branding_settings(db)
+    
+    logo_link_url = branding["logo_link_url"] or "https://getimpulse.de/"
+    logo_placeholder = "GETIMPULSE"
+    if branding["logo_url"]:
+        logo_placeholder = f'<img src="{branding["logo_url"]}" alt="Logo" style="max-width: 200px; height: auto; display: block; margin: 0 auto;">'
+    
+    header = _DEFAULT_EMAIL_HEADER.replace("{logo_link_url}", logo_link_url).replace("{logo_placeholder}", logo_placeholder)
+    
+    socials = [
+        ("instagram", branding["instagram_url"] or "https://www.instagram.com/getimpulse/"),
+        ("facebook", branding["facebook_url"] or "https://www.facebook.com/getimpulse.berlinheidestrasse/"),
+        ("tiktok", branding["tiktok_url"] or "https://www.tiktok.com/@getimpulse"),
+        ("youtube", branding["youtube_url"] or "https://www.youtube.com/@getimpulse886"),
+    ]
+    
+    social_items = []
+    baseUrl = settings.app_public_base_url.rstrip("/")
+    for name, url in socials:
+        icon_url = f"{baseUrl}/assets/icon-{name}.png"
+        social_items.append(
+            f'<td style="padding:0 10px;"><a href="{url}" title="{name.capitalize()}" style="display:inline-block;"><img src="{icon_url}" alt="{name}" width="26" height="26"></a></td>'
+        )
+    social_icons_html = "".join(social_items)
+
+    footer_text = branding["footer_text"] or "Heidestra&szlig;e 11, 10557 Berlin<br>030 30106609"
+    footer = _DEFAULT_EMAIL_FOOTER.replace("{social_icons}", social_icons_html).replace("{footer_text}", footer_text.replace("\n", "<br>"))
+
+    return f"""
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light">
+</head>
+<body>
+    {header}
+    {body_content}
+    {footer}
+</body>
+</html>
+    """.strip()
 
 
 def build_access_code_email_html(
     db: "Database",
+    settings: Settings,
     *,
     member_name: str,
     code: str,
@@ -491,26 +665,34 @@ def build_access_code_email_html(
     checks_url: str | None,
 ) -> str:
     tpl = get_email_template(db)
-    checks_row = _ACCESS_CODE_CHECKS_ROW.replace("{checks_url}", checks_url) if checks_url else ""
-    body = tpl["access_code_body_html"].format(
-        member_name=member_name,
-        code=code,
-        valid_from=valid_from,
-        valid_until=valid_until,
-        checks_row=checks_row,
-    )
-    return _assemble_email_html(tpl["header_html"], body, tpl["footer_html"])
+    branding = get_branding_settings(db)
+    accent = branding["accent_color"] or "#2563eb"
+    
+    checks_row = f'<p style="margin-top: 20px;"><a href="{checks_url}" class="btn" style="background-color: {accent};">Check-In & Hausordnung</a></p>' if checks_url else ""
+    
+    body = tpl["access_code_body_html"].replace("{member_name}", member_name) \
+                                      .replace("{code}", code) \
+                                      .replace("{valid_from}", valid_from) \
+                                      .replace("{valid_until}", valid_until) \
+                                      .replace("{checks_url}", checks_url or "#")
+    
+    if "{checks_row}" in body:
+        body = body.replace("{checks_row}", checks_row)
+    elif checks_row:
+        body += checks_row
+
+    return _assemble_email_html(db, settings, body)
 
 
-def build_password_reset_email_html(db: "Database", *, reset_url: str) -> str:
+def build_password_reset_email_html(db: "Database", settings: Settings, *, reset_url: str) -> str:
     tpl = get_email_template(db)
     body = tpl["reset_body_html"].replace("{reset_url}", reset_url)
-    return _assemble_email_html(tpl["header_html"], body, tpl["footer_html"])
+    return _assemble_email_html(db, settings, body)
 
 
-def build_test_email_html(db: "Database") -> str:
+def build_test_email_html(db: "Database", settings: Settings) -> str:
     tpl = get_email_template(db)
-    return _assemble_email_html(tpl["header_html"], tpl["body_html"], tpl["footer_html"])
+    return _assemble_email_html(db, settings, tpl["body_html"])
 
 
 def issue_check_in_token(*, access_window_id: int, settings: Settings, ttl_seconds: int) -> str:
@@ -806,7 +988,7 @@ def request_password_reset(
     email_service.send_password_reset_email(
         to_email=str(user["email"]),
         reset_url=reset_url,
-        html_body=build_password_reset_email_html(db, reset_url=reset_url),
+        html_body=build_password_reset_email_html(db, settings, reset_url=reset_url),
     )
     return {"accepted": True}
 
@@ -901,6 +1083,7 @@ def _issue_window_code(
                     ),
                     html_body=build_access_code_email_html(
                         db,
+                        settings,
                         member_name=_member_name(window),
                         code=code,
                         valid_from=_fmt_dt(_berlin(window["starts_at"], settings.timezone)),
@@ -1432,6 +1615,69 @@ def inspect_magicline_member_by_email(settings: Settings, email: str) -> dict[st
         client.close()
 
 
+def _generate_secure_nuki_code(db: Database) -> str:
+    """
+    Generates a 6-digit code that is:
+    - Secure (via secrets)
+    - Compatible with Nuki Keypad (no 0, digits 1-9)
+    - Unique (not used in the last 180 days)
+    """
+    for _ in range(100): # Safety limit to avoid infinite loop
+        # Nuki Keypad v1/v2 digits are 1-9. Many users report 0 causes issues.
+        digits = [str(secrets.randbelow(9) + 1) for _ in range(6)]
+        code = "".join(digits)
+        
+        # Avoid simple patterns like 123456 or 111111
+        if code in ("123456", "654321") or len(set(code)) == 1:
+            continue
+            
+        if not db.is_code_recently_used(code):
+            return code
+    
+    # Fallback to pure random if we can't find a unique one in 100 tries
+    # (very unlikely with 9^6 ~ 531k combinations)
+    return "".join([str(secrets.randbelow(9) + 1) for _ in range(6)])
+
+
+def deprovision_expired_codes(db: Database, settings: Settings) -> int:
+    """
+    Finds codes marked as EXPIRED in DB that still have a nuki_auth_id,
+    and removes them from the Nuki Smartlock.
+    """
+    nuki = NukiClient(settings)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, nuki_auth_id, access_window_id
+            FROM access_codes
+            WHERE status = %s AND nuki_auth_id IS NOT NULL
+            """,
+            (AccessCodeStatus.EXPIRED,),
+        )
+        expired = cur.fetchall()
+    
+    count = 0
+    for row in expired:
+        try:
+            # We need the smartlock_id from settings or config
+            # NukiClient uses self._settings.nuki_smartlock_id
+            nuki._request("DELETE", f"/smartlock/{settings.nuki_smartlock_id}/auth/{row['nuki_auth_id']}")
+            
+            # Clear the auth id in DB so we don't try again
+            with db.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE access_codes SET nuki_auth_id = NULL WHERE id = %s",
+                    (row["id"],),
+                )
+                conn.commit()
+            count += 1
+        except Exception as exc:
+            logger.error(f"Failed to delete expired Nuki code {row['nuki_auth_id']}: {exc}")
+    
+    nuki.close()
+    return count
+
+
 def provision_due_codes(db: Database, settings: Settings) -> int:
     nuki = NukiClient(settings)
     email_service = EmailService(settings, get_effective_smtp_config(db, settings))
@@ -1440,7 +1686,7 @@ def provision_due_codes(db: Database, settings: Settings) -> int:
     count = 0
     try:
         for window in due:
-            code = f"{secrets.randbelow(1_000_000):06d}"
+            code = _generate_secure_nuki_code(db)
             starts_at = _berlin(window["starts_at"], settings.timezone)
             ends_at = _berlin(window["ends_at"], settings.timezone)
             name = f"member-{window['member_id']}-cluster-{window['booking_id']}"
@@ -1487,7 +1733,9 @@ def provision_due_codes(db: Database, settings: Settings) -> int:
                             ),
                             html_body=build_access_code_email_html(
                                 db,
-                                member_name=member_name,
+                                settings,
+                                member_name=_member_name(window),
+
                                 code=code,
                                 valid_from=_fmt_dt(_berlin(starts_at, settings.timezone)),
                                 valid_until=_fmt_dt(_berlin(ends_at, settings.timezone)),
