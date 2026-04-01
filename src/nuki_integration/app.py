@@ -475,6 +475,9 @@ def public_checks_funnel_get(funnel_type: str, db: Database = Depends(get_databa
     funnel = get_active_funnel_for_type(db=db, funnel_type=funnel_type)
     if not funnel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Kein aktiver {funnel_type}-Funnel.")
+    funnel = dict(funnel)
+    funnel.setdefault("template_id", funnel.get("id"))
+    funnel.setdefault("template_name", funnel.get("name"))
     return ChecksFunnelResponse.model_validate(funnel)
 
 
