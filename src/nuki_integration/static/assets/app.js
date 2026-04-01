@@ -189,6 +189,24 @@ function renderAdmin() {
     alerts: "Alarme & Audit", funnels: "Check-in Funnels", branding: "Design & E-Mail", settings: "Einstellungen",
   };
 
+  const contentHtml = `${S.msg ? `<div class="toast toast-${S.msgType === "error" ? "error" : "success"}">${esc(S.msg)}</div>` : ""}${(views[S.view] || renderOverview)()}`;
+
+  // Partial update: only replace content area if layout already exists
+  const pageBody = document.querySelector('.page-body');
+  if (pageBody) {
+    pageBody.innerHTML = contentHtml;
+    const tt = document.querySelector('.topbar-title');
+    if (tt) tt.textContent = titles[S.view] || '';
+    document.querySelectorAll('.sidebar-nav .nav-btn').forEach(b => {
+      const m = b.getAttribute('onclick')?.match(/S\.view='([^']+)'/);
+      if (m) b.classList.toggle('active', m[1] === S.view);
+    });
+    if (S.view === "branding") setTimeout(initBrandingEditor, 50);
+    if (S.view === "funnels") attachFunnelHandlers();
+    return;
+  }
+
+  // Full initial render (first load or after logout/login)
   app.innerHTML = `
     <div class="sidebar-overlay" onclick="$('.sidebar').classList.remove('open');this.classList.remove('open')"></div>
     <div class="app-layout">
@@ -200,6 +218,7 @@ function renderAdmin() {
           ${nav("members", "Mitglieder", "members")}
           ${nav("windows", "Fenster", "windows")}
           ${nav("nps", "NPS", "nps")}
+          ${nav("checks-log", "Checks-Log", "checks-log")}
           <div class="sidebar-section-label">System</div>
           ${nav("alerts", "Alarme", "alerts")}
           ${nav("funnels", "Funnels", "funnels")}
@@ -223,8 +242,7 @@ function renderAdmin() {
           </div>
         </header>
         <div class="page-body">
-          ${S.msg ? `<div class="toast toast-${S.msgType === "error" ? "error" : "success"}">${esc(S.msg)}</div>` : ""}
-          ${(views[S.view] || renderOverview)()}
+          ${contentHtml}
         </div>
       </main>
     </div>`;
