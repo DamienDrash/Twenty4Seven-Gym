@@ -35,6 +35,7 @@ from .models import (
     SMTPSettingsResponse, SMTPSettingsUpdateRequest,
     TelegramSettingsResponse, TelegramSettingsUpdateRequest, TelegramTestRequest,
     UserCreateRequest, UserRecord, UserSummary, UserUpdateRequest,
+    HouseRulesResponse, HouseRulesCreateRequest, EmailTemplateVersionResponse,
 )
 from .notifications import EmailService, TelegramService
 from .nuki_client import NukiClient
@@ -94,6 +95,7 @@ def require_admin(current_user: UserRecord = Depends(get_current_user)) -> UserR
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = get_database()
     db.ensure_schema()
+    db.ensure_schema_v2()
     db.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
     get_email_template(db)
     logger.info("Access platform starting")
@@ -372,7 +374,67 @@ def admin_alerts(u: UserRecord = Depends(get_current_user), severity: str | None
     return [AlertRecord.model_validate(i) for i in db.list_alerts(severity=severity, limit=limit, offset=offset)]
 
 
-@app.get("/admin/admin-actions", response_model=list[AdminActionRecord])
+from .services.house_rules import (
+    get_active_house_rules,
+    create_house_rules_version,
+    list_house_rules_versions,
+    get_house_rules_by_id,
+)
+from .services.email_templates import (
+    list_template_versions,
+    restore_template_version,
+)
+
+# ... (rest of imports)
+
+@app.get("/admin/house-rules", response_model=HouseRulesResponse)
+def admin_get_house_rules(
+    _current_user: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
+) -> HouseRulesResponse:
+    rules = get_active_house_rules(db=db)
+    if not rules:
+        raise HTTPException(status_code=404, detail="No active house rules found")
+    return HouseRulesResponse.model_validate(rules)
+
+@app.post("/admin/house-rules", response_model=HouseRulesResponse)
+def admin_create_house_rules(
+    payload: HouseRulesCreateRequest,
+    current_user: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
+) -> HouseRulesResponse:
+    rules = create_house_rules_version(
+        db=db,
+        title=payload.title,
+        body_text=payload.body_text,
+        body_html=payload.body_html,
+        created_by=str(current_user.email),
+    )
+    return HouseRulesResponse.model_validate(rules)
+
+@app.get("/admin/house-rules/versions", response_model=list[HouseRulesResponse])
+def admin_get_house_rules_versions(
+    _current_user: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
+) -> list[HouseRulesResponse]:
+    return [HouseRulesResponse.model_validate(r) for r in list_house_rules_versions(db=db)]
+
+@app.get("/admin/system/email-template/versions", response_model=list[EmailTemplateVersionResponse])
+def admin_get_email_template_versions(
+    template_type: str,
+    _current_user: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
+) -> list[EmailTemplateVersionResponse]:
+    return [EmailTemplateVersionResponse.model_validate(v) for v in list_template_versions(db=db, template_type=template_type)]
+
+@app.post("/admin/system/email-template/restore/{version_id}")
+def admin_restore_email_template_version(
+    version_id: int,
+    _current_user: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
+) -> dict[str, object]:
+    restore_template_version(db=db, version_id=version_id)
+    return {"restored": True}
 def admin_actions(u: UserRecord = Depends(get_current_user), limit: int = Query(default=100), offset: int = Query(default=0), db: Database = Depends(get_database)) -> list[AdminActionRecord]:
     return [AdminActionRecord.model_validate(i) for i in db.list_admin_actions(limit=limit, offset=offset)]
 

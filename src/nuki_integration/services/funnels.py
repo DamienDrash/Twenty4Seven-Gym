@@ -37,6 +37,10 @@ def upsert_funnel_step_service(
         image_path=payload.image_path,
         requires_note=payload.requires_note,
         requires_photo=payload.requires_photo,
+        step_type=payload.step_type,
+        is_mandatory=payload.is_mandatory,
+        video_url=payload.video_url,
+        house_rules_id=payload.house_rules_id,
     )
 
 

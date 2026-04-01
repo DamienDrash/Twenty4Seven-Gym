@@ -20,6 +20,94 @@ logger = logging.getLogger(__name__)
 # ── Schema DDL ────────────────────────────────────────────────────
 
 SCHEMA_SQL = """
+-- [Original Schema SQL remains here]
+"""
+
+MIGRATION_V2_SQL = """
+-- ── Email Template Versions ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS email_template_versions (
+    id BIGSERIAL PRIMARY KEY,
+    template_type TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    body_html TEXT NOT NULL,
+    changed_by TEXT NOT NULL,
+    change_note TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (template_type, version)
+);
+CREATE INDEX IF NOT EXISTS idx_etv_type_active
+    ON email_template_versions (template_type, is_active, version DESC);
+
+-- ── House Rules Documents ────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS house_rules_documents (
+    id BIGSERIAL PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT 'Hausordnung',
+    body_text TEXT NOT NULL,
+    body_html TEXT,
+    version INTEGER NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    content_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (version)
+);
+CREATE INDEX IF NOT EXISTS idx_hrd_active
+    ON house_rules_documents (is_active, version DESC);
+
+-- ── House Rules Acknowledgements ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS house_rules_acknowledgements (
+    id BIGSERIAL PRIMARY KEY,
+    member_id BIGINT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    document_id BIGINT NOT NULL REFERENCES house_rules_documents(id),
+    access_window_id BIGINT REFERENCES access_windows(id) ON DELETE SET NULL,
+    submission_id BIGINT REFERENCES funnel_submissions(id) ON DELETE SET NULL,
+    document_hash TEXT NOT NULL,
+    acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_hra_member
+    ON house_rules_acknowledgements (member_id, acknowledged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hra_document
+    ON house_rules_acknowledgements (document_id);
+
+-- ── Funnel Steps: Add step_type, is_mandatory, video_url, house_rules_id ──
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'funnel_steps' AND column_name = 'step_type'
+    ) THEN
+        ALTER TABLE funnel_steps ADD COLUMN step_type TEXT NOT NULL DEFAULT 'confirmation';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'funnel_steps' AND column_name = 'is_mandatory'
+    ) THEN
+        ALTER TABLE funnel_steps ADD COLUMN is_mandatory BOOLEAN NOT NULL DEFAULT TRUE;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'funnel_steps' AND column_name = 'video_url'
+    ) THEN
+        ALTER TABLE funnel_steps ADD COLUMN video_url TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'funnel_steps' AND column_name = 'house_rules_id'
+    ) THEN
+        ALTER TABLE funnel_steps ADD COLUMN house_rules_id BIGINT
+            REFERENCES house_rules_documents(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+"""
+
+SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
@@ -1010,7 +1098,7 @@ class Database:
             if not tpl:
                 return None
             cur.execute(
-                "SELECT id, template_id, step_order, title, body, image_path, requires_note, requires_photo FROM funnel_steps WHERE template_id=%s ORDER BY step_order",
+                "SELECT id, template_id, step_order, title, body, image_path, requires_note, requires_photo, step_type, is_mandatory, video_url, house_rules_id FROM funnel_steps WHERE template_id=%s ORDER BY step_order",
                 (template_id,),
             )
             tpl["steps"] = list(cur.fetchall())
@@ -1035,23 +1123,33 @@ class Database:
             conn.commit()
             return result
 
+    def ensure_schema_v2(self) -> None:
+        """Applies schema updates for v2 features (House Rules, Email Versioning)."""
+        logger.info("Ensuring database schema v2...")
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(MIGRATION_V2_SQL)
+            conn.commit()
+
     def upsert_funnel_step(
         self, *, step_id: int | None, template_id: int, step_order: int,
         title: str, body: str | None, image_path: str | None,
         requires_note: bool, requires_photo: bool,
+        step_type: str = "confirmation", is_mandatory: bool = True,
+        video_url: str | None = None, house_rules_id: int | None = None,
     ) -> dict[str, Any]:
         with self.connection() as conn:
             with conn.cursor() as cur:
-                cols = "id, template_id, step_order, title, body, image_path, requires_note, requires_photo"
+                cols = "id, template_id, step_order, title, body, image_path, requires_note, requires_photo, step_type, is_mandatory, video_url, house_rules_id"
                 if step_id:
                     cur.execute(
-                        f"UPDATE funnel_steps SET step_order=%s, title=%s, body=%s, image_path=%s, requires_note=%s, requires_photo=%s, updated_at=NOW() WHERE id=%s RETURNING {cols}",
-                        (step_order, title, body, image_path, requires_note, requires_photo, step_id),
+                        f"UPDATE funnel_steps SET step_order=%s, title=%s, body=%s, image_path=%s, requires_note=%s, requires_photo=%s, step_type=%s, is_mandatory=%s, video_url=%s, house_rules_id=%s, updated_at=NOW() WHERE id=%s RETURNING {cols}",
+                        (step_order, title, body, image_path, requires_note, requires_photo, step_type, is_mandatory, video_url, house_rules_id, step_id),
                     )
                 else:
                     cur.execute(
-                        f"INSERT INTO funnel_steps (template_id, step_order, title, body, image_path, requires_note, requires_photo) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING {cols}",
-                        (template_id, step_order, title, body, image_path, requires_note, requires_photo),
+                        f"INSERT INTO funnel_steps (template_id, step_order, title, body, image_path, requires_note, requires_photo, step_type, is_mandatory, video_url, house_rules_id) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING {cols}",
+                        (template_id, step_order, title, body, image_path, requires_note, requires_photo, step_type, is_mandatory, video_url, house_rules_id),
                     )
                 result = cur.fetchone()
             conn.commit()
@@ -1072,7 +1170,7 @@ class Database:
             if not tpl:
                 return None
             cur.execute(
-                "SELECT id, template_id, step_order, title, body, image_path, requires_note, requires_photo FROM funnel_steps WHERE template_id=%s ORDER BY step_order",
+                "SELECT id, template_id, step_order, title, body, image_path, requires_note, requires_photo, step_type, is_mandatory, video_url, house_rules_id FROM funnel_steps WHERE template_id=%s ORDER BY step_order",
                 (tpl["id"],),
             )
             tpl["steps"] = list(cur.fetchall())

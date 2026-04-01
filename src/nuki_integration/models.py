@@ -3,6 +3,8 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from .enums import UserRole
 
+# ── Auth Models ──────────────────────────────────────────────────
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -43,6 +45,8 @@ class ForgotPasswordRequest(BaseModel):
 class CompletePasswordResetRequest(BaseModel):
     token: str = Field(min_length=20)
     password: str = Field(min_length=12)
+
+# ── Member Models ────────────────────────────────────────────────
 
 class MemberSummary(BaseModel):
     id: int
@@ -131,6 +135,8 @@ class AdminActionRecord(BaseModel):
     payload: dict = Field(default_factory=dict)
     created_at: datetime
 
+# ── System Settings Models ───────────────────────────────────────
+
 class SMTPSettingsUpdateRequest(BaseModel):
     smtp_host: str
     smtp_port: int = 587
@@ -187,6 +193,8 @@ class MagiclineSettingsResponse(BaseModel):
     has_api_key: bool
     has_webhook_key: bool
 
+# ── Legacy Check-in Models ───────────────────────────────────────
+
 class CheckInChecklistItem(BaseModel):
     id: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=200)
@@ -236,6 +244,8 @@ class PublicCheckInSessionResponse(BaseModel):
     settings: CheckInSettingsResponse
     window: PublicCheckInWindow
 
+# ── Funnel & /checks Models ──────────────────────────────────────
+
 class FunnelTemplateSummary(BaseModel):
     id: int
     name: str
@@ -251,6 +261,10 @@ class FunnelStep(BaseModel):
     image_path: str | None = None
     requires_note: bool
     requires_photo: bool
+    step_type: str = "confirmation"
+    is_mandatory: bool = True
+    video_url: str | None = None
+    house_rules_id: int | None = None
 
 class FunnelTemplateDetail(BaseModel):
     template: FunnelTemplateSummary
@@ -270,6 +284,10 @@ class FunnelStepCreateRequest(BaseModel):
     image_path: str | None = None
     requires_note: bool = False
     requires_photo: bool = False
+    step_type: str = "confirmation"
+    is_mandatory: bool = True
+    video_url: str | None = None
+    house_rules_id: int | None = None
 
 class FunnelTemplateResponse(FunnelTemplateSummary):
     description: str | None = None
@@ -316,6 +334,10 @@ class ChecksFunnelStep(BaseModel):
     image_path: str | None = None
     requires_note: bool
     requires_photo: bool
+    step_type: str = "confirmation"
+    is_mandatory: bool = True
+    video_url: str | None = None
+    house_rules_id: int | None = None
 
 class ChecksFunnelResponse(BaseModel):
     template_id: int
@@ -323,6 +345,8 @@ class ChecksFunnelResponse(BaseModel):
     funnel_type: str
     description: str | None = None
     steps: list[ChecksFunnelStep]
+
+# ── Magicline Models ─────────────────────────────────────────────
 
 class MagiclineWebhookEnvelope(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -354,6 +378,8 @@ class MagiclineBooking(BaseModel):
     category: str | None = None
     appointment_status: str | None = Field(default=None, alias="appointmentStatus")
     participant_status: str | None = Field(default=None, alias="participantStatus")
+
+# ── Branding & Email Models ──────────────────────────────────────
 
 class BrandingSettingsUpdateRequest(BaseModel):
     logo_url: str | None = None
@@ -394,3 +420,31 @@ class EmailTemplateResponse(BaseModel):
     footer_html: str
     access_code_body_html: str
     reset_body_html: str
+
+# ── v2.1 House Rules & Email Versioning ──────────────────────────
+
+class HouseRulesResponse(BaseModel):
+    id: int
+    title: str
+    body_text: str
+    body_html: str | None = None
+    version: int
+    is_active: bool
+    content_hash: str
+    created_by: str
+    created_at: datetime
+
+class HouseRulesCreateRequest(BaseModel):
+    title: str = "Hausordnung"
+    body_text: str
+    body_html: str | None = None
+
+class EmailTemplateVersionResponse(BaseModel):
+    id: int
+    template_type: str
+    version: int
+    body_html: str
+    changed_by: str
+    change_note: str | None = None
+    is_active: bool
+    created_at: datetime
