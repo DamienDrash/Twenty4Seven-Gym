@@ -445,7 +445,7 @@ async function handleFunnelCreate(e) {
 function renderFunnelDetail() {
   const d = S.funnelDetail;
   return `
-    <div class="card" style="margin-bottom:16px;"><div class="card-header"><span class="card-title">${esc(d.template.name)}</span>${badge(d.template.funnel_type)}</div>
+    <div class="card" style="margin-bottom:16px;"><div class="card-header"><span class="card-title">${esc(d.template.name)}</span>${badge(d.template.funnel_type)}<button class="btn btn-outline btn-sm" onclick="window.open('/checks?preview=${d.template.funnel_type}','_blank')">Testen</button></div>
       <div class="card-body">
         ${d.template.description ? `<p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">${esc(d.template.description)}</p>` : ""}
         <div style="font-size:12px;color:var(--text-muted);">Slug: <code>${esc(d.template.slug)}</code> · ${d.steps.length} Schritte</div>
@@ -849,6 +849,15 @@ function renderStepperIntro(f) {
 
 function renderStepperSuccess() {
   const label = S.ckFunnelType === "checkout" ? "Check-out" : "Check-in";
+  if (QS.has("preview")) {
+    app.innerHTML = `<div class="checks-shell"><div class="checks-container" style="max-width:460px;"><div class="checks-card"><div class="checks-card-body" style="text-align:center;">
+      <div class="success-icon">${ico("check", 32)}</div>
+      <div class="checks-title">Vorschau abgeschlossen</div>
+      <div class="checks-subtitle" style="margin-bottom:24px;">So sieht der ${label}-Funnel für Mitglieder aus.</div>
+      <button class="btn btn-dark btn-block" onclick="window.close()">Fenster schließen</button>
+    </div></div></div></div>`;
+    return;
+  }
   const msg = S.ckFunnelType === "checkout" ? "Danke und bis bald! Dein Check-out wurde erfasst." : "Dein Check-in wurde erfasst. Viel Erfolg beim Training!";
   app.innerHTML = `<div class="checks-shell"><div class="checks-container" style="max-width:460px;"><div class="checks-card"><div class="checks-card-body" style="text-align:center;">
     <div class="success-icon">${ico("check", 32)}</div><div class="checks-title">${label} bestätigt</div><div class="checks-subtitle" style="margin-bottom:24px;">${esc(msg)}</div>
@@ -857,6 +866,7 @@ function renderStepperSuccess() {
 }
 
 async function submitFunnel() {
+  if (QS.has("preview")) { S.ckStep++; render(); return; }
   const btn = document.getElementById("step-next");
   await withBtn(btn, async () => {
     await api(`./public/checks/window/${S.ckWindowId}/${S.ckFunnelType}`, { method: "POST", body: JSON.stringify({
@@ -866,7 +876,7 @@ async function submitFunnel() {
   }, "Wird gespeichert…");
 }
 
-async function reloadChecks() { try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(S.ck.token)}`); } catch {} render(); }
+async function reloadChecks() { if (QS.has("preview")) { render(); return; } try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(S.ck.token)}`); } catch {} render(); }
 
 /* ═══════════════════════════════════════════════════════════════
    NPS
@@ -1093,11 +1103,22 @@ function stopPolling() {
 
 async function bootstrap() {
   document.title = "Twenty4Seven-Gym";
-  if (location.pathname.includes("/checks") || QS.has("token") || QS.has("key")) {
+  if (location.pathname.includes("/checks") || QS.has("token") || QS.has("key") || QS.has("preview")) {
     const tk = QS.get("token");
     const ck = QS.get("key");
-    if (ck) try { S.ck = await api(`./public/checks/by-key?key=${encodeURIComponent(ck)}`); } catch {}
-    else if (tk) try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(tk)}`); } catch {}
+    const preview = QS.get("preview");
+    if (preview) {
+      S.ck = { token: "preview", member_name: "Testmitglied", member_email: "", windows: [] };
+      try {
+        const f = await api(`./public/checks/funnel/${encodeURIComponent(preview)}`);
+        S.ckFunnel = f; S.ckWindowId = 0; S.ckFunnelType = preview; S.ckStep = 0; S.ckDraft = {};
+        (f.steps || []).forEach(s => { S.ckDraft[s.id] = { checked: false, note: "", nps_score: null }; });
+      } catch(e) { toast("Kein Funnel für diesen Typ konfiguriert.", true); }
+    } else if (ck) {
+      try { S.ck = await api(`./public/checks/by-key?key=${encodeURIComponent(ck)}`); } catch {}
+    } else if (tk) {
+      try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(tk)}`); } catch {}
+    }
     return render();
   }
   if (location.pathname.includes("/reset-password")) return render();
