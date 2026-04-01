@@ -787,11 +787,11 @@ function renderActiveStep(step, draft) {
     const isNein = draft.note === "nein";
     html += `${step.body ? `<p style="font-weight:600;margin-bottom:20px;">${escNl(step.body)}</p>` : ""}
       <div style="display:flex;gap:12px;">
-        <button type="button" onclick="S.ckDraft[${step.id}].note='ja';S.ckDraft[${step.id}].checked=true;document.getElementById('step-next').disabled=false;render()"
+        <button type="button" data-yn="ja" onclick="selectYesNo(${step.id},'ja')"
           style="flex:1;padding:16px;border:3px solid ${isJa ? 'var(--success)' : 'var(--border)'};border-radius:12px;background:${isJa ? 'var(--success)' : 'var(--bg)'};color:${isJa ? '#fff' : 'inherit'};cursor:pointer;font-size:18px;font-weight:700;">
           ✓ Ja
         </button>
-        <button type="button" onclick="S.ckDraft[${step.id}].note='nein';S.ckDraft[${step.id}].checked=false;document.getElementById('step-next').disabled=false;render()"
+        <button type="button" data-yn="nein" onclick="selectYesNo(${step.id},'nein')"
           style="flex:1;padding:16px;border:3px solid ${isNein ? 'var(--error)' : 'var(--border)'};border-radius:12px;background:${isNein ? 'var(--error)' : 'var(--bg)'};color:${isNein ? '#fff' : 'inherit'};cursor:pointer;font-size:18px;font-weight:700;">
           ✗ Nein
         </button>
@@ -802,16 +802,16 @@ function renderActiveStep(step, draft) {
     html += `${step.body ? `<p style="font-weight:600;margin-bottom:16px;">${escNl(step.body)}</p>` : ""}
       <div style="margin-bottom:8px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);"><span>Gar nicht</span><span>Sehr wahrscheinlich</span></div>
       <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:3px;margin-bottom:16px;">
-        ${scores.map(n => `<button type="button" onclick="S.ckDraft[${step.id}].nps_score=${n};document.getElementById('step-next').disabled=false;render()"
+        ${scores.map(n => `<button type="button" data-score="${n}" onclick="selectNpsScore(${step.id},${n})"
           style="padding:8px 2px;border:2px solid ${draft.nps_score === n ? 'var(--accent)' : 'var(--border)'};border-radius:8px;background:${draft.nps_score === n ? 'var(--accent)' : 'var(--bg)'};color:${draft.nps_score === n ? '#fff' : 'inherit'};cursor:pointer;font-weight:700;font-size:14px;text-align:center;">${n}</button>`).join('')}
       </div>
       <div class="field"><label style="font-size:13px;">${escNl(feedbackQ)}</label><textarea class="input" id="step-note" placeholder="Dein Feedback…" rows="3">${esc(draft.note || "")}</textarea></div>`;
   } else if (st === "house_rules") {
     html += `<div class="house-rules-container"><h3>${esc(step.title)}</h3>${step.body ? `<div style="white-space:pre-wrap">${escNl(step.body)}</div>` : ""}</div>
-      <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich habe die Hausordnung gelesen und akzeptiere die Regeln.</span></div>`;
+      <div class="check-row ${draft.checked ? "checked" : ""}" data-stepchk="${step.id}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich habe die Hausordnung gelesen und akzeptiere die Regeln.</span></div>`;
   } else if (st === "video" && step.video_url) {
     html += `${step.body ? `<p>${escNl(step.body)}</p>` : ""}<div class="step-video-container"><iframe src="${esc(_toEmbedUrl(step.video_url))}" allowfullscreen loading="lazy"></iframe></div>
-      <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Video angesehen und verstanden.</span></div>`;
+      <div class="check-row ${draft.checked ? "checked" : ""}" data-stepchk="${step.id}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Video angesehen und verstanden.</span></div>`;
   } else {
     html += `${step.body ? `<p>${escNl(step.body)}</p>` : ""}${step.image_path ? `<img src="${esc(step.image_path)}" class="step-image">` : ""}`;
     if (step.requires_note) {
@@ -821,13 +821,45 @@ function renderActiveStep(step, draft) {
       html += `<div class="field"><label>Foto anhängen <span style="font-size:11px;color:var(--text-muted)">(optional)</span></label><input type="file" accept="image/*" class="input" id="step-photo" onchange="S.ckDraft[${step.id}].photo=this.files[0]?.name||''"></div>`;
     }
     if (!step.requires_note && !step.requires_photo) {
-      html += `<div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich bestätige diesen Punkt.</span></div>`;
+      html += `<div class="check-row ${draft.checked ? "checked" : ""}" data-stepchk="${step.id}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich bestätige diesen Punkt.</span></div>`;
     }
   }
   return html + "</div>";
 }
 
-function toggleStep(stepId) { S.ckDraft[stepId].checked = !S.ckDraft[stepId].checked; render(); }
+function toggleStep(stepId) {
+  S.ckDraft[stepId].checked = !S.ckDraft[stepId].checked;
+  const checked = S.ckDraft[stepId].checked;
+  document.querySelectorAll(`[data-stepchk="${stepId}"]`).forEach(el => {
+    el.classList.toggle('checked', checked);
+    const cb = el.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = checked;
+  });
+  const nb = document.getElementById('step-next');
+  if (nb) nb.disabled = !checked;
+}
+function selectNpsScore(stepId, score) {
+  S.ckDraft[stepId].nps_score = score;
+  document.getElementById('step-next')?.removeAttribute('disabled');
+  document.querySelectorAll('[data-score]').forEach(b => {
+    const active = parseInt(b.dataset.score) === score;
+    b.style.background = active ? 'var(--accent)' : 'var(--bg)';
+    b.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+    b.style.color = active ? '#fff' : 'inherit';
+  });
+}
+function selectYesNo(stepId, value) {
+  S.ckDraft[stepId].note = value;
+  S.ckDraft[stepId].checked = value === 'ja';
+  document.getElementById('step-next')?.removeAttribute('disabled');
+  document.querySelectorAll('[data-yn]').forEach(b => {
+    const isThis = b.dataset.yn === value;
+    const isJa = b.dataset.yn === 'ja';
+    b.style.borderColor = isThis ? (isJa ? 'var(--success)' : 'var(--error)') : 'var(--border)';
+    b.style.background = isThis ? (isJa ? 'var(--success)' : 'var(--error)') : 'var(--bg)';
+    b.style.color = isThis ? '#fff' : 'inherit';
+  });
+}
 
 function stepperBack() { if (S.ckStep <= 0) { S.ckFunnel = null; render(); } else { S.ckStep--; render(); } }
 
@@ -1100,7 +1132,7 @@ function startPolling() {
   stopPolling();
   pollTimer = setInterval(() => {
     // Only poll if tab is active and not on NPS view (NPS has its own lazy load)
-    if (!document.hidden && S.view !== 'nps') loadData();
+    if (!document.hidden && S.view !== 'nps' && S.stepEditorId === null) loadData();
   }, 30000); // Every 30 seconds
 }
 
