@@ -485,7 +485,7 @@ function renderStepEditor() {
       <div class="field"><label>Inhalt / Beschreibung</label><textarea name="body" class="input" rows="4">${esc(ex?.body || "")}</textarea></div>
       <div class="grid grid-2">
         <div class="field"><label>Bild-URL</label><input name="image_path" class="input" value="${esc(ex?.image_path || "")}"></div>
-        <div class="field"><label>Video-URL</label><input name="video_url" class="input" value="${esc(ex?.video_url || "")}" placeholder="YouTube/Vimeo Link"></div>
+        <div class="field"><label>Video-URL <small style="color:var(--text-muted);font-weight:400">(NPS: Feedback-Frage)</small></label><input name="video_url" class="input" value="${esc(ex?.video_url || "")}" placeholder="YouTube/Vimeo · oder NPS-Feedback-Frage"></div>
       </div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;">
         <label style="display:flex;align-items:center;gap:6px;"><input name="is_mandatory" type="checkbox" ${ex?.is_mandatory !== false ? "checked" : ""}> Pflichtschritt</label>
@@ -747,7 +747,7 @@ function renderVerticalStepper() {
   const draft = S.ckDraft[cur.id] || { checked: false, note: "" };
   const isLast = S.ckStep === total;
   const st = cur.step_type || 'confirmation';
-  const canProceed = st === 'nps' ? (draft.nps_score !== undefined && draft.nps_score !== null) : st === 'yes_no' ? draft.note !== '' : cur.requires_note ? draft.note.trim().length > 0 : draft.checked;
+  const canProceed = cur.is_mandatory === false ? true : st === 'nps' ? (draft.nps_score !== undefined && draft.nps_score !== null) : st === 'yes_no' ? draft.note !== '' : (cur.requires_note || cur.requires_photo) ? true : draft.checked;
   const label = S.ckFunnelType === "checkout" ? "Check-out" : "Check-in";
 
   app.innerHTML = `<div class="checks-shell"><div class="checks-container" style="max-width:520px;"><div class="checks-card"><div class="checks-card-body">
@@ -777,13 +777,15 @@ function renderVerticalStepper() {
   if (nextBtn) nextBtn.addEventListener("click", () => { if (S.ckStep >= total) submitFunnel(); else { S.ckStep++; render(); } });
 }
 
+function escNl(s) { return esc(s || "").replace(/\n/g, "<br>"); }
+
 function renderActiveStep(step, draft) {
   const st = step.step_type || "confirmation";
   let html = '<div class="stepper-body">';
   if (st === "yes_no") {
     const isJa = draft.note === "ja";
     const isNein = draft.note === "nein";
-    html += `${step.body ? `<p style="font-weight:600;margin-bottom:20px;">${esc(step.body)}</p>` : ""}
+    html += `${step.body ? `<p style="font-weight:600;margin-bottom:20px;">${escNl(step.body)}</p>` : ""}
       <div style="display:flex;gap:12px;">
         <button type="button" onclick="S.ckDraft[${step.id}].note='ja';S.ckDraft[${step.id}].checked=true;document.getElementById('step-next').disabled=false;render()"
           style="flex:1;padding:16px;border:3px solid ${isJa ? 'var(--success)' : 'var(--border)'};border-radius:12px;background:${isJa ? 'var(--success)' : 'var(--bg)'};color:${isJa ? '#fff' : 'inherit'};cursor:pointer;font-size:18px;font-weight:700;">
@@ -796,26 +798,31 @@ function renderActiveStep(step, draft) {
       </div>`;
   } else if (st === "nps") {
     const scores = [0,1,2,3,4,5,6,7,8,9,10];
-    html += `${step.body ? `<p style="font-weight:600;margin-bottom:16px;">${esc(step.body)}</p>` : ""}
+    const feedbackQ = step.video_url || "Was hat dir gut gefallen oder was können wir verbessern?";
+    html += `${step.body ? `<p style="font-weight:600;margin-bottom:16px;">${escNl(step.body)}</p>` : ""}
       <div style="margin-bottom:8px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);"><span>Gar nicht</span><span>Sehr wahrscheinlich</span></div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px;">
-        ${scores.map(n => `<button type="button" class="nps-btn${draft.nps_score === n ? ' nps-btn-active' : ''}"
-          onclick="S.ckDraft[${step.id}].nps_score=${n};document.getElementById('step-next').disabled=false;render()"
-          style="flex:1;min-width:36px;padding:8px 4px;border:2px solid ${draft.nps_score === n ? 'var(--accent)' : 'var(--border)'};border-radius:8px;background:${draft.nps_score === n ? 'var(--accent)' : 'var(--bg)'};color:${draft.nps_score === n ? '#fff' : 'inherit'};cursor:pointer;font-weight:700;font-size:14px;">${n}</button>`).join('')}
+      <div style="display:grid;grid-template-columns:repeat(11,1fr);gap:3px;margin-bottom:16px;">
+        ${scores.map(n => `<button type="button" onclick="S.ckDraft[${step.id}].nps_score=${n};document.getElementById('step-next').disabled=false;render()"
+          style="padding:8px 2px;border:2px solid ${draft.nps_score === n ? 'var(--accent)' : 'var(--border)'};border-radius:8px;background:${draft.nps_score === n ? 'var(--accent)' : 'var(--bg)'};color:${draft.nps_score === n ? '#fff' : 'inherit'};cursor:pointer;font-weight:700;font-size:14px;text-align:center;">${n}</button>`).join('')}
       </div>
-      <div class="field"><label style="font-size:13px;">Kommentar (optional)</label><textarea class="input" id="step-note" placeholder="Was hat dir gut gefallen oder was können wir verbessern?" rows="3">${esc(draft.note || "")}</textarea></div>`;
+      <div class="field"><label style="font-size:13px;">${escNl(feedbackQ)}</label><textarea class="input" id="step-note" placeholder="Dein Feedback…" rows="3">${esc(draft.note || "")}</textarea></div>`;
   } else if (st === "house_rules") {
     html += `<div class="house-rules-container"><h3>${esc(step.title)}</h3>${step.body ? `<div>${step.body}</div>` : ""}</div>
       <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich habe die Hausordnung gelesen und akzeptiere die Regeln.</span></div>`;
   } else if (st === "video" && step.video_url) {
-    html += `${step.body ? `<p>${esc(step.body)}</p>` : ""}<div class="step-video-container"><iframe src="${esc(_toEmbedUrl(step.video_url))}" allowfullscreen loading="lazy"></iframe></div>
+    html += `${step.body ? `<p>${escNl(step.body)}</p>` : ""}<div class="step-video-container"><iframe src="${esc(_toEmbedUrl(step.video_url))}" allowfullscreen loading="lazy"></iframe></div>
       <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Video angesehen und verstanden.</span></div>`;
-  } else if (step.requires_note) {
-    html += `${step.body ? `<p>${esc(step.body)}</p>` : ""}${step.image_path ? `<img src="${esc(step.image_path)}" class="step-image">` : ""}
-      <div class="field"><label>Deine Anmerkung</label><textarea class="input" id="step-note" placeholder="Notiz eingeben…">${esc(draft.note)}</textarea></div>`;
   } else {
-    html += `${step.body ? `<p>${esc(step.body)}</p>` : ""}${step.image_path ? `<img src="${esc(step.image_path)}" class="step-image">` : ""}
-      <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich bestätige diesen Punkt.</span></div>`;
+    html += `${step.body ? `<p>${escNl(step.body)}</p>` : ""}${step.image_path ? `<img src="${esc(step.image_path)}" class="step-image">` : ""}`;
+    if (step.requires_note) {
+      html += `<div class="field"><label>Notiz <span style="font-size:11px;color:var(--text-muted)">(optional)</span></label><textarea class="input" id="step-note" placeholder="Notiz eingeben…">${esc(draft.note)}</textarea></div>`;
+    }
+    if (step.requires_photo) {
+      html += `<div class="field"><label>Foto anhängen <span style="font-size:11px;color:var(--text-muted)">(optional)</span></label><input type="file" accept="image/*" class="input" id="step-photo" onchange="S.ckDraft[${step.id}].photo=this.files[0]?.name||''"></div>`;
+    }
+    if (!step.requires_note && !step.requires_photo) {
+      html += `<div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich bestätige diesen Punkt.</span></div>`;
+    }
   }
   return html + "</div>";
 }
