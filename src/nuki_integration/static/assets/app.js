@@ -125,6 +125,7 @@ const ICONS = {
   play: '<polygon points="5 3 19 12 5 21 5 3"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  'checks-log': '<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>',
 };
 function ico(name, size = 18) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
@@ -951,34 +952,36 @@ async function loadChecksLog() {
 function renderChecksLog() {
   loadChecksLog();
   const rows = S.checksLog;
-  if (!rows) return `<div class="p-8 text-center text-gray-400">Lade Daten…</div>`;
-  const html = rows.length === 0
-    ? `<p class="text-gray-400 text-sm">Noch keine Einträge.</p>`
-    : rows.map(r => {
+  if (!rows) return `<div class="empty">Lade Daten…</div>`;
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-title">Checks-Log</span>
+      <button class="btn btn-outline btn-sm" onclick="S.checksLog=null;render()">${ico("sync", 14)} Aktualisieren</button>
+    </div>
+    <div class="card-body" style="padding:0;max-height:720px;overflow-y:auto;">
+      ${rows.length === 0 ? '<div class="empty">Noch keine Einträge.</div>' : rows.map(r => {
+        const typeLabel = r.entry_source?.includes('checkout') || r.funnel_type === 'checkout' ? 'Check-Out' : 'Check-in';
         const steps = (r.step_events || []).map(s =>
-          `<div class="text-xs text-gray-400">${esc(s.step_title||s.step_id||'')}: ${esc(s.note||'')} ${s.checked?'✓':''}</div>`
+          `<div style="font-size:11px;color:var(--text-muted);padding:2px 0;">${esc(s.step_title || s.step_id || '')}${s.note ? ': <em>' + esc(s.note) + '</em>' : ''}${s.checked ? ' ✓' : ''}</div>`
         ).join('');
-        return `<div class="bg-white border rounded-lg p-4 mb-3">
-          <div class="flex items-center justify-between mb-1">
-            <span class="font-medium text-sm">${esc(r.first_name||'')} ${esc(r.last_name||'')} <span class="text-gray-400 text-xs">${esc(r.email||'')}</span></span>
-            <span class="text-xs text-gray-400">${fmtDt(r.submitted_at||r.created_at||'')}</span>
+        return `<div class="list-row" style="flex-direction:column;align-items:stretch;gap:4px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <strong style="font-size:13px;">${esc(r.first_name||'')} ${esc(r.last_name||'')}</strong>
+              <span style="font-size:12px;color:var(--text-muted);margin-left:6px;">${esc(r.email||'')}</span>
+            </div>
+            <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;margin-left:12px;">${fmtDt(r.submitted_at||r.created_at||'')}</span>
           </div>
-          <div class="flex gap-2 mb-2">
-            ${badge(r.funnel_type==='checkin'?'Check-In':'Check-Out', r.funnel_type==='checkin'?'blue':'green')}
-            ${badge(r.window_status||'', 'gray')}
+          <div style="display:flex;gap:6px;align-items:center;">
+            ${badge(typeLabel)}
+            ${r.status||r.window_status ? badge(r.status||r.window_status) : ''}
+            <span style="font-size:11px;color:var(--text-muted);">${fmtDt(r.starts_at||'')} – ${fmtDt(r.ends_at||'')}</span>
           </div>
-          <div class="text-xs text-gray-500">Fenster: ${fmtDt(r.starts_at||'')} – ${fmtDt(r.ends_at||'')}</div>
-          ${steps ? `<div class="mt-2 space-y-1">${steps}</div>` : ''}
+          ${steps ? `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px;">${steps}</div>` : ''}
         </div>`;
-      }).join('');
-  return `
-    <div class="p-6">
-      <div class="flex items-center justify-between mb-6">
-        <h2 class="text-xl font-bold">Checks-Log</h2>
-        <button onclick="S.checksLog=null;render()" class="text-sm text-blue-600 hover:underline">Aktualisieren</button>
-      </div>
-      ${html}
-    </div>`;
+      }).join('')}
+    </div>
+  </div>`;
 }
 
 async function loadNpsResponses() {
