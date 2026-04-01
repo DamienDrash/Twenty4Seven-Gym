@@ -22,6 +22,7 @@ const S = {
   brandingSettings: null, emailTemplate: null,
   funnelsList: [],
   funnelDetail: null, selectedFunnelId: null, stepEditorId: null,
+  npsStats: null, npsResponses: null, checksLog: null,
 
   // /checks
   ck: null, ckFunnel: null, ckWindowId: null, ckFunnelType: null,
@@ -112,6 +113,7 @@ const ICONS = {
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   alerts: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   funnels: '<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>',
+  nps: '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-4h2v2h-2zm0-10h2v8h-2z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   branding: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
@@ -122,6 +124,7 @@ const ICONS = {
   dots: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
   play: '<polygon points="5 3 19 12 5 21 5 3"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
 };
 function ico(name, size = 18) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
@@ -150,7 +153,7 @@ async function doLogin(e) {
   e.preventDefault();
   await withBtn($('button[type="submit"]', e.target), async () => {
     const f = Object.fromEntries(new FormData(e.target));
-    const d = await api("./auth/login", { method: "POST", body: JSON.stringify(f) });
+    const d = await api("/auth/login", { method: "POST", body: JSON.stringify(f) });
     S.token = d.access_token; S.role = d.role;
     localStorage.setItem("t247_token", d.access_token);
     localStorage.setItem("t247_role", d.role);
@@ -161,7 +164,7 @@ async function doLogin(e) {
 async function doForgot(e) {
   e.preventDefault();
   await withBtn($('button[type="submit"]', e.target), async () => {
-    await api("./auth/forgot-password", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+    await api("/auth/forgot-password", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
     toast("Reset-Link gesendet");
   }, "Senden…");
 }
@@ -173,16 +176,16 @@ function doLogout() { localStorage.clear(); location.reload(); }
    ═══════════════════════════════════════════════════════════════ */
 
 function nav(view, label, icon) {
-  return `<button class="nav-btn ${S.view === view ? "active" : ""}" onclick="S.view='${view}';syncUrl();render()">${ico(icon || view)} ${label}</button>`;
+  return `<button class="nav-btn ${S.view === view ? "active" : ""}" onclick="S.view='${view}';syncUrl();if(S.view==='windows'){loadData();}else if(S.view==='nps'){S.npsResponses=null;render();}else{render();}">${ico(icon || view)} ${label}</button>`;
 }
 
 function renderAdmin() {
   const views = {
-    overview: renderOverview, members: renderMembers, windows: renderWindows,
+    overview: renderOverview, members: renderMembers, windows: renderWindows, nps: renderNPS, "checks-log": renderChecksLog,
     alerts: renderAlerts, funnels: renderFunnels, branding: renderBranding, settings: renderSettings,
   };
   const titles = {
-    overview: "Dashboard", members: "Mitglieder", windows: "Zugangsfenster",
+    overview: "Dashboard", members: "Mitglieder", windows: "Zugangsfenster", nps: "NPS Auswertung", "checks-log": "Checks-Log",
     alerts: "Alarme & Audit", funnels: "Check-in Funnels", branding: "Design & E-Mail", settings: "Einstellungen",
   };
 
@@ -190,12 +193,13 @@ function renderAdmin() {
     <div class="sidebar-overlay" onclick="$('.sidebar').classList.remove('open');this.classList.remove('open')"></div>
     <div class="app-layout">
       <aside class="sidebar">
-        <div class="sidebar-brand"><div class="sidebar-brand-mark">24</div><span class="sidebar-brand-name">OPEN-GYM</span></div>
+        <div class="sidebar-brand"><div class="sidebar-brand-mark">24</div><span class="sidebar-brand-name">Twenty4Seven-Gym</span></div>
         <nav class="sidebar-nav">
           <div class="sidebar-section-label">Betrieb</div>
           ${nav("overview", "Dashboard", "overview")}
           ${nav("members", "Mitglieder", "members")}
           ${nav("windows", "Fenster", "windows")}
+          ${nav("nps", "NPS", "nps")}
           <div class="sidebar-section-label">System</div>
           ${nav("alerts", "Alarme", "alerts")}
           ${nav("funnels", "Funnels", "funnels")}
@@ -231,7 +235,7 @@ function renderAdmin() {
 }
 
 async function doSync(btn) {
-  await withBtn(btn, async () => { await api("./admin/sync", { method: "POST" }); toast("Magicline Sync abgeschlossen"); await loadData(); }, "Sync…");
+  await withBtn(btn, async () => { await api("/admin/sync", { method: "POST" }); toast("Magicline Sync abgeschlossen"); await loadData(); }, "Sync…");
 }
 
 /* ── Overview ──────────────────────────────────────────────────── */
@@ -246,15 +250,16 @@ function renderOverview() {
     <div class="col-3"><div class="card stat"><div class="stat-label">Mitglieder</div><div class="stat-value">${S.members.length}</div><div class="stat-sub">Synchronisiert</div></div></div>
     <div class="col-3"><div class="card stat"><div class="stat-label">Alarme</div><div class="stat-value">${S.alerts.length}</div><div class="stat-sub">${S.alerts.length ? "Prüfen" : "Alles OK"}</div></div></div>
     <div class="col-3"><div class="card stat"><div class="stat-label">Schloss</div><div class="stat-value" style="font-size:16px;">${badge(ls.stateName || "—")}</div><div class="stat-sub">${ls.battery_state || "—"}</div></div></div>
+    ${(() => { const ns = S.npsStats; if (!ns || ns.total === 0) return '<div class="col-3"><div class="card stat"><div class="stat-label">NPS</div><div class="stat-value" style="font-size:16px;">—</div><div class="stat-sub">Noch keine Daten</div></div></div>'; const sc = ns.score; const color = sc >= 50 ? 'var(--success)' : sc >= 0 ? '#f59e0b' : 'var(--error)'; return `<div class="col-3" onclick="S.view='nps';syncUrl();loadNpsResponses();render()" style="cursor:pointer;"><div class="card stat"><div class="stat-label">NPS Score</div><div class="stat-value" style="font-size:28px;font-weight:900;color:${color};">${sc > 0 ? '+' : ''}${sc}</div><div class="stat-sub">${ns.total} Bewertungen · ${ns.promoters}P / ${ns.passives}N / ${ns.detractors}D</div></div></div>`; })()}
     <div class="col-8"><div class="card"><div class="card-header"><span class="card-title">Aktuelle Meldungen</span></div><div class="card-body" style="padding:0;">
       ${urgent.length ? urgent.map(a => `<div class="list-row"><div><strong style="font-size:13px;">${esc(a.kind)}</strong><div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${esc(a.message).slice(0, 120)}</div></div><div style="text-align:right;">${badge(a.severity)}<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${fmtDt(a.created_at)}</div></div></div>`).join("") : '<div class="empty">Keine kritischen Meldungen</div>'}
     </div></div></div>
     <div class="col-4"><div class="card"><div class="card-header"><span class="card-title">Nächster Zugang</span></div><div class="card-body">
-      ${next ? `<div style="text-align:center;"><div style="font-size:24px;font-weight:800;margin-bottom:4px;">${fmtTime(next.dispatch_at)}</div><div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">${fmtDay(next.dispatch_at)}</div>${badge(next.status)}<div style="margin-top:12px;font-size:13px;">${esc(memberName(next.member_id))}</div></div>` : '<div class="empty">Kein anstehender Zugang</div>'}
-    </div><div class="card-footer" style="text-align:center;"><button class="btn btn-outline btn-sm" onclick="S.view='windows';syncUrl();render()">Alle Fenster</button></div></div></div>
-    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Fernsteuerung</span></div><div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
+      ${next ? `<div style="text-align:center;"><div style="font-size:24px;font-weight:800;margin-bottom:4px;">${fmtTime(next.starts_at)}</div><div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">${fmtDay(next.starts_at)}</div>${badge(next.status)}<div style="margin-top:12px;font-size:13px;">${esc(memberName(next.member_id))}</div></div>` : '<div class="empty">Kein anstehender Zugang</div>'}
+    </div><div class="card-footer" style="text-align:center;"><button class="btn btn-outline btn-sm" onclick="S.view='windows';syncUrl();loadData()">Alle Fenster</button></div></div></div>
+    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Fernsteuerung</span><button class="btn btn-ghost btn-sm" onclick="handleLockSync(this)" title="Status-Synchronisation erzwingen">${ico("sync", 14)}</button></div><div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
       <div style="display:flex;justify-content:space-between;"><span>Schloss</span><strong>${badge(ls.stateName || "—")}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Tür</span><strong>${esc(ls.door_state || "Kein Sensor")}</strong></div>
+      <div style="display:flex;justify-content:space-between;"><span>Letztes Update</span><strong style="font-size:12px;">${ls.last_update ? fmtDt(ls.last_update) : "—"}</strong></div>
       <div style="display:flex;justify-content:space-between;"><span>Batterie</span><strong>${ls.batteryCritical ? '<span style="color:var(--error)">Kritisch!</span>' : esc(ls.battery_state || "—")}</strong></div>
       <button class="btn btn-dark btn-block" onclick="doRemoteOpen(this)" style="margin-top:8px;">${ico("lock", 16)} Remote öffnen</button>
     </div></div></div>
@@ -269,7 +274,15 @@ function renderOverview() {
 
 async function doRemoteOpen(btn) {
   if (!await confirmDialog("Türöffnung jetzt auslösen?")) return;
-  await withBtn(btn, async () => { const r = await api("./admin/remote-open", { method: "POST" }); toast(r.dry_run ? "Dry-Run: Remote Open protokolliert" : "Türöffnung ausgelöst"); await loadData(); }, "Öffne…");
+  await withBtn(btn, async () => { const r = await api("/admin/remote-open", { method: "POST" }); toast(r.dry_run ? "Dry-Run: Remote Open protokolliert" : "Türöffnung ausgelöst"); await loadData(); }, "Öffne…");
+}
+
+async function handleLockSync(btn) {
+  await withBtn(btn, async () => {
+    await api("/admin/lock/sync", { method: "POST" });
+    toast("Synchronisation mit Nuki angefordert");
+    await loadData();
+  }, "");
 }
 
 /* ── Members ───────────────────────────────────────────────────── */
@@ -308,7 +321,13 @@ function renderMemberExpanded(d) {
       <div style="display:flex;gap:6px;align-items:center;">${badge(w.status)}
         <div class="dropdown"><button class="btn btn-outline btn-sm btn-icon" onclick="event.stopPropagation();this.nextElementSibling.classList.toggle('open')">${ico("dots", 14)}</button>
           <div class="dropdown-menu"><button class="dropdown-item" onclick="windowAction(${w.id},'resend')">Code neu senden</button><button class="dropdown-item" onclick="windowAction(${w.id},'emergency-code')">Notfallcode</button><button class="dropdown-item dropdown-item-danger" onclick="windowAction(${w.id},'deactivate')">Deaktivieren</button></div></div></div>
-    </div>`).join("") || '<div style="font-size:13px;color:var(--text-muted);">Keine Fenster</div>'}
+    </div>`).join("") || '<div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">Keine Fenster</div>'}
+    
+    <div style="font-weight:700;font-size:13px;margin-top:16px;margin-bottom:10px;">Roh-Buchungen (Magicline)</div>
+    ${d.bookings.map(b => `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg-dim);border-radius:var(--radius);margin-bottom:6px;border:1px solid var(--border);">
+      <div><span style="font-weight:600;font-size:12px;">${esc(b.title)}</span><div style="font-size:11px;color:var(--text-muted);">${fmtDt(b.start_at)} – ${fmtDt(b.end_at)}</div></div>
+      ${badge(b.booking_status)}
+    </div>`).join("") || '<div style="font-size:13px;color:var(--text-muted);">Keine Buchungen</div>'}
   </div>`;
 }
 
@@ -354,16 +373,73 @@ function renderAlerts() {
 /* ── Funnels ───────────────────────────────────────────────────── */
 
 function renderFunnels() {
-  return `<div class="grid grid-2">
-    <div class="card"><div class="card-header"><span class="card-title">Funnel-Templates</span><button class="btn btn-accent btn-sm" onclick="createFunnel()">+ Neuer Funnel</button></div>
-      <div class="card-body" style="padding:0;">
-        ${S.funnelsList.map(f => `<div class="list-row list-row-clickable ${S.selectedFunnelId === f.id ? "active" : ""}" data-funnel-id="${f.id}" style="${S.selectedFunnelId === f.id ? "background:var(--accent-dim);border-left:3px solid var(--accent);" : ""}"><div><strong>${esc(f.name)}</strong><div style="font-size:12px;color:var(--text-muted);">${esc(f.funnel_type)} · ${esc(f.slug)}</div></div>${badge(f.funnel_type)}</div>`).join("") || '<div class="empty">Noch keine Funnels</div>'}
+  return `<div class="grid grid-12" style="gap:24px;">
+    <div class="col-4">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Funnel-Templates</span>
+          <button class="btn btn-accent btn-sm" onclick="S.showFunnelCreator = true; S.selectedFunnelId = null; S.funnelDetail = null; render();">+ Neu</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          ${S.funnelsList.map(f => `
+            <div class="list-row list-row-clickable ${S.selectedFunnelId === f.id ? "active" : ""}" 
+                 data-funnel-id="${f.id}" 
+                 style="${S.selectedFunnelId === f.id ? "background:var(--accent-dim);border-left:3px solid var(--accent);" : ""}">
+              <div style="flex:1;">
+                <strong>${esc(f.name)}</strong>
+                <div style="font-size:12px;color:var(--text-muted);">${esc(f.funnel_type)} · ${esc(f.slug)}</div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                ${badge(f.funnel_type)}
+                <button class="btn btn-ghost btn-sm" style="color:var(--error);padding:4px;" onclick="event.stopPropagation(); deleteFunnelTemplate(${f.id})">${ico("trash", 14)}</button>
+              </div>
+            </div>
+          `).join("") || '<div class="empty">Noch keine Funnels</div>'}
+        </div>
       </div>
     </div>
-    <div>
-      ${S.funnelDetail ? renderFunnelDetail() : '<div class="card"><div class="card-body"><div class="empty">Funnel links auswählen oder neu erstellen</div></div></div>'}
+    <div class="col-8">
+      ${S.showFunnelCreator ? renderFunnelCreator() : (S.funnelDetail ? renderFunnelDetail() : '<div class="card"><div class="card-body"><div class="empty">Funnel links auswählen oder neu erstellen</div></div></div>')}
     </div>
   </div>`;
+}
+
+function renderFunnelCreator() {
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-title">Neues Funnel-Template</span>
+      <button class="btn btn-ghost btn-sm" onclick="S.showFunnelCreator = false; render();">Abbrechen</button>
+    </div>
+    <div class="card-body">
+      <form id="funnel-create-form" style="display:flex;flex-direction:column;gap:16px;">
+        <div class="field"><label>Name</label><input name="name" class="input" placeholder="z.B. Standard Check-In" required></div>
+        <div class="field"><label>Slug (optional)</label><input name="slug" class="input" placeholder="standard-check-in"></div>
+        <div class="field"><label>Typ</label><select name="funnel_type" class="input"><option value="checkin">Check-In</option><option value="checkout">Check-Out</option></select></div>
+        <div class="field"><label>Beschreibung</label><textarea name="description" class="input" rows="2"></textarea></div>
+        <button type="submit" class="btn btn-accent">Funnel erstellen</button>
+      </form>
+    </div>
+  </div>`;
+}
+
+async function deleteFunnelTemplate(id) {
+  if (!await confirmDialog("Dieses Funnel-Template und alle zugehörigen Schritte wirklich löschen?")) return;
+  await api(`./admin/funnels/${id}`, { method: "DELETE" });
+  S.funnelsList = await api("/admin/funnels");
+  if (S.selectedFunnelId === id) { S.selectedFunnelId = null; S.funnelDetail = null; }
+  toast("Funnel gelöscht"); render();
+}
+
+async function handleFunnelCreate(e) {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target));
+  if (!f.slug) f.slug = f.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  const res = await api("/admin/funnels", { method: "POST", body: JSON.stringify(f) });
+  S.funnelsList = await api("/admin/funnels");
+  S.showFunnelCreator = false;
+  S.selectedFunnelId = res.id;
+  S.funnelDetail = await api(`./admin/funnels/${res.id}`);
+  toast("Funnel erstellt"); render();
 }
 
 function renderFunnelDetail() {
@@ -403,7 +479,7 @@ function renderStepEditor() {
     <div class="card-body"><form id="step-editor-form" style="display:flex;flex-direction:column;gap:12px;">
       <div class="grid grid-2">
         <div class="field"><label>Reihenfolge</label><input name="step_order" type="number" class="input" value="${nextOrder}" min="1" required></div>
-        <div class="field"><label>Typ</label><select name="step_type" class="input"><option value="confirmation" ${ex?.step_type === "confirmation" ? "selected" : ""}>Bestätigung</option><option value="house_rules" ${ex?.step_type === "house_rules" ? "selected" : ""}>Hausordnung</option><option value="text" ${ex?.step_type === "text" ? "selected" : ""}>Text</option><option value="image" ${ex?.step_type === "image" ? "selected" : ""}>Bild</option><option value="video" ${ex?.step_type === "video" ? "selected" : ""}>Video</option></select></div>
+        <div class="field"><label>Typ</label><select name="step_type" class="input"><option value="confirmation" ${ex?.step_type === "confirmation" ? "selected" : ""}>Bestätigung</option><option value="house_rules" ${ex?.step_type === "house_rules" ? "selected" : ""}>Hausordnung</option><option value="text" ${ex?.step_type === "text" ? "selected" : ""}>Text</option><option value="image" ${ex?.step_type === "image" ? "selected" : ""}>Bild</option><option value="video" ${ex?.step_type === "video" ? "selected" : ""}>Video</option><option value="nps" ${ex?.step_type === "nps" ? "selected" : ""}>NPS-Bewertung</option><option value="yes_no" ${ex?.step_type === "yes_no" ? "selected" : ""}>Ja / Nein</option></select></div>
       </div>
       <div class="field"><label>Titel</label><input name="title" class="input" value="${esc(ex?.title || "")}" required></div>
       <div class="field"><label>Inhalt / Beschreibung</label><textarea name="body" class="input" rows="4">${esc(ex?.body || "")}</textarea></div>
@@ -421,7 +497,8 @@ function renderStepEditor() {
 }
 
 function attachFunnelHandlers() {
-  $$("[data-funnel-id]").forEach(el => el.addEventListener("click", () => loadFunnelDetail(el.dataset.funnelId)));
+  $$("[data-funnel-id]").forEach(el => el.addEventListener("click", () => { S.showFunnelCreator = false; loadFunnelDetail(el.dataset.funnelId); }));
+  $("#funnel-create-form")?.addEventListener("submit", handleFunnelCreate);
   $("#step-add-btn")?.addEventListener("click", () => { S.stepEditorId = "new"; render(); });
   $("#step-editor-cancel")?.addEventListener("click", () => { S.stepEditorId = null; render(); });
   $("#step-editor-form")?.addEventListener("submit", e => saveFunnelStep(e).catch(err => toast(err.message, "error")));
@@ -434,8 +511,8 @@ async function loadFunnelDetail(id) { S.selectedFunnelId = parseInt(id); S.stepE
 async function createFunnel() {
   const name = prompt("Name:"); if (!name) return;
   const type = prompt("Typ (checkin / checkout):", "checkin"); if (!type) return;
-  await api("./admin/funnels", { method: "POST", body: JSON.stringify({ name, funnel_type: type, slug: name.toLowerCase().replace(/\s+/g, "-") }) });
-  S.funnelsList = await api("./admin/funnels"); toast("Funnel erstellt"); render();
+  await api("/admin/funnels", { method: "POST", body: JSON.stringify({ name, funnel_type: type, slug: name.toLowerCase().replace(/\s+/g, "-") }) });
+  S.funnelsList = await api("/admin/funnels"); toast("Funnel erstellt"); render();
 }
 
 async function saveFunnelStep(e) {
@@ -526,7 +603,7 @@ function initBrandingEditor() {
   document.getElementById("logo-upload")?.addEventListener("change", async e => {
     const file = e.target.files[0]; if (!file) return;
     const fd = new FormData(); fd.append("file", file);
-    try { const r = await api("./admin/media/upload", { method: "POST", body: fd }); await api("./admin/system/branding", { method: "PUT", body: JSON.stringify({ logo_url: r.url }) }); toast("Logo hochgeladen"); await loadData(); } catch (err) { toast(err.message, "error"); }
+    try { const r = await api("/admin/media/upload", { method: "POST", body: fd }); await api("/admin/system/branding", { method: "PUT", body: JSON.stringify({ logo_url: r.url }) }); toast("Logo hochgeladen"); await loadData(); } catch (err) { toast(err.message, "error"); }
   });
   setTimeout(updateEmailPreview, 100);
 }
@@ -549,7 +626,7 @@ function insertPlaceholder(text) { const el = document.getElementById("tpl-body"
 
 async function saveBranding(btn) {
   await withBtn(btn, async () => {
-    await api("./admin/system/branding", { method: "PUT", body: JSON.stringify({
+    await api("/admin/system/branding", { method: "PUT", body: JSON.stringify({
       accent_color: document.getElementById("c-accent")?.value, header_bg_color: document.getElementById("c-header")?.value,
       body_bg_color: document.getElementById("c-body")?.value, footer_bg_color: document.getElementById("c-footer")?.value,
       logo_link_url: document.getElementById("logo-link")?.value || "",
@@ -563,7 +640,7 @@ async function saveBranding(btn) {
 async function saveTemplate(btn) {
   const body = document.getElementById("tpl-body")?.value || "";
   await withBtn(btn, async () => {
-    await api("./admin/system/email-template", { method: "PUT", body: JSON.stringify({
+    await api("/admin/system/email-template", { method: "PUT", body: JSON.stringify({
       header_html: S.emailTemplate?.header_html || "", body_html: S.emailTemplate?.body_html || "",
       footer_html: S.emailTemplate?.footer_html || "", access_code_body_html: body, reset_body_html: S.emailTemplate?.reset_body_html || "",
     }) }); toast("Template gespeichert"); await loadData();
@@ -571,7 +648,7 @@ async function saveTemplate(btn) {
 }
 
 async function sendTestEmail(btn) {
-  await withBtn(btn, async () => { await api("./admin/system/email-test-code", { method: "POST", body: JSON.stringify({ to_email: S.me.email }) }); toast(`Test-Mail an ${S.me.email} gesendet`); }, "Sende…");
+  await withBtn(btn, async () => { await api("/admin/system/email-test-code", { method: "POST", body: JSON.stringify({ to_email: S.me.email }) }); toast(`Test-Mail an ${S.me.email} gesendet`); }, "Sende…");
 }
 
 /* ── Settings ──────────────────────────────────────────────────── */
@@ -600,7 +677,7 @@ async function saveSettings(e, type) {
    /CHECKS — VERTICAL STEPPER
    ═══════════════════════════════════════════════════════════════ */
 
-function _stepTypeLabel(t) { return ({ house_rules: "Hausordnung", video: "Video", image: "Bild", text: "Info", confirmation: "Bestätigung" })[t] || "Schritt"; }
+function _stepTypeLabel(t) { return ({ house_rules: "Hausordnung", video: "Video", image: "Bild", text: "Info", confirmation: "Bestätigung", nps: "NPS-Bewertung", yes_no: "Ja/Nein" })[t] || "Schritt"; }
 
 function _toEmbedUrl(url) {
   if (!url) return "";
@@ -623,7 +700,7 @@ function renderChecksLogin() {
   </div></div></div></div>`;
   $("#ck-form").addEventListener("submit", async e => {
     e.preventDefault();
-    try { S.ck = await api("./public/checks/resolve", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target))) }); render(); }
+    try { S.ck = await api("/public/checks/resolve", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(e.target))) }); render(); }
     catch (err) { toast(err.message, "error"); }
   });
 }
@@ -669,7 +746,8 @@ function renderVerticalStepper() {
   const cur = steps[S.ckStep - 1];
   const draft = S.ckDraft[cur.id] || { checked: false, note: "" };
   const isLast = S.ckStep === total;
-  const canProceed = cur.requires_note ? draft.note.trim().length > 0 : draft.checked;
+  const st = cur.step_type || 'confirmation';
+  const canProceed = st === 'nps' ? (draft.nps_score !== undefined && draft.nps_score !== null) : st === 'yes_no' ? draft.note !== '' : cur.requires_note ? draft.note.trim().length > 0 : draft.checked;
   const label = S.ckFunnelType === "checkout" ? "Check-out" : "Check-in";
 
   app.innerHTML = `<div class="checks-shell"><div class="checks-container" style="max-width:520px;"><div class="checks-card"><div class="checks-card-body">
@@ -702,7 +780,31 @@ function renderVerticalStepper() {
 function renderActiveStep(step, draft) {
   const st = step.step_type || "confirmation";
   let html = '<div class="stepper-body">';
-  if (st === "house_rules") {
+  if (st === "yes_no") {
+    const isJa = draft.note === "ja";
+    const isNein = draft.note === "nein";
+    html += `${step.body ? `<p style="font-weight:600;margin-bottom:20px;">${esc(step.body)}</p>` : ""}
+      <div style="display:flex;gap:12px;">
+        <button type="button" onclick="S.ckDraft[${step.id}].note='ja';S.ckDraft[${step.id}].checked=true;document.getElementById('step-next').disabled=false;render()"
+          style="flex:1;padding:16px;border:3px solid ${isJa ? 'var(--success)' : 'var(--border)'};border-radius:12px;background:${isJa ? 'var(--success)' : 'var(--bg)'};color:${isJa ? '#fff' : 'inherit'};cursor:pointer;font-size:18px;font-weight:700;">
+          ✓ Ja
+        </button>
+        <button type="button" onclick="S.ckDraft[${step.id}].note='nein';S.ckDraft[${step.id}].checked=false;document.getElementById('step-next').disabled=false;render()"
+          style="flex:1;padding:16px;border:3px solid ${isNein ? 'var(--error)' : 'var(--border)'};border-radius:12px;background:${isNein ? 'var(--error)' : 'var(--bg)'};color:${isNein ? '#fff' : 'inherit'};cursor:pointer;font-size:18px;font-weight:700;">
+          ✗ Nein
+        </button>
+      </div>`;
+  } else if (st === "nps") {
+    const scores = [0,1,2,3,4,5,6,7,8,9,10];
+    html += `${step.body ? `<p style="font-weight:600;margin-bottom:16px;">${esc(step.body)}</p>` : ""}
+      <div style="margin-bottom:8px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);"><span>Gar nicht</span><span>Sehr wahrscheinlich</span></div>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px;">
+        ${scores.map(n => `<button type="button" class="nps-btn${draft.nps_score === n ? ' nps-btn-active' : ''}"
+          onclick="S.ckDraft[${step.id}].nps_score=${n};document.getElementById('step-next').disabled=false;render()"
+          style="flex:1;min-width:36px;padding:8px 4px;border:2px solid ${draft.nps_score === n ? 'var(--accent)' : 'var(--border)'};border-radius:8px;background:${draft.nps_score === n ? 'var(--accent)' : 'var(--bg)'};color:${draft.nps_score === n ? '#fff' : 'inherit'};cursor:pointer;font-weight:700;font-size:14px;">${n}</button>`).join('')}
+      </div>
+      <div class="field"><label style="font-size:13px;">Kommentar (optional)</label><textarea class="input" id="step-note" placeholder="Was hat dir gut gefallen oder was können wir verbessern?" rows="3">${esc(draft.note || "")}</textarea></div>`;
+  } else if (st === "house_rules") {
     html += `<div class="house-rules-container"><h3>${esc(step.title)}</h3>${step.body ? `<div>${step.body}</div>` : ""}</div>
       <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich habe die Hausordnung gelesen und akzeptiere die Regeln.</span></div>`;
   } else if (st === "video" && step.video_url) {
@@ -736,6 +838,8 @@ function renderStepperIntro(f) {
         <span>${esc(s.title)}</span>
         ${s.step_type === "house_rules" ? '<span class="step-type-badge step-type-house-rules">Hausordnung</span>' : ""}
         ${s.step_type === "video" ? '<span class="step-type-badge step-type-video">Video</span>' : ""}
+        ${s.step_type === "nps" ? '<span class="step-type-badge step-type-nps">NPS</span>' : ""}
+        ${s.step_type === "yes_no" ? '<span class="step-type-badge step-type-yes-no">Ja/Nein</span>' : ""}
       </div>`).join("")}
     </div>
     <button class="btn btn-dark btn-block btn-lg" onclick="S.ckStep++;render()">${label} starten</button>
@@ -757,12 +861,145 @@ async function submitFunnel() {
   await withBtn(btn, async () => {
     await api(`./public/checks/window/${S.ckWindowId}/${S.ckFunnelType}`, { method: "POST", body: JSON.stringify({
       token: S.ck.token, window_id: S.ckWindowId, funnel_type: S.ckFunnelType,
-      steps: Object.entries(S.ckDraft).map(([id, d]) => ({ step_id: parseInt(id), checked: d.checked, note: d.note })),
+      steps: Object.entries(S.ckDraft).map(([id, d]) => ({ step_id: parseInt(id), checked: d.checked, note: d.note, nps_score: d.nps_score ?? null })),
     }) }); S.ckStep++; render();
   }, "Wird gespeichert…");
 }
 
 async function reloadChecks() { try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(S.ck.token)}`); } catch {} render(); }
+
+/* ═══════════════════════════════════════════════════════════════
+   NPS
+   ═══════════════════════════════════════════════════════════════ */
+
+async function loadChecksLog() {
+  if (S.checksLog !== null) return;
+  S.checksLog = [];
+  try {
+    S.checksLog = await api(`./admin/checks-log?limit=100&offset=0`);
+  } catch(e) { toast("Fehler beim Laden des Checks-Log: " + e.message, true); }
+  render();
+}
+
+function renderChecksLog() {
+  loadChecksLog();
+  const rows = S.checksLog;
+  if (!rows) return `<div class="p-8 text-center text-gray-400">Lade Daten…</div>`;
+  const html = rows.length === 0
+    ? `<p class="text-gray-400 text-sm">Noch keine Einträge.</p>`
+    : rows.map(r => {
+        const steps = (r.step_events || []).map(s =>
+          `<div class="text-xs text-gray-400">${esc(s.step_title||s.step_id||'')}: ${esc(s.note||'')} ${s.checked?'✓':''}</div>`
+        ).join('');
+        return `<div class="bg-white border rounded-lg p-4 mb-3">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-medium text-sm">${esc(r.first_name||'')} ${esc(r.last_name||'')} <span class="text-gray-400 text-xs">${esc(r.email||'')}</span></span>
+            <span class="text-xs text-gray-400">${fmtDt(r.submitted_at||r.created_at||'')}</span>
+          </div>
+          <div class="flex gap-2 mb-2">
+            ${badge(r.funnel_type==='checkin'?'Check-In':'Check-Out', r.funnel_type==='checkin'?'blue':'green')}
+            ${badge(r.window_status||'', 'gray')}
+          </div>
+          <div class="text-xs text-gray-500">Fenster: ${fmtDt(r.starts_at||'')} – ${fmtDt(r.ends_at||'')}</div>
+          ${steps ? `<div class="mt-2 space-y-1">${steps}</div>` : ''}
+        </div>`;
+      }).join('');
+  return `
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-xl font-bold">Checks-Log</h2>
+        <button onclick="S.checksLog=null;render()" class="text-sm text-blue-600 hover:underline">Aktualisieren</button>
+      </div>
+      ${html}
+    </div>`;
+}
+
+async function loadNpsResponses() {
+  if (S.npsResponses === null) {
+    S.npsResponses = [];  // mark as loading (prevent concurrent fetches)
+    try { S.npsResponses = await api("/admin/nps/responses?limit=200") || []; render(); } catch { S.npsResponses = []; }
+  }
+}
+
+function renderNPS() {
+  loadNpsResponses();
+  const ns = S.npsStats;
+  const responses = S.npsResponses || [];
+
+  // Build SVG trend chart
+  function buildTrendChart(trend) {
+    if (!trend || trend.length < 2) return '<div class="empty" style="padding:40px;">Noch nicht genug Daten für einen Verlauf</div>';
+    const w = 600, h = 140, pad = 24;
+    const scores = trend.map(t => t.score ?? 0);
+    const minS = Math.min(-10, ...scores), maxS = Math.max(10, ...scores);
+    const xStep = (w - pad * 2) / (trend.length - 1);
+    const yScale = v => pad + (1 - (v - minS) / (maxS - minS)) * (h - pad * 2);
+    const pts = trend.map((t, i) => [pad + i * xStep, yScale(t.score ?? 0)]);
+    const polyline = pts.map(p => p.join(",")).join(" ");
+    const zeroY = yScale(0);
+    return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:${h}px;">
+      <line x1="${pad}" y1="${zeroY}" x2="${w - pad}" y2="${zeroY}" stroke="var(--border)" stroke-dasharray="4"/>
+      <polyline points="${polyline}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>
+      ${pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="4" fill="var(--accent)"/><title>${trend[i].date}: ${trend[i].score}</title>`).join("")}
+      <text x="${pad}" y="${h - 4}" font-size="10" fill="var(--text-muted)">${trend[0].date}</text>
+      <text x="${w - pad}" y="${h - 4}" font-size="10" fill="var(--text-muted)" text-anchor="end">${trend[trend.length - 1].date}</text>
+    </svg>`;
+  }
+
+  if (!ns) return '<div class="empty">NPS-Daten werden geladen…</div>';
+  const sc = ns.score;
+  const color = sc === null ? 'var(--text-muted)' : sc >= 50 ? 'var(--success)' : sc >= 0 ? '#f59e0b' : 'var(--error)';
+  const label = sc === null ? '—' : sc >= 50 ? 'Exzellent' : sc >= 30 ? 'Gut' : sc >= 0 ? 'Ausbaufähig' : 'Kritisch';
+
+  return `<div class="grid grid-12">
+    <div class="col-3"><div class="card stat">
+      <div class="stat-label">NPS Score</div>
+      <div class="stat-value" style="font-size:36px;font-weight:900;color:${color};">${sc !== null ? (sc > 0 ? '+' : '') + sc : '—'}</div>
+      <div class="stat-sub">${label} · ${ns.total} Bewertungen</div>
+    </div></div>
+    <div class="col-3"><div class="card stat">
+      <div class="stat-label">Promotoren</div>
+      <div class="stat-value" style="color:var(--success);">${ns.promoters}</div>
+      <div class="stat-sub">Score 9–10</div>
+    </div></div>
+    <div class="col-3"><div class="card stat">
+      <div class="stat-label">Neutrale</div>
+      <div class="stat-value" style="color:#f59e0b;">${ns.passives}</div>
+      <div class="stat-sub">Score 7–8</div>
+    </div></div>
+    <div class="col-3"><div class="card stat">
+      <div class="stat-label">Detraktoren</div>
+      <div class="stat-value" style="color:var(--error);">${ns.detractors}</div>
+      <div class="stat-sub">Score 0–6</div>
+    </div></div>
+    <div class="col-12"><div class="card">
+      <div class="card-header"><span class="card-title">NPS-Verlauf (90 Tage)</span></div>
+      <div class="card-body">${buildTrendChart(ns.trend)}</div>
+    </div></div>
+    <div class="col-12"><div class="card">
+      <div class="card-header"><span class="card-title">Alle Bewertungen</span><span class="badge">${responses.length}</span></div>
+      <div class="card-body" style="padding:0;">
+        ${responses.length === 0 ? '<div class="empty">Noch keine NPS-Bewertungen vorhanden</div>' :
+          responses.map(r => {
+            const sc2 = r.score;
+            const c2 = sc2 >= 9 ? 'var(--success)' : sc2 >= 7 ? '#f59e0b' : 'var(--error)';
+            const name = [r.first_name, r.last_name].filter(Boolean).join(' ') || r.email || 'Mitglied';
+            return `<div class="list-row">
+              <div style="display:flex;align-items:center;gap:16px;">
+                <div style="width:42px;height:42px;border-radius:50%;border:3px solid ${c2};display:grid;place-items:center;font-size:18px;font-weight:900;color:${c2};flex-shrink:0;">${sc2}</div>
+                <div>
+                  <strong style="font-size:13px;">${esc(name)}</strong>
+                  <div style="font-size:12px;color:var(--text-muted);">${esc(r.question)}</div>
+                  ${r.comment ? `<div style="font-size:12px;margin-top:4px;font-style:italic;">"${esc(r.comment)}"</div>` : ''}
+                </div>
+              </div>
+              <div style="text-align:right;font-size:11px;color:var(--text-muted);">${fmtDt(r.created_at)}</div>
+            </div>`;
+          }).join('')}
+      </div>
+    </div></div>
+  </div>`;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    MAIN RENDER + BOOTSTRAP
@@ -784,40 +1021,87 @@ function renderResetPw() {
     ${S.msg ? `<div class="toast toast-${S.msgType === "error" ? "error" : "success"}">${esc(S.msg)}</div>` : ""}
     <form id="reset-form" style="display:flex;flex-direction:column;gap:14px;"><div class="field"><label>Neues Passwort</label><input name="password" type="password" class="input" required minlength="12"></div><button type="submit" class="btn btn-dark btn-block btn-lg">Passwort speichern</button></form>
   </div></div>`;
-  $("#reset-form")?.addEventListener("submit", async e => { e.preventDefault(); await withBtn($('button[type="submit"]', e.target), async () => { await api("./auth/reset-password", { method: "POST", body: JSON.stringify({ token: QS.get("token"), password: Object.fromEntries(new FormData(e.target)).password }) }); toast("Passwort gespeichert"); }, "Speichern…"); });
+  $("#reset-form")?.addEventListener("submit", async e => { e.preventDefault(); await withBtn($('button[type="submit"]', e.target), async () => { await api("/auth/reset-password", { method: "POST", body: JSON.stringify({ token: QS.get("token"), password: Object.fromEntries(new FormData(e.target)).password }) }); toast("Passwort gespeichert"); }, "Speichern…"); });
 }
 
 async function loadData() {
+  // Show initial shell immediately
+  render();
+  
   try {
-    const [me, wins, members, alerts, actions, lockSt] = await Promise.all([
-      api("./me"), api("./admin/access-windows?limit=50"),
+    const results = await Promise.allSettled([
+      api("/me"), 
+      api(`./admin/access-windows?limit=200&include_historical=true`),
       api(`./admin/members?limit=15&offset=${S.memberPage * 15}${S.memberSearch ? `&email=${encodeURIComponent(S.memberSearch)}` : ""}`),
-      api("./admin/alerts?limit=50"), api("./admin/admin-actions?limit=50"),
-      api("./admin/lock/status").catch(() => ({ stateName: "Offline", connectivity: "offline" })),
+      api("/admin/alerts?limit=50"), 
+      api("/admin/admin-actions?limit=50"),
+      api("/admin/lock/status"),
     ]);
-    Object.assign(S, { me, windows: wins, members, alerts, actions, lockStatus: lockSt });
+    
+    if (results[0].status === "fulfilled") S.me = results[0].value;
+    if (results[1].status === "fulfilled") S.windows = results[1].value || [];
+    if (results[2].status === "fulfilled") S.members = results[2].value || [];
+    if (results[3].status === "fulfilled") S.alerts = results[3].value || [];
+    if (results[4].status === "fulfilled") S.actions = results[4].value || [];
+    if (results[5].status === "fulfilled") S.lockStatus = results[5].value || { stateName: "Offline", connectivity: "offline" };
+
+    if (results.some(r => r.status === "rejected")) {
+      console.warn("Some initial data failed to load", results.filter(r => r.status === "rejected"));
+    }
+
     if (S.role === "admin") {
-      const [es, tpl, ts, ns, ms, fl, br] = await Promise.all([
-        api("./admin/system/email-settings").catch(() => null), api("./admin/system/email-template").catch(() => null),
-        api("./admin/system/telegram-settings").catch(() => null), api("./admin/system/nuki-settings").catch(() => null),
-        api("./admin/system/magicline-settings").catch(() => null), api("./admin/funnels").catch(() => []),
-        api("./admin/system/branding").catch(() => null),
+      const adminResults = await Promise.allSettled([
+        api("/admin/system/email-settings"), api("/admin/system/email-template"),
+        api("/admin/system/telegram-settings"), api("/admin/system/nuki-settings"),
+        api("/admin/system/magicline-settings"), api("/admin/funnels"),
+        api("/admin/system/branding"), api("/admin/nps/stats"),
       ]);
-      Object.assign(S, { emailSettings: es, emailTemplate: tpl, telegramSettings: ts, nukiSettings: ns, magiclineSettings: ms, funnelsList: fl, brandingSettings: br });
+      if (adminResults[0].status === "fulfilled") S.emailSettings = adminResults[0].value;
+      if (adminResults[1].status === "fulfilled") S.emailTemplate = adminResults[1].value;
+      if (adminResults[2].status === "fulfilled") S.telegramSettings = adminResults[2].value;
+      if (adminResults[3].status === "fulfilled") S.nukiSettings = adminResults[3].value;
+      if (adminResults[4].status === "fulfilled") S.magiclineSettings = adminResults[4].value;
+      if (adminResults[5].status === "fulfilled") S.funnelsList = adminResults[5].value;
+      if (adminResults[6].status === "fulfilled") S.brandingSettings = adminResults[6].value;
+      if (adminResults[7].status === "fulfilled") S.npsStats = adminResults[7].value;
+      
+      if (adminResults.some(r => r.status === "rejected")) {
+        console.warn("Some admin settings failed to load", adminResults.filter(r => r.status === "rejected"));
+      }
     }
     if (S.selectedMemberId) S.memberDetail = await api(`./admin/members/${S.selectedMemberId}`).catch(() => null);
     render();
-  } catch (err) { if (err.message.includes("401")) doLogout(); else { toast(err.message, "error"); render(); } }
+  } catch (err) { 
+    console.error("Critical data load error:", err);
+    if (err.message.includes("401") && url.includes("/me")) doLogout(); 
+    else { render(); } 
+  }
+}
+
+let pollTimer = null;
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(() => {
+    // Only poll if tab is active and not on NPS view (NPS has its own lazy load)
+    if (!document.hidden && S.view !== 'nps') loadData();
+  }, 30000); // Every 30 seconds
+}
+
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer);
 }
 
 async function bootstrap() {
-  if (location.pathname.includes("/checks") || QS.has("token")) {
+  document.title = "Twenty4Seven-Gym";
+  if (location.pathname.includes("/checks") || QS.has("token") || QS.has("key")) {
     const tk = QS.get("token");
-    if (tk) try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(tk)}`); } catch {}
+    const ck = QS.get("key");
+    if (ck) try { S.ck = await api(`./public/checks/by-key?key=${encodeURIComponent(ck)}`); } catch {}
+    else if (tk) try { S.ck = await api(`./public/checks/session?token=${encodeURIComponent(tk)}`); } catch {}
     return render();
   }
   if (location.pathname.includes("/reset-password")) return render();
-  if (S.token) await loadData(); else render();
+  if (S.token) { await loadData(); startPolling(); } else render();
 }
 
 bootstrap();
