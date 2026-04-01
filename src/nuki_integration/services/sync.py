@@ -78,8 +78,8 @@ def _sync_customer_payload(
         member_id=member_id,
         title=settings.magicline_relevant_appointment_title,
     )
-    clusters = _cluster_bookings(booked_rows)
     now_utc = datetime.now(UTC)
+    clusters = _cluster_bookings(booked_rows)
     representative_ids: list[int] = []
 
     nuki_cfg = get_effective_nuki_config(db, settings)
@@ -91,7 +91,7 @@ def _sync_customer_payload(
             dispatch_at = max(rep["start_at"] - timedelta(minutes=15), now_utc)
             ends_at = cluster[-1]["end_at"] + timedelta(minutes=30)
 
-            window_id = db.upsert_access_window(
+            window_id, _checks_key = db.upsert_access_window(
                 member_id=member_id,
                 booking_id=rep["id"],
                 booking_ids=[b["id"] for b in cluster],

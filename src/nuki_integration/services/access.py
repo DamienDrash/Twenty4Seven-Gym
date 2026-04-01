@@ -105,7 +105,11 @@ def _send_code_email(
     name = member_display_name(window)
     valid_from = fmt_dt_de(to_berlin(window["starts_at"], settings.timezone))
     valid_until = fmt_dt_de(to_berlin(window["ends_at"], settings.timezone))
-    checks_url = build_checks_link(member_id=int(window["member_id"]), settings=settings)
+    checks_url = build_checks_link(
+        checks_key=str(window["checks_key"]) if window.get("checks_key") else None,
+        member_id=int(window["member_id"]),
+        settings=settings,
+    )
 
     try:
         emailed = email_service.send_access_code(
@@ -242,6 +246,59 @@ def deprovision_expired_codes(db: Database, settings: Settings) -> int:
         nuki.close()
 
     return count
+
+
+# ── Orphan cleanup ───────────────────────────────────────────────────
+
+import re as _re
+_SYSTEM_CODE_RE = _re.compile(r"^member-\d+-cluster-")
+
+def cleanup_orphaned_nuki_codes(db: Database, settings: Settings) -> int:
+    """Delete system-created Nuki codes that have no active/scheduled DB record.
+
+    A code is considered system-created if its name matches the pattern
+    'member-<id>-cluster-<id>' (the naming convention used by this app).
+    Manually created codes (any other name) are never touched.
+    """
+    nuki_cfg = get_effective_nuki_config(db, settings)
+    effective_settings = settings.model_copy(update=nuki_cfg)
+    nuki = NukiClient(effective_settings)
+
+    try:
+        # Auth IDs that should be kept: all codes whose access window is still
+        # scheduled or active (i.e. the member still needs access).
+        with db.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT ac.nuki_auth_id
+                FROM access_codes ac
+                JOIN access_windows aw ON aw.id = ac.access_window_id
+                WHERE aw.status IN ('scheduled', 'active')
+                  AND ac.nuki_auth_id IS NOT NULL
+                """
+            )
+            keep_ids: set[str] = {str(r["nuki_auth_id"]) for r in cur.fetchall()}
+
+        nuki_codes = nuki.list_keypad_codes()
+        count = 0
+        for code in nuki_codes:
+            name = code.get("name") or ""
+            if not _SYSTEM_CODE_RE.match(name):
+                # Manually created — skip
+                continue
+            auth_id = code.get("id")
+            if auth_id is None or str(auth_id) in keep_ids:
+                continue
+            try:
+                nuki.delete_keypad_code(auth_id=auth_id)
+                logger.info("Deleted orphaned Nuki code auth_id=%s name=%r", auth_id, name)
+                count += 1
+            except Exception as exc:
+                logger.error("Failed to delete orphaned Nuki code %s: %s", auth_id, exc)
+
+        return count
+    finally:
+        nuki.close()
 
 
 # ── Admin actions ─────────────────────────────────────────────────

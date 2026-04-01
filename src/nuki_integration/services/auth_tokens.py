@@ -79,10 +79,13 @@ def decode_checks_token(*, token: str, settings: Settings) -> int:
 
 def build_checks_link(
     *,
-    member_id: int,
+    checks_key: str | None = None,
+    member_id: int | None = None,
     settings: Settings,
     ttl_seconds: int = 86400,
 ) -> str:
+    if checks_key:
+        return f"{settings.app_public_base_url.rstrip('/')}/checks?key={checks_key}"
     token = issue_checks_token(
         member_id=member_id,
         settings=settings,

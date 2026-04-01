@@ -302,6 +302,20 @@ CREATE TABLE IF NOT EXISTS funnel_step_events (
     photo_path TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS nps_responses (
+    id BIGSERIAL PRIMARY KEY,
+    access_window_id BIGINT NOT NULL REFERENCES access_windows(id) ON DELETE CASCADE,
+    member_id BIGINT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    submission_id BIGINT REFERENCES funnel_submissions(id) ON DELETE SET NULL,
+    step_id BIGINT REFERENCES funnel_steps(id) ON DELETE SET NULL,
+    score INTEGER NOT NULL CHECK (score >= 0 AND score <= 10),
+    comment TEXT,
+    question TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_nps_responses_created_at ON nps_responses (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_nps_responses_member_id ON nps_responses (member_id, created_at DESC);
 """
 
 # ── Access-window base query (used by list + detail) ──────────────
@@ -345,13 +359,27 @@ class Database:
                 cur.execute("SELECT pg_advisory_lock(%s)", (lock_id,))
             try:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT to_regclass('public.users')")
-                    row = cur.fetchone()
-                    if row is None or row.get("to_regclass") is None:
-                        cur.execute(SCHEMA_SQL)
+                    cur.execute(SCHEMA_SQL)
             finally:
                 with conn.cursor() as cur:
                     cur.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+            # checks_key: permanent UUID per window for /checks access
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DO $$ BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'access_windows' AND column_name = 'checks_key'
+                        ) THEN
+                            ALTER TABLE access_windows
+                                ADD COLUMN checks_key UUID DEFAULT gen_random_uuid() NOT NULL;
+                            CREATE UNIQUE INDEX IF NOT EXISTS idx_access_windows_checks_key
+                                ON access_windows (checks_key);
+                        END IF;
+                    END $$;
+                    """
+                )
             conn.commit()
 
     def health_check(self) -> bool:
@@ -583,10 +611,66 @@ class Database:
                 """
                 SELECT id, member_id, title, booking_status, start_at, end_at
                 FROM bookings
-                WHERE member_id=%s AND title=%s AND end_at >= NOW() AND booking_status='BOOKED'
+                WHERE member_id=%s AND title=%s AND booking_status='BOOKED'
                 ORDER BY start_at ASC
                 """,
-                (member_id, title),
+                (member_id, title.strip()),
+            )
+            return list(cur.fetchall())
+
+    def get_window_by_checks_key(self, key: str) -> dict[str, Any] | None:
+        """Look up an access window by its permanent checks_key UUID.
+        Returns window fields + member email/name for session resolution."""
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT aw.id, aw.member_id, aw.checks_key,
+                       aw.starts_at, aw.ends_at, aw.status,
+                       m.email, m.first_name, m.last_name
+                FROM access_windows aw
+                JOIN members m ON m.id = aw.member_id
+                WHERE aw.checks_key = %s::uuid
+                """,
+                (key,),
+            )
+            return cur.fetchone()
+
+    def list_checks_submissions(self, *, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        """Return funnel submissions with step events for the audit log."""
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    fs.id, fs.access_window_id, fs.entry_source, fs.success, fs.created_at,
+                    ft.name  AS funnel_name,
+                    ft.funnel_type,
+                    m.first_name, m.last_name, m.email, m.id AS member_id,
+                    aw.starts_at, aw.ends_at,
+                    COALESCE(
+                        JSON_AGG(
+                            JSON_BUILD_OBJECT(
+                                'step_id', fse.step_id,
+                                'status', fse.status,
+                                'note', fse.note,
+                                'step_title', fst.title,
+                                'step_type', fst.step_type
+                            ) ORDER BY fse.id
+                        ) FILTER (WHERE fse.id IS NOT NULL),
+                        '[]'::json
+                    ) AS step_events
+                FROM funnel_submissions fs
+                JOIN funnel_templates ft ON ft.id = fs.template_id
+                JOIN access_windows aw ON aw.id = fs.access_window_id
+                JOIN members m ON m.id = aw.member_id
+                LEFT JOIN funnel_step_events fse ON fse.submission_id = fs.id
+                LEFT JOIN funnel_steps fst ON fst.id = fse.step_id
+                GROUP BY fs.id, ft.name, ft.funnel_type,
+                         m.first_name, m.last_name, m.email, m.id,
+                         aw.starts_at, aw.ends_at
+                ORDER BY fs.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
             )
             return list(cur.fetchall())
 
@@ -596,6 +680,7 @@ class Database:
         self, *,
         status_filter: str | None = None,
         member_id: int | None = None,
+        include_historical: bool = False,
         limit: int = 100, offset: int = 0,
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
@@ -606,8 +691,12 @@ class Database:
         if member_id is not None:
             clauses.append("aw.member_id = %s")
             params.append(member_id)
+        
+        if not include_historical:
+            clauses.append("aw.ends_at >= NOW()")
+            
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        query = f"{_AW_SELECT}{where} ORDER BY aw.dispatch_at DESC LIMIT %s OFFSET %s"
+        query = f"{_AW_SELECT}{where} ORDER BY aw.starts_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
         with self.connection() as conn, conn.cursor() as cur:
             cur.execute(query, params)
@@ -638,6 +727,7 @@ class Database:
                 """
                 SELECT aw.id, aw.member_id, aw.booking_id, aw.booking_ids, aw.booking_count,
                        aw.starts_at, aw.ends_at, aw.dispatch_at, aw.status, aw.access_reason,
+                       aw.checks_key,
                        m.email, m.first_name, m.last_name,
                        TRUE AS check_in_required,
                        awc.confirmed_at AS check_in_confirmed_at,
@@ -669,16 +759,23 @@ class Database:
                         member_id=EXCLUDED.member_id, booking_ids=EXCLUDED.booking_ids,
                         booking_count=EXCLUDED.booking_count, starts_at=EXCLUDED.starts_at,
                         ends_at=EXCLUDED.ends_at, dispatch_at=EXCLUDED.dispatch_at,
-                        status=EXCLUDED.status, access_reason=EXCLUDED.access_reason,
+                        status=CASE
+                            WHEN access_windows.status IN ('expired','canceled','flagged')
+                            THEN access_windows.status
+                            ELSE EXCLUDED.status
+                        END,
+                        access_reason=EXCLUDED.access_reason,
                         last_computed_at=NOW()
-                    RETURNING id
+                    RETURNING id, checks_key
                     """,
                     (member_id, booking_id, Json(booking_ids), booking_count,
                      starts_at, ends_at, dispatch_at, status, access_reason),
                 )
-                window_id = int(cur.fetchone()["id"])
+                row = cur.fetchone()
+                window_id = int(row["id"])
+                checks_key = str(row["checks_key"])
             conn.commit()
-            return window_id
+            return window_id, checks_key
 
     def prune_member_windows(self, *, member_id: int, keep_booking_ids: list[int]) -> int:
         prunable = (AccessWindowStatus.SCHEDULED, AccessWindowStatus.CANCELED, AccessWindowStatus.FLAGGED)
@@ -704,16 +801,15 @@ class Database:
                 """
                 SELECT aw.id, aw.member_id, aw.booking_id, aw.starts_at,
                        aw.booking_count, aw.ends_at, aw.dispatch_at,
+                       aw.checks_key,
                        m.email, m.first_name, m.last_name
                 FROM access_windows aw
                 JOIN members m ON m.id = aw.member_id
                 LEFT JOIN access_codes ac ON ac.access_window_id = aw.id
-                    AND ac.status IN (%s,%s,%s)
                 WHERE aw.status = %s AND aw.dispatch_at <= %s AND ac.id IS NULL
                 ORDER BY aw.dispatch_at ASC
                 """,
-                (AccessCodeStatus.PENDING, AccessCodeStatus.PROVISIONED, AccessCodeStatus.EMAILED,
-                 AccessWindowStatus.SCHEDULED, now),
+                (AccessWindowStatus.SCHEDULED, now),
             )
             return list(cur.fetchall())
 
@@ -1039,6 +1135,10 @@ class Database:
             row = cur.fetchone()
             return row["value"] if row else None
 
+    def upsert_setting(self, key: str, value: dict[str, Any]) -> None:
+        """Alias for set_system_setting used by app.py route handlers."""
+        self.set_system_setting(key=key, value=value)
+
     def set_system_setting(self, *, key: str, value: dict[str, Any]) -> None:
         with self.connection() as conn:
             with conn.cursor() as cur:
@@ -1155,6 +1255,11 @@ class Database:
             conn.commit()
             return result
 
+    def delete_funnel_template(self, *, template_id: int) -> None:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM funnel_templates WHERE id=%s", (template_id,))
+        conn.commit()
+
     def delete_funnel_step(self, *, step_id: int) -> None:
         with self.connection() as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM funnel_steps WHERE id=%s", (step_id,))
@@ -1201,3 +1306,92 @@ class Database:
                 row = cur.fetchone()
             conn.commit()
             return row
+
+    # ── NPS ───────────────────────────────────────────────────────
+
+    def create_nps_response(
+        self, *, access_window_id: int, member_id: int, submission_id: int | None,
+        step_id: int | None, score: int, comment: str | None, question: str,
+    ) -> dict[str, Any]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO nps_responses
+                        (access_window_id, member_id, submission_id, step_id, score, comment, question)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    RETURNING id, access_window_id, member_id, score, comment, question, created_at
+                    """,
+                    (access_window_id, member_id, submission_id, step_id, score, comment, question),
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row
+
+    def list_nps_responses(self, *, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT nr.id, nr.access_window_id, nr.member_id, nr.score,
+                       nr.comment, nr.question, nr.created_at,
+                       m.first_name, m.last_name, m.email
+                FROM nps_responses nr
+                JOIN members m ON m.id = nr.member_id
+                ORDER BY nr.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
+            return list(cur.fetchall())
+
+    def get_nps_stats(self) -> dict[str, Any]:
+        with self.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE score >= 9) AS promoters,
+                    COUNT(*) FILTER (WHERE score BETWEEN 7 AND 8) AS passives,
+                    COUNT(*) FILTER (WHERE score <= 6) AS detractors
+                FROM nps_responses
+                """
+            )
+            row = cur.fetchone()
+            total = int(row["total"] or 0)
+            promoters = int(row["promoters"] or 0)
+            detractors = int(row["detractors"] or 0)
+            score = round((promoters - detractors) / total * 100) if total else None
+
+            # Trend: NPS per day for last 90 days
+            cur.execute(
+                """
+                SELECT
+                    DATE_TRUNC('day', created_at AT TIME ZONE 'Europe/Berlin') AS day,
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE score >= 9) AS promoters,
+                    COUNT(*) FILTER (WHERE score <= 6) AS detractors
+                FROM nps_responses
+                WHERE created_at >= NOW() - INTERVAL '90 days'
+                GROUP BY day
+                ORDER BY day ASC
+                """
+            )
+            trend = []
+            for r in cur.fetchall():
+                t = int(r["total"] or 0)
+                p = int(r["promoters"] or 0)
+                d = int(r["detractors"] or 0)
+                trend.append({
+                    "date": r["day"].strftime("%Y-%m-%d"),
+                    "score": round((p - d) / t * 100) if t else None,
+                    "total": t,
+                })
+
+            return {
+                "score": score,
+                "total": total,
+                "promoters": promoters,
+                "passives": int(row["passives"] or 0),
+                "detractors": detractors,
+                "trend": trend,
+            }

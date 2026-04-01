@@ -17,12 +17,21 @@ def resolve_checks_session(
     *,
     db: Database,
     settings: Settings,
+    key: str | None = None,
     token: str | None = None,
     email: str | None = None,
     code: str | None = None,
 ) -> dict[str, object]:
     """Authenticate a member and return their upcoming windows."""
-    if token:
+    if key:
+        window = db.get_window_by_checks_key(key)
+        if not window:
+            raise ValueError("Ungültiger Zugangscode-Key.")
+        member_id = int(window["member_id"])
+        member = db.get_member_by_id(member_id=member_id)
+        if not member:
+            raise ValueError("Mitglied nicht gefunden.")
+    elif token:
         member_id = decode_checks_token(token=token, settings=settings)
         member = db.get_member_by_id(member_id=member_id)
         if not member:
@@ -122,11 +131,12 @@ def submit_checks_funnel(
         success=True,
     )
 
-    # Record individual step events
+    # Record individual step events + NPS responses
     for sd in steps_data:
         sid = int(sd.get("step_id", 0))
         if sid not in step_map:
             continue
+        step = step_map[sid]
         db.create_funnel_step_event(
             submission_id=int(submission["id"]),
             step_id=sid,
@@ -134,6 +144,20 @@ def submit_checks_funnel(
             note=sd.get("note") or None,
             photo_path=None,
         )
+        # Persist NPS response if this is an NPS step
+        if step.get("step_type") == "nps" and sd.get("nps_score") is not None:
+            try:
+                db.create_nps_response(
+                    access_window_id=window_id,
+                    member_id=member_id,
+                    submission_id=int(submission["id"]),
+                    step_id=sid,
+                    score=int(sd["nps_score"]),
+                    comment=(sd.get("note") or "").strip() or None,
+                    question=step.get("body") or step.get("title") or "",
+                )
+            except Exception:
+                logger.exception("Failed to save NPS response for window=%s step=%s", window_id, sid)
 
     # Handle house rules acknowledgements
     _record_house_rules_acks(
