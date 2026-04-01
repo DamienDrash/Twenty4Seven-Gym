@@ -807,7 +807,7 @@ function renderActiveStep(step, draft) {
       </div>
       <div class="field"><label style="font-size:13px;">${escNl(feedbackQ)}</label><textarea class="input" id="step-note" placeholder="Dein Feedback…" rows="3">${esc(draft.note || "")}</textarea></div>`;
   } else if (st === "house_rules") {
-    html += `<div class="house-rules-container"><h3>${esc(step.title)}</h3>${step.body ? `<div>${step.body}</div>` : ""}</div>
+    html += `<div class="house-rules-container"><h3>${esc(step.title)}</h3>${step.body ? `<div style="white-space:pre-wrap">${escNl(step.body)}</div>` : ""}</div>
       <div class="check-row ${draft.checked ? "checked" : ""}" onclick="toggleStep(${step.id})"><input type="checkbox" ${draft.checked ? "checked" : ""} tabindex="-1"><span class="check-row-label">Ich habe die Hausordnung gelesen und akzeptiere die Regeln.</span></div>`;
   } else if (st === "video" && step.video_url) {
     html += `${step.body ? `<p>${escNl(step.body)}</p>` : ""}<div class="step-video-container"><iframe src="${esc(_toEmbedUrl(step.video_url))}" allowfullscreen loading="lazy"></iframe></div>
