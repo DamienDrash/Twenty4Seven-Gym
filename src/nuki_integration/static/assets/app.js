@@ -896,7 +896,7 @@ function renderStepperIntro(f) {
       <div style="font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:8px;">${label} · ${cnt} Schritte</div>
       ${(f.steps || []).map((s, i) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:13px;">
         <span style="width:20px;height:20px;border-radius:50%;border:2px solid var(--border);display:grid;place-items:center;font-size:10px;font-weight:800;color:var(--text-muted);flex-shrink:0;">${i + 1}</span>
-        <span>${esc(s.title)}</span>
+        <span style="flex:1;min-width:0;">${esc(s.title)}</span>
         ${s.step_type === "house_rules" ? '<span class="step-type-badge step-type-house-rules">Hausordnung</span>' : ""}
         ${s.step_type === "video" ? '<span class="step-type-badge step-type-video">Video</span>' : ""}
         ${s.step_type === "nps" ? '<span class="step-type-badge step-type-nps">NPS</span>' : ""}
