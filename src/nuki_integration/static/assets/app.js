@@ -125,7 +125,7 @@ const ICONS = {
   play: '<polygon points="5 3 19 12 5 21 5 3"/>',
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
-  'checks-log': '<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>',
+  'checks-log': '<path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>',
 };
 function ico(name, size = 18) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ""}</svg>`;
@@ -622,8 +622,15 @@ function initBrandingEditor() {
   });
   document.getElementById("logo-upload")?.addEventListener("change", async e => {
     const file = e.target.files[0]; if (!file) return;
-    const fd = new FormData(); fd.append("file", file);
-    try { const r = await api("/admin/media/upload", { method: "POST", body: fd }); await api("/admin/system/branding", { method: "PUT", body: JSON.stringify({ logo_url: r.url }) }); toast("Logo hochgeladen"); await loadData(); } catch (err) { toast(err.message, "error"); }
+    const reader = new FileReader();
+    reader.onload = async ev => {
+      try {
+        const dataUrl = ev.target.result;
+        await api("/admin/system/branding", { method: "PUT", body: JSON.stringify({ ...S.brandingSettings, logo_url: dataUrl }) });
+        toast("Logo hochgeladen"); await loadData();
+      } catch (err) { toast(err.message, "error"); }
+    };
+    reader.readAsDataURL(file);
   });
   setTimeout(updateEmailPreview, 100);
 }
