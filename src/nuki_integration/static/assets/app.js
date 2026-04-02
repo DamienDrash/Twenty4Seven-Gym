@@ -971,7 +971,7 @@ function renderChecksLog() {
     const type = s.step_type || 'confirmation';
     if (type === 'nps') {
       const score = s.nps_score ?? null;
-      const question = s.nps_question || s.video_url || s.step_title || '';
+      const question = s.video_url || s.nps_question || s.step_title || '';
       const comment = s.nps_comment || s.note || '';
       return `<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">
         ${npsCircle(score)}
