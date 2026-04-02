@@ -264,29 +264,32 @@ function renderOverview() {
   const next = active.sort((a, b) => new Date(a.dispatch_at) - new Date(b.dispatch_at))[0];
   const urgent = S.alerts.filter(a => a.severity === "error" || a.severity === "warning").slice(0, 5);
   const ls = S.lockStatus || {};
+  const ns = S.npsStats;
+  const npsColor = !ns || ns.total === 0 ? 'var(--text-muted)' : ns.score >= 50 ? 'var(--success)' : ns.score >= 0 ? '#f59e0b' : 'var(--error)';
+  const npsValue = !ns || ns.total === 0 ? '—' : `${ns.score > 0 ? '+' : ''}${ns.score}`;
+  const npsSub = !ns || ns.total === 0 ? 'Noch keine Daten' : `${ns.total} Bewertungen`;
   return `<div class="grid grid-12">
     <div class="col-3"><div class="card stat"><div class="stat-label">Fenster</div><div class="stat-value">${S.windows.length}</div><div class="stat-sub">Gesamt</div></div></div>
     <div class="col-3"><div class="card stat"><div class="stat-label">Mitglieder</div><div class="stat-value">${S.members.length}</div><div class="stat-sub">Synchronisiert</div></div></div>
     <div class="col-3"><div class="card stat"><div class="stat-label">Alarme</div><div class="stat-value">${S.alerts.length}</div><div class="stat-sub">${S.alerts.length ? "Prüfen" : "Alles OK"}</div></div></div>
-    <div class="col-3"><div class="card stat"><div class="stat-label">Schloss</div><div class="stat-value" style="font-size:16px;">${badge(ls.stateName || "—")}</div><div class="stat-sub">${ls.battery_state || "—"}</div></div></div>
-    ${(() => { const ns = S.npsStats; if (!ns || ns.total === 0) return '<div class="col-3"><div class="card stat"><div class="stat-label">NPS</div><div class="stat-value" style="font-size:16px;">—</div><div class="stat-sub">Noch keine Daten</div></div></div>'; const sc = ns.score; const color = sc >= 50 ? 'var(--success)' : sc >= 0 ? '#f59e0b' : 'var(--error)'; return `<div class="col-3" onclick="S.view='nps';syncUrl();loadNpsResponses();render()" style="cursor:pointer;"><div class="card stat"><div class="stat-label">NPS Score</div><div class="stat-value" style="font-size:28px;font-weight:900;color:${color};">${sc > 0 ? '+' : ''}${sc}</div><div class="stat-sub">${ns.total} Bewertungen · ${ns.promoters}P / ${ns.passives}N / ${ns.detractors}D</div></div></div>`; })()}
-    <div class="col-8"><div class="card"><div class="card-header"><span class="card-title">Aktuelle Meldungen</span></div><div class="card-body" style="padding:0;">
+    <div class="col-3" onclick="S.view='nps';syncUrl();loadNpsResponses();render()" style="cursor:pointer;"><div class="card stat"><div class="stat-label">NPS Score</div><div class="stat-value" style="color:${npsColor};">${npsValue}</div><div class="stat-sub">${npsSub}</div></div></div>
+    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Aktuelle Meldungen</span></div><div class="card-body" style="padding:0;">
       ${urgent.length ? urgent.map(a => `<div class="list-row"><div><strong style="font-size:13px;">${esc(a.kind)}</strong><div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${esc(a.message).slice(0, 120)}</div></div><div style="text-align:right;">${badge(a.severity)}<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">${fmtDt(a.created_at)}</div></div></div>`).join("") : '<div class="empty">Keine kritischen Meldungen</div>'}
     </div></div></div>
-    <div class="col-4"><div class="card"><div class="card-header"><span class="card-title">Nächster Zugang</span></div><div class="card-body">
-      ${next ? `<div style="text-align:center;"><div style="font-size:24px;font-weight:800;margin-bottom:4px;">${fmtTime(next.starts_at)}</div><div style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">${fmtDay(next.starts_at)}</div>${badge(next.status)}<div style="margin-top:12px;font-size:13px;">${esc(memberName(next.member_id))}</div></div>` : '<div class="empty">Kein anstehender Zugang</div>'}
-    </div><div class="card-footer" style="text-align:center;"><button class="btn btn-outline btn-sm" onclick="S.view='windows';syncUrl();loadData()">Alle Fenster</button></div></div></div>
-    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Fernsteuerung</span><button class="btn btn-ghost btn-sm" onclick="handleLockSync(this)" title="Status-Synchronisation erzwingen">${ico("sync", 14)}</button></div><div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
-      <div style="display:flex;justify-content:space-between;"><span>Schloss</span><strong>${badge(ls.stateName || "—")}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Letztes Update</span><strong style="font-size:12px;">${ls.last_update ? fmtDt(ls.last_update) : "—"}</strong></div>
-      <div style="display:flex;justify-content:space-between;"><span>Batterie</span><strong>${ls.batteryCritical ? '<span style="color:var(--error)">Kritisch!</span>' : esc(ls.battery_state || "—")}</strong></div>
-      <button class="btn btn-dark btn-block" onclick="doRemoteOpen(this)" style="margin-top:8px;">${ico("lock", 16)} Remote öffnen</button>
+    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Nächster Zugang</span><button class="btn btn-outline btn-sm" onclick="S.view='windows';syncUrl();loadData()">Alle Fenster</button></div><div class="card-body" style="padding:0;">
+      ${next ? `<div class="list-row"><div><strong style="font-size:20px;font-weight:800;">${fmtTime(next.starts_at)}</strong><div style="font-size:12px;color:var(--text-muted);margin-top:2px;">${fmtDay(next.starts_at)}</div></div><div style="text-align:right;">${badge(next.status)}<div style="font-size:12px;margin-top:4px;">${esc(memberName(next.member_id))}</div></div></div>` : '<div class="empty">Kein anstehender Zugang</div>'}
     </div></div></div>
-    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Integrationen</span></div><div class="card-body" style="display:flex;flex-direction:column;gap:12px;">
-      <div style="display:flex;justify-content:space-between;"><span>Magicline</span>${badge(S.magiclineSettings?.has_api_key ? "Aktiv" : "Fehlt")}</div>
-      <div style="display:flex;justify-content:space-between;"><span>Nuki</span>${badge(S.nukiSettings?.has_api_token ? "Aktiv" : "Fehlt")}</div>
-      <div style="display:flex;justify-content:space-between;"><span>E-Mail</span>${badge(S.emailSettings?.smtp_host ? "Bereit" : "Fehlt")}</div>
-      <div style="display:flex;justify-content:space-between;"><span>Telegram</span>${badge(S.telegramSettings?.has_bot_token ? "Aktiv" : "Inaktiv")}</div>
+    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Fernsteuerung</span><button class="btn btn-ghost btn-sm" onclick="handleLockSync(this)" title="Status aktualisieren">${ico("sync", 14)}</button></div><div class="card-body" style="padding:0;">
+      <div class="list-row"><span>Schloss</span><strong>${badge(ls.stateName || "—")}</strong></div>
+      <div class="list-row"><span>Batterie</span><strong>${ls.batteryCritical ? '<span style="color:var(--error)">Kritisch!</span>' : esc(ls.battery_state || "—")}</strong></div>
+      <div class="list-row"><span>Letztes Update</span><span style="font-size:12px;color:var(--text-muted);">${ls.last_update ? fmtDt(ls.last_update) : "—"}</span></div>
+      <div style="padding:12px 16px;"><button class="btn btn-dark btn-block" onclick="doRemoteOpen(this)">${ico("lock", 16)} Remote öffnen</button></div>
+    </div></div></div>
+    <div class="col-6"><div class="card"><div class="card-header"><span class="card-title">Integrationen</span></div><div class="card-body" style="padding:0;">
+      <div class="list-row"><span>Magicline</span>${badge(S.magiclineSettings?.has_api_key ? "Aktiv" : "Fehlt")}</div>
+      <div class="list-row"><span>Nuki</span>${badge(S.nukiSettings?.has_api_token ? "Aktiv" : "Fehlt")}</div>
+      <div class="list-row"><span>E-Mail</span>${badge(S.emailSettings?.smtp_host ? "Bereit" : "Fehlt")}</div>
+      <div class="list-row"><span>Telegram</span>${badge(S.telegramSettings?.has_bot_token ? "Aktiv" : "Inaktiv")}</div>
     </div></div></div>
   </div>`;
 }
