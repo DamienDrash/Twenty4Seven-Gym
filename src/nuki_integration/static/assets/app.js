@@ -563,6 +563,13 @@ async function deleteFunnelStep(stepId) {
    ═══════════════════════════════════════════════════════════════ */
 let _previewDark = false;
 
+const SOCIAL_SVG = {
+  instagram: (c) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22"><rect x="2" y="2" width="20" height="20" rx="5" fill="none" stroke="${c}" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" fill="none" stroke="${c}" stroke-width="1.8"/><circle cx="17.3" cy="6.7" r="1.1" fill="${c}"/></svg>`,
+  facebook: (c) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22"><path d="M24 12.1C24 5.4 18.6 0 12 0S0 5.4 0 12.1c0 6 4.4 11 10.1 11.9V15.6H7.1v-3.5h3V9.4c0-3 1.8-4.6 4.5-4.6 1.3 0 2.6.2 2.6.2v2.9h-1.5c-1.4 0-1.9.9-1.9 1.8v2.2h3.2l-.5 3.5h-2.7V24C19.6 23.1 24 18.1 24 12.1z" fill="${c}"/></svg>`,
+  tiktok: (c) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 26" width="21" height="22"><path d="M19.3 5.1A4.6 4.6 0 0 1 14.8.5h-3.4v14.9a2.8 2.8 0 0 1-2.8 2.5 2.8 2.8 0 0 1-2.8-2.8 2.8 2.8 0 0 1 2.8-2.8c.3 0 .5 0 .8.1V9a6.2 6.2 0 0 0-.8-.1 6.2 6.2 0 0 0-6.2 6.2 6.2 6.2 0 0 0 6.2 6.2 6.2 6.2 0 0 0 6.2-6.2V7.5a7.9 7.9 0 0 0 4.6 1.5V5.6a4.6 4.6 0 0 1-3.1-1.5z" fill="${c}"/></svg>`,
+  youtube: (c, bg) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22"><path d="M22.5 6.6s-.2-1.7-1-2.4c-.9-1-2-1-2.4-1.1C16.5 3 12 3 12 3s-4.5 0-7.1.1c-.5.1-1.5.1-2.4 1.1C1.7 4.9 1.5 6.6 1.5 6.6S1.2 8.5 1.2 10.4v1.8c0 1.9.3 3.8.3 3.8s.2 1.7 1 2.4c.9 1 2.1.9 2.7 1 1.9.2 8.3.2 8.3.2s4.5 0 7.1-.2c.5-.1 1.5-.1 2.4-1.1.8-.7 1-2.4 1-2.4s.3-1.9.3-3.8V10.4c0-1.9-.3-3.8-.3-3.8z" fill="${c}"/><polygon points="9.7,15.5 9.7,8.4 16.1,12" fill="${bg}"/></svg>`,
+};
+
 function renderBranding() {
   if (S.role !== "admin") return '<div class="empty">Nur Admins</div>';
   const b = S.brandingSettings || {};
@@ -581,6 +588,8 @@ function renderBranding() {
             <div class="color-item"><label>Header</label><input type="color" id="c-header" value="${b.header_bg_color || "#000000"}"></div>
             <div class="color-item"><label>Body</label><input type="color" id="c-body" value="${b.body_bg_color || "#f0ede9"}"></div>
             <div class="color-item"><label>Footer</label><input type="color" id="c-footer" value="${b.footer_bg_color || "#000000"}"></div>
+            <div class="color-item"><label>Icon</label><input type="color" id="c-icon" value="${b.social_icon_color || "#ffffff"}"></div>
+            <div class="color-item"><label>Icon-Kreis</label><input type="color" id="c-social-bg" value="${b.social_icon_bg_color || "#333333"}"></div>
           </div>
         </div>
         <div class="field" style="margin-top:20px;"><label>Social Media</label>
@@ -621,7 +630,7 @@ function renderBranding() {
 }
 
 function initBrandingEditor() {
-  ["c-accent","c-header","c-body","c-footer","s-ig","s-fb","s-tt","s-yt","footer-text","ec-greeting","ec-below","ec-cta"].forEach(id => {
+  ["c-accent","c-header","c-body","c-footer","c-icon","c-social-bg","s-ig","s-fb","s-tt","s-yt","footer-text","ec-greeting","ec-below","ec-cta"].forEach(id => {
     document.getElementById(id)?.addEventListener("input", updateEmailPreview);
   });
   document.getElementById("logo-upload")?.addEventListener("change", async e => {
@@ -641,45 +650,41 @@ function initBrandingEditor() {
 
 function updateEmailPreview() {
   const iframe = document.getElementById("preview-iframe"); if (!iframe) return;
-  const b = S.brandingSettings || {};
-  const ec = S.emailContent || {};
-  const accent    = document.getElementById("c-accent")?.value  || b.accent_color     || "#b5ac9e";
-  const headerBg  = document.getElementById("c-header")?.value  || b.header_bg_color  || "#000000";
-  const bodyBg    = document.getElementById("c-body")?.value    || b.body_bg_color    || "#f0ede9";
-  const footerBg  = document.getElementById("c-footer")?.value  || b.footer_bg_color  || "#000000";
+  const b   = S.brandingSettings || {};
+  const ec  = S.emailContent || {};
+  const accent    = document.getElementById("c-accent")?.value     || b.accent_color        || "#b5ac9e";
+  const headerBg  = document.getElementById("c-header")?.value     || b.header_bg_color     || "#000000";
+  const bodyBg    = document.getElementById("c-body")?.value       || b.body_bg_color       || "#f0ede9";
+  const footerBg  = document.getElementById("c-footer")?.value     || b.footer_bg_color     || "#000000";
+  const iconClr   = document.getElementById("c-icon")?.value       || b.social_icon_color   || "#ffffff";
+  const iconBg    = document.getElementById("c-social-bg")?.value  || b.social_icon_bg_color|| "#333333";
   const footerText = (document.getElementById("footer-text")?.value ?? b.footer_text ?? "").replace(/\n/g, "<br>");
-  const greeting  = document.getElementById("ec-greeting")?.value || ec.greeting_text || "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode:";
-  const belowCode = document.getElementById("ec-below")?.value   || ec.below_code_text || "Bitte melde dich vor und nach dem Training an.";
-  const ctaText   = document.getElementById("ec-cta")?.value     || ec.cta_button_text || "Check-In / Check-Out";
+  const greeting  = document.getElementById("ec-greeting")?.value  || ec.greeting_text  || "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode:";
+  const belowCode = document.getElementById("ec-below")?.value     || ec.below_code_text || "Bitte melde dich vor und nach dem Training an.";
+  const ctaText   = document.getElementById("ec-cta")?.value       || ec.cta_button_text || "Check-In / Check-Out";
   const logoUrl   = b.logo_url || "";
+  const logoStyle = logoUrl && _previewDark ? "max-width:200px;height:auto;display:block;margin:0 auto;filter:invert(1) hue-rotate(180deg);" : "max-width:200px;height:auto;display:block;margin:0 auto;";
   const logoHtml  = logoUrl
-    ? `<img src="${logoUrl}" alt="Logo" style="max-width:200px;height:auto;display:block;margin:0 auto;">`
+    ? `<img src="${logoUrl}" alt="Logo" style="${logoStyle}">`
     : `<span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:4px;color:#ffffff;text-transform:uppercase;">GETIMPULSE</span>`;
   const greetingHtml = greeting.replace(/\n/g, "<br>").replace(/\{member_name\}/g, "Max Mustermann");
 
-  // Social icons — centered via padding (line-height:0 + padding:8px)
-  const iconBase = window.location.origin;
+  // Inline SVG social icons with custom colors
   const socialEntries = [["instagram","s-ig"],["facebook","s-fb"],["tiktok","s-tt"],["youtube","s-yt"]];
   const socialTds = socialEntries.map(([name, elId]) => {
     const url = document.getElementById(elId)?.value || b[name + "_url"] || "";
     if (!url) return "";
-    return `<td style="padding:0 8px;"><a href="${url}" style="display:inline-block;background:#333333;border-radius:50%;width:38px;height:38px;line-height:0;padding:8px;text-decoration:none;"><img src="${iconBase}/assets/icon-${name}.svg" alt="${name}" width="22" height="22" style="display:block;"></a></td>`;
+    const svgFn = SOCIAL_SVG[name];
+    const svgHtml = name === "youtube" ? svgFn(iconClr, iconBg) : svgFn(iconClr);
+    return `<td style="padding:0 8px;"><a href="${url}" style="display:inline-block;background:${iconBg};border-radius:50%;width:38px;height:38px;line-height:0;padding:8px;text-decoration:none;">${svgHtml}</a></td>`;
   }).join("");
   const socialRow = socialTds
     ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 20px;"><tr>${socialTds}</tr></table><hr style="border:0;border-top:1px solid #2c2c2c;margin:0 0 20px;">`
     : "";
 
-  // Dark mode: Gmail-style — content areas inverted, dark client background
-  const dm = _previewDark;
-  const pageBg      = dm ? "#111111" : bodyBg;
-  const contentBg   = dm ? "#1e1e1e" : "#ffffff";
-  const headingClr  = dm ? "#f0f0f0" : "#000000";
-  const bodyClr     = dm ? "#c8c8c8" : "#3a3a3a";
-  const labelClr    = dm ? "#888888" : "#7a7a7a";
-  const valueClr    = dm ? "#e0e0e0" : "#000000";
-  const dividerClr  = dm ? "#333333" : "#e4e0db";
-  const codeBg      = dm ? "#2a2a2a" : "#f0ede9";
-  const codeBorder  = dm ? "#444444" : "#e4e0db";
+  // Dark mode: CSS filter inversion on the email wrapper (like Gmail without color-scheme protection)
+  const dmFilter = _previewDark ? "filter:invert(1) hue-rotate(180deg);" : "";
+  const pageBg   = _previewDark ? "#111111" : bodyBg;
 
   iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
 *{box-sizing:border-box}
@@ -690,31 +695,25 @@ body{margin:0;padding:0;background:${pageBg};font-family:Arial,sans-serif;}
 }
 </style></head><body>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${pageBg};"><tr><td align="center" style="padding:28px 16px;">
-<table role="presentation" class="wrapper" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;">
+<table role="presentation" class="wrapper" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;${dmFilter}">
 <tr><td style="background:${headerBg};padding:22px 40px;text-align:center;">${logoHtml}</td></tr>
-<tr><td class="ph" style="background:${contentBg};padding:52px 56px 36px;text-align:center;">
-  <h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:${headingClr};margin:0 0 22px;line-height:1.2;">Dein Zugangscode</h1>
-  <p style="font-family:Arial,sans-serif;font-size:15px;color:${bodyClr};margin:0 0 28px;line-height:1.7;">${greetingHtml}</p>
-  <div style="display:inline-block;background:${codeBg};border:1px solid ${codeBorder};padding:20px 44px;border-radius:6px;">
-    <span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:${headingClr};letter-spacing:10px;">826491</span>
+<tr><td class="ph" style="background:#ffffff;padding:52px 56px 36px;text-align:center;">
+  <h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:#000000;margin:0 0 22px;line-height:1.2;">Dein Zugangscode</h1>
+  <p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;margin:0 0 28px;line-height:1.7;">${greetingHtml}</p>
+  <div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;padding:20px 44px;border-radius:6px;">
+    <span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:#000000;letter-spacing:10px;">826491</span>
   </div>
 </td></tr>
-<tr><td class="ph" style="background:${contentBg};padding:0 56px;"><hr style="border:0;border-top:1px solid ${dividerClr};margin:0;"></td></tr>
-<tr><td class="ph" style="background:${contentBg};padding:28px 56px 32px;">
+<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
+<tr><td class="ph" style="background:#ffffff;padding:28px 56px 32px;">
   <table width="100%" cellpadding="0" cellspacing="0">
-    <tr>
-      <td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${labelClr};padding-bottom:10px;">Gültig von</td>
-      <td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:${valueClr};text-align:right;padding-bottom:10px;">01.04.2026, 10:00 Uhr</td>
-    </tr>
-    <tr>
-      <td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:${labelClr};">Gültig bis</td>
-      <td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:${valueClr};text-align:right;">01.04.2026, 12:30 Uhr</td>
-    </tr>
+    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;padding-bottom:10px;">Gültig von</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;padding-bottom:10px;">01.04.2026, 10:00 Uhr</td></tr>
+    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;">Gültig bis</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;">01.04.2026, 12:30 Uhr</td></tr>
   </table>
 </td></tr>
-<tr><td class="ph" style="background:${contentBg};padding:0 56px;"><hr style="border:0;border-top:1px solid ${dividerClr};margin:0;"></td></tr>
-<tr><td class="ph" style="background:${contentBg};padding:4px 56px 52px;text-align:center;">
-  <p style="font-family:Arial,sans-serif;font-size:14px;color:${bodyClr};margin:0 0 20px;line-height:1.7;">${belowCode}</p>
+<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
+<tr><td class="ph" style="background:#ffffff;padding:4px 56px 52px;text-align:center;">
+  <p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;margin:0 0 20px;line-height:1.7;">${belowCode}</p>
   <a href="#" style="display:inline-block;background:${accent};color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a>
 </td></tr>
 <tr><td style="background:${footerBg};padding:40px 40px 32px;text-align:center;">
@@ -737,6 +736,8 @@ async function saveAll(btn) {
         header_bg_color: document.getElementById("c-header")?.value,
         body_bg_color: document.getElementById("c-body")?.value,
         footer_bg_color: document.getElementById("c-footer")?.value,
+        social_icon_color: document.getElementById("c-icon")?.value || "#ffffff",
+        social_icon_bg_color: document.getElementById("c-social-bg")?.value || "#333333",
         logo_link_url: document.getElementById("logo-link")?.value || "",
         instagram_url: document.getElementById("s-ig")?.value || "",
         facebook_url: document.getElementById("s-fb")?.value || "",

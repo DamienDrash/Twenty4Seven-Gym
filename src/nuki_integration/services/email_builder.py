@@ -191,15 +191,54 @@ def get_email_content(db: Database) -> dict[str, str]:
 
 # ── Rendering helpers ─────────────────────────────────────────────
 
-def _social_icon_td(name: str, url: str, base_url: str) -> str:
-    icon_url = f"{base_url}/assets/icon-{name}.svg"
+_SOCIAL_SVG: dict[str, tuple[str, str]] = {
+    "instagram": (
+        "0 0 24 24",
+        '<rect x="2" y="2" width="20" height="20" rx="5" fill="none" stroke="{c}" stroke-width="1.8"/>'
+        '<circle cx="12" cy="12" r="4.2" fill="none" stroke="{c}" stroke-width="1.8"/>'
+        '<circle cx="17.3" cy="6.7" r="1.1" fill="{c}"/>',
+    ),
+    "facebook": (
+        "0 0 24 24",
+        '<path d="M24 12.1C24 5.4 18.6 0 12 0S0 5.4 0 12.1c0 6 4.4 11 10.1 11.9V15.6H7.1v-3.5h3'
+        'V9.4c0-3 1.8-4.6 4.5-4.6 1.3 0 2.6.2 2.6.2v2.9h-1.5c-1.4 0-1.9.9-1.9 1.8v2.2h3.2'
+        'l-.5 3.5h-2.7V24C19.6 23.1 24 18.1 24 12.1z" fill="{c}"/>',
+    ),
+    "tiktok": (
+        "0 0 24 26",
+        '<path d="M19.3 5.1A4.6 4.6 0 0 1 14.8.5h-3.4v14.9a2.8 2.8 0 0 1-2.8 2.5'
+        ' 2.8 2.8 0 0 1-2.8-2.8 2.8 2.8 0 0 1 2.8-2.8c.3 0 .5 0 .8.1V9'
+        'a6.2 6.2 0 0 0-.8-.1 6.2 6.2 0 0 0-6.2 6.2 6.2 6.2 0 0 0 6.2 6.2'
+        ' 6.2 6.2 0 0 0 6.2-6.2V7.5a7.9 7.9 0 0 0 4.6 1.5V5.6a4.6 4.6 0 0 1-3.1-1.5z" fill="{c}"/>',
+    ),
+    "youtube": (
+        "0 0 24 24",
+        '<path d="M22.5 6.6s-.2-1.7-1-2.4c-.9-1-2-1-2.4-1.1C16.5 3 12 3 12 3s-4.5 0-7.1.1'
+        'c-.5.1-1.5.1-2.4 1.1C1.7 4.9 1.5 6.6 1.5 6.6S1.2 8.5 1.2 10.4v1.8c0 1.9.3 3.8.3 3.8'
+        's.2 1.7 1 2.4c.9 1 2.1.9 2.7 1 1.9.2 8.3.2 8.3.2s4.5 0 7.1-.2c.5-.1 1.5-.1 2.4-1.1'
+        '.8-.7 1-2.4 1-2.4s.3-1.9.3-3.8V10.4c0-1.9-.3-3.8-.3-3.8z" fill="{c}"/>'
+        '<polygon points="9.7,15.5 9.7,8.4 16.1,12" fill="{bg}"/>',
+    ),
+}
+
+
+def _social_svg_data_uri(name: str, icon_color: str, bg_color: str) -> str:
+    import base64 as _b64
+    viewbox, paths = _SOCIAL_SVG[name]
+    inner = paths.replace("{c}", icon_color).replace("{bg}", bg_color)
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{viewbox}" width="22" height="22">{inner}</svg>'
+    return "data:image/svg+xml;base64," + _b64.b64encode(svg.encode()).decode()
+
+
+def _social_icon_td(name: str, url: str, icon_color: str, bg_color: str) -> str:
+    data_uri = _social_svg_data_uri(name, icon_color, bg_color)
     return (
         f'<td style="padding:0 8px;">'
         f'<a href="{url}" title="{name.capitalize()}" '
-        f'style="display:inline-block;background:#333333;border-radius:50%;'
+        f'style="display:inline-block;background:{bg_color};border-radius:50%;'
         f'width:38px;height:38px;line-height:0;padding:8px;'
         f'text-decoration:none;">'
-        f'<img src="{icon_url}" alt="{name}" width="22" height="22" '
+        f'<img src="{data_uri}" alt="{name}" width="22" height="22" '
         f'style="display:block;">'
         f'</a></td>'
     )
@@ -235,10 +274,12 @@ def _assemble_email_html(
 
     base_url = settings.app_public_base_url.rstrip("/")
     social_parts = []
+    icon_color = (branding.get("social_icon_color") or "#ffffff").strip() or "#ffffff"
+    social_bg  = (branding.get("social_icon_bg_color") or "#333333").strip() or "#333333"
     for name in ("instagram", "facebook", "tiktok", "youtube"):
         url = (branding.get(f"{name}_url") or "").strip()
         if url:
-            social_parts.append(_social_icon_td(name, url, base_url))
+            social_parts.append(_social_icon_td(name, url, icon_color, social_bg))
     social_html = "".join(social_parts)
 
     footer_text_raw = (branding.get("footer_text") or "Heidestraße 11, 10557 Berlin<br>030 30106609").strip()

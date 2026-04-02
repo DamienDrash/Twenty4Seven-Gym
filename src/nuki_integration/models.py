@@ -416,6 +416,8 @@ class BrandingSettingsUpdateRequest(BaseModel):
     footer_bg_color: str | None = "#ffffff"
     footer_text: str | None = None
     accent_color: str | None = "#b5ac9e"
+    social_icon_color: str | None = "#ffffff"
+    social_icon_bg_color: str | None = "#333333"
 
 class BrandingSettingsResponse(BaseModel):
     logo_url: str | None = None
@@ -429,6 +431,8 @@ class BrandingSettingsResponse(BaseModel):
     footer_bg_color: str | None = "#ffffff"
     footer_text: str | None = None
     accent_color: str | None = "#b5ac9e"
+    social_icon_color: str | None = "#ffffff"
+    social_icon_bg_color: str | None = "#333333"
 
 class EmailTemplateUpdateRequest(BaseModel):
     header_html: str
