@@ -197,10 +197,10 @@ def _social_icon_td(name: str, url: str, base_url: str) -> str:
         f'<td style="padding:0 8px;">'
         f'<a href="{url}" title="{name.capitalize()}" '
         f'style="display:inline-block;background:#333333;border-radius:50%;'
-        f'width:38px;height:38px;text-align:center;line-height:38px;'
+        f'width:38px;height:38px;line-height:0;padding:8px;'
         f'text-decoration:none;">'
         f'<img src="{icon_url}" alt="{name}" width="22" height="22" '
-        f'style="display:inline-block;vertical-align:middle;margin-top:8px;">'
+        f'style="display:block;">'
         f'</a></td>'
     )
 
