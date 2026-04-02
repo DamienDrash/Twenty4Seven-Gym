@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .auth import decode_token, issue_token, verify_password
@@ -385,6 +385,39 @@ def admin_put_email_content(payload: EmailContentUpdateRequest, u: UserRecord = 
     return {"updated": True}
 
 
+
+# ── Public: media assets (logo + social icons for emails) ────────
+
+@app.get("/media/logo", include_in_schema=False)
+def public_media_logo(db: Database = Depends(get_database)) -> Response:
+    import base64 as _b64
+    branding = get_branding_settings(db)
+    logo_url = (branding.get("logo_url") or "").strip()
+    if not logo_url.startswith("data:"):
+        raise HTTPException(status_code=404, detail="No logo configured")
+    try:
+        header, data = logo_url.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "") or "image/png"
+        image_bytes = _b64.b64decode(data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid logo data")
+    return Response(content=image_bytes, media_type=mime,
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/media/social-icon/{name}", include_in_schema=False)
+def public_media_social_icon(name: str, db: Database = Depends(get_database)) -> Response:
+    from .services.email_builder import _SOCIAL_SVG, render_social_svg
+    if name not in _SOCIAL_SVG:
+        raise HTTPException(status_code=404, detail="Unknown icon")
+    branding = get_branding_settings(db)
+    icon_color = (branding.get("social_icon_color") or "#ffffff").strip() or "#ffffff"
+    bg_color = (branding.get("social_icon_bg_color") or "#333333").strip() or "#333333"
+    svg = render_social_svg(name, icon_color, bg_color)
+    return Response(content=svg, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
 # ── Admin: funnels ───────────────────────────────────────────────
 
 @app.get("/admin/funnels", response_model=list[FunnelTemplateResponse])
@@ -545,7 +578,7 @@ def admin_checks_log(
 @app.get("/{path:path}", include_in_schema=False)
 def catch_all(path: str) -> object:
     # 1. List of prefixes that are definitely API or system routes
-    api_prefixes = {"admin", "auth", "public", "healthz", "me", "webhook", "webhooks", "api"}
+    api_prefixes = {"admin", "auth", "public", "healthz", "me", "webhook", "webhooks", "api", "media"}
     first_segment = path.split("/")[0].lower()
     
     # 2. If it's a known API prefix or has a file extension, do NOT serve SPA shell

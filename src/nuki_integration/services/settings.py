@@ -133,4 +133,6 @@ def get_branding_settings(db: Database) -> dict[str, str | None]:
         "footer_bg_color": raw.get("footer_bg_color", "#ffffff"),
         "footer_text": raw.get("footer_text"),
         "accent_color": raw.get("accent_color", "#b5ac9e"),
+        "social_icon_color": raw.get("social_icon_color", "#ffffff"),
+        "social_icon_bg_color": raw.get("social_icon_bg_color", "#333333"),
     }

@@ -50,16 +50,19 @@ BODY_HTML = """\
 
 FOOTER_HTML = """\
 <tr>
-  <td style="background:{footer_bg_color};padding:40px 40px 32px;text-align:center;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0"
-           align="center" style="margin:0 auto 28px;">
-      <tr>{social_icons}</tr>
+  <td style="background:{footer_bg_color};padding:28px 40px 20px;text-align:center;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td align="center" style="padding-bottom:12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+            <tr>{social_icons}</tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td align="center" style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;line-height:1.7;text-align:center;">{footer_text}</td>
+      </tr>
     </table>
-    <hr style="border:0;border-top:1px solid #2c2c2c;margin:0 0 20px;">
-    <div style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;
-                margin:0 0 24px;line-height:1.7;">
-      {footer_text}
-    </div>
   </td>
 </tr>
 </table></td></tr></table>"""
@@ -163,33 +166,7 @@ _BUILTIN_TEMPLATE: dict[str, str] = {
 }
 
 
-# ── Settings helpers ──────────────────────────────────────────────
-
-def get_email_template(db: Database) -> dict[str, str]:
-    raw = db.get_system_setting("email_template")
-    if raw is None:
-        db.set_system_setting(key="email_template", value=_BUILTIN_TEMPLATE)
-        return dict(_BUILTIN_TEMPLATE)
-    return {
-        "header_html": str(raw.get("header_html") or HEADER_HTML),
-        "body_html": str(raw.get("body_html") or BODY_HTML),
-        "footer_html": str(raw.get("footer_html") or FOOTER_HTML),
-        "access_code_body_html": str(raw.get("access_code_body_html") or ACCESS_CODE_BODY_HTML),
-        "reset_body_html": str(raw.get("reset_body_html") or RESET_BODY_HTML),
-    }
-
-
-def get_email_content(db: Database) -> dict[str, str]:
-    """Read structured email content from DB."""
-    raw = db.get_system_setting("email_content") or {}
-    return {
-        "greeting_text": raw.get("greeting_text") or "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode für das Freie Training:",
-        "below_code_text": raw.get("below_code_text") or "Bitte melde dich vor und nach dem Training über den Check-In/Out-Link an.",
-        "cta_button_text": raw.get("cta_button_text") or "Check-In / Check-Out",
-    }
-
-
-# ── Rendering helpers ─────────────────────────────────────────────
+# ── SVG path data for /media/social-icon/{name} endpoint ─────────
 
 _SOCIAL_SVG: dict[str, tuple[str, str]] = {
     "instagram": (
@@ -222,23 +199,50 @@ _SOCIAL_SVG: dict[str, tuple[str, str]] = {
 }
 
 
-def _social_svg_data_uri(name: str, icon_color: str, bg_color: str) -> str:
-    import base64 as _b64
+def render_social_svg(name: str, icon_color: str, bg_color: str) -> str:
+    """Return SVG markup for a social icon with given colors."""
     viewbox, paths = _SOCIAL_SVG[name]
     inner = paths.replace("{c}", icon_color).replace("{bg}", bg_color)
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{viewbox}" width="22" height="22">{inner}</svg>'
-    return "data:image/svg+xml;base64," + _b64.b64encode(svg.encode()).decode()
+    return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{viewbox}" width="22" height="22">{inner}</svg>'
 
 
-def _social_icon_td(name: str, url: str, icon_color: str, bg_color: str) -> str:
-    data_uri = _social_svg_data_uri(name, icon_color, bg_color)
+# ── Settings helpers ──────────────────────────────────────────────
+
+def get_email_template(db: Database) -> dict[str, str]:
+    raw = db.get_system_setting("email_template")
+    if raw is None:
+        db.set_system_setting(key="email_template", value=_BUILTIN_TEMPLATE)
+        return dict(_BUILTIN_TEMPLATE)
+    return {
+        "header_html": str(raw.get("header_html") or HEADER_HTML),
+        "body_html": str(raw.get("body_html") or BODY_HTML),
+        "footer_html": str(raw.get("footer_html") or FOOTER_HTML),
+        "access_code_body_html": str(raw.get("access_code_body_html") or ACCESS_CODE_BODY_HTML),
+        "reset_body_html": str(raw.get("reset_body_html") or RESET_BODY_HTML),
+    }
+
+
+def get_email_content(db: Database) -> dict[str, str]:
+    """Read structured email content from DB."""
+    raw = db.get_system_setting("email_content") or {}
+    return {
+        "greeting_text": raw.get("greeting_text") or "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode für das Freie Training:",
+        "below_code_text": raw.get("below_code_text") or "Bitte melde dich vor und nach dem Training über den Check-In/Out-Link an.",
+        "cta_button_text": raw.get("cta_button_text") or "Check-In / Check-Out",
+    }
+
+
+# ── Rendering helpers ─────────────────────────────────────────────
+
+def _social_icon_td(name: str, url: str, bg_color: str, base_url: str) -> str:
+    icon_url = f"{base_url}/media/social-icon/{name}"
     return (
         f'<td style="padding:0 8px;">'
         f'<a href="{url}" title="{name.capitalize()}" '
         f'style="display:inline-block;background:{bg_color};border-radius:50%;'
         f'width:38px;height:38px;line-height:0;padding:8px;'
         f'text-decoration:none;">'
-        f'<img src="{data_uri}" alt="{name}" width="22" height="22" '
+        f'<img src="{icon_url}" alt="{name.capitalize()}" width="22" height="22" '
         f'style="display:block;">'
         f'</a></td>'
     )
@@ -250,6 +254,7 @@ def _assemble_email_html(
     body_content: str,
 ) -> str:
     branding = get_branding_settings(db)
+    base_url = settings.app_public_base_url.rstrip("/")
 
     header_bg = (branding.get("header_bg_color") or "#000000").strip() or "#000000"
     body_bg = (branding.get("body_bg_color") or "#f0ede9").strip() or "#f0ede9"
@@ -258,7 +263,7 @@ def _assemble_email_html(
     logo_link = (branding.get("logo_link_url") or "https://getimpulse.de/").strip() or "https://getimpulse.de/"
     if branding.get("logo_url", "").strip():
         logo_placeholder = (
-            f'<img src="{branding["logo_url"]}" alt="Logo" '
+            f'<img src="{base_url}/media/logo" alt="Logo" '
             f'style="max-width:200px;height:auto;display:block;margin:0 auto;">'
         )
     else:
@@ -272,14 +277,12 @@ def _assemble_email_html(
         .replace("{logo_placeholder}", logo_placeholder)
     )
 
-    base_url = settings.app_public_base_url.rstrip("/")
     social_parts = []
-    icon_color = (branding.get("social_icon_color") or "#ffffff").strip() or "#ffffff"
-    social_bg  = (branding.get("social_icon_bg_color") or "#333333").strip() or "#333333"
+    social_bg = (branding.get("social_icon_bg_color") or "#333333").strip() or "#333333"
     for name in ("instagram", "facebook", "tiktok", "youtube"):
         url = (branding.get(f"{name}_url") or "").strip()
         if url:
-            social_parts.append(_social_icon_td(name, url, icon_color, social_bg))
+            social_parts.append(_social_icon_td(name, url, social_bg, base_url))
     social_html = "".join(social_parts)
 
     footer_text_raw = (branding.get("footer_text") or "Heidestraße 11, 10557 Berlin<br>030 30106609").strip()
@@ -294,6 +297,8 @@ def _assemble_email_html(
         "<!DOCTYPE html>"
         '<html lang="de"><head><meta charset="UTF-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="color-scheme" content="light only">'
+        '<meta name="supported-color-schemes" content="light">'
         "</head><body>"
         f"{header}{body_content}{footer}"
         "</body></html>"
