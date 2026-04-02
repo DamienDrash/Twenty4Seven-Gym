@@ -930,7 +930,7 @@ async function submitFunnel() {
   if (QS.has("preview")) { S.ckStep++; render(); return; }
   const btn = document.getElementById("step-next");
   await withBtn(btn, async () => {
-    await api(`./public/checks/window/${S.ckWindowId}/${S.ckFunnelType}`, { method: "POST", body: JSON.stringify({
+    await api(`./public/checks/submit`, { method: "POST", body: JSON.stringify({
       token: S.ck.token, window_id: S.ckWindowId, funnel_type: S.ckFunnelType,
       steps: Object.entries(S.ckDraft).map(([id, d]) => ({ step_id: parseInt(id), checked: d.checked, note: d.note, nps_score: d.nps_score ?? null })),
     }) }); S.ckStep++; render();
