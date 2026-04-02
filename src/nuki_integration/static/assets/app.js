@@ -667,7 +667,6 @@ function updateEmailPreview() {
   <a href="#" style="display:inline-block;background:${accent};color:#fff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a>
 </td></tr>
 <tr><td style="background:${footerBg};padding:40px 40px 32px;text-align:center;">
-  <p style="font-family:Arial,sans-serif;font-size:13px;font-weight:700;color:#fff;margin:0 0 10px;">Get-Impulse Berlin GmbH</p>
   <p style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;margin:0 0 16px;line-height:1.7;">${footerText.replace(/\n/g, "<br>")}</p>
 </td></tr>
 </table></td></tr></table></body></html>`;
@@ -679,6 +678,7 @@ async function saveAll(btn) {
   await withBtn(btn, async () => {
     await Promise.all([
       api("/admin/system/branding", { method: "PUT", body: JSON.stringify({
+        logo_url: S.brandingSettings?.logo_url || null,
         accent_color: document.getElementById("c-accent")?.value,
         header_bg_color: document.getElementById("c-header")?.value,
         body_bg_color: document.getElementById("c-body")?.value,

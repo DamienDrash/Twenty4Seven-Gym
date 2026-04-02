@@ -56,10 +56,6 @@ FOOTER_HTML = """\
       <tr>{social_icons}</tr>
     </table>
     <hr style="border:0;border-top:1px solid #2c2c2c;margin:0 0 20px;">
-    <p style="font-family:Arial,sans-serif;font-size:13px;font-weight:700;
-              color:#fff;margin:0 0 10px;letter-spacing:.5px;">
-      Get-Impulse Berlin GmbH
-    </p>
     <div style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;
                 margin:0 0 24px;line-height:1.7;">
       {footer_text}
