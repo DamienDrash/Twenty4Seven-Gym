@@ -561,6 +561,7 @@ async function deleteFunnelStep(stepId) {
 /* ═══════════════════════════════════════════════════════════════
    BRANDING / EMAIL EDITOR
    ═══════════════════════════════════════════════════════════════ */
+let _previewDark = false;
 
 function renderBranding() {
   if (S.role !== "admin") return '<div class="empty">Nur Admins</div>';
@@ -610,7 +611,10 @@ function renderBranding() {
     </div>
     <div class="editor-panel">
       <div class="card" style="position:sticky;top:calc(var(--header-h) + 20px);"><div class="card-header"><span class="card-title">Vorschau</span>
-        <div class="preview-toggle-bar" style="margin:0;"><button class="preview-toggle-btn active" onclick="setPreviewMode('desktop',this)">Desktop</button><button class="preview-toggle-btn" onclick="setPreviewMode('mobile',this)">Mobil</button></div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <div class="preview-toggle-bar" style="margin:0;"><button class="preview-toggle-btn vp-btn active" onclick="setPreviewMode('desktop',this)">Desktop</button><button class="preview-toggle-btn vp-btn" onclick="setPreviewMode('mobile',this)">Mobil</button></div>
+          <div class="preview-toggle-bar" style="margin:0;"><button class="preview-toggle-btn sc-btn active" onclick="setPreviewScheme('light',this)">Hell</button><button class="preview-toggle-btn sc-btn" onclick="setPreviewScheme('dark',this)">Dunkel</button></div>
+        </div>
       </div><div class="preview-frame" id="preview-frame"><iframe id="preview-iframe" title="Email-Vorschau"></iframe></div></div>
     </div>
   </div>`;
@@ -643,43 +647,67 @@ function updateEmailPreview() {
   const headerBg = document.getElementById("c-header")?.value || b.header_bg_color || "#000000";
   const bodyBg = document.getElementById("c-body")?.value || b.body_bg_color || "#f0ede9";
   const footerBg = document.getElementById("c-footer")?.value || b.footer_bg_color || "#000000";
-  const footerText = document.getElementById("footer-text")?.value || b.footer_text || "";
-  const greeting = document.getElementById("ec-greeting")?.value || ec.greeting_text || "Hallo Max Mustermann,\n\nhier ist dein persönlicher Zugangscode:";
+  const footerText = (document.getElementById("footer-text")?.value ?? b.footer_text ?? "").replace(/\n/g, "<br>");
+  const greeting = document.getElementById("ec-greeting")?.value || ec.greeting_text || "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode:";
   const belowCode = document.getElementById("ec-below")?.value || ec.below_code_text || "Bitte melde dich vor und nach dem Training an.";
   const ctaText = document.getElementById("ec-cta")?.value || ec.cta_button_text || "Check-In / Check-Out";
   const logoUrl = b.logo_url || "";
-  const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-width:200px;height:auto;display:block;margin:0 auto;">` : "GETIMPULSE";
-  const greetingHtml = greeting.replace(/\n/g, "<br>").replace(/{member_name}/g, "Max Mustermann");
-  iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:0;background:${bodyBg};font-family:Arial,sans-serif;}</style></head><body>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${bodyBg};"><tr><td align="center" style="padding:28px 16px;">
-<table width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;">
-<tr><td style="background:${headerBg};padding:22px 40px;text-align:center;"><span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:4px;color:#fff;text-transform:uppercase;">${logoHtml}</span></td></tr>
-<tr><td style="background:#fff;padding:52px 56px 36px;text-align:center;">
-  <h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:#000;margin:0 0 22px;">Dein Zugangscode</h1>
+  const logoHtml = logoUrl
+    ? `<img src="${logoUrl}" alt="Logo" style="max-width:200px;height:auto;display:block;margin:0 auto;">`
+    : `<span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:4px;color:#fff;text-transform:uppercase;">GETIMPULSE</span>`;
+  const greetingHtml = greeting.replace(/\n/g, "<br>").replace(/\{member_name\}/g, "Max Mustermann");
+  // Social icons
+  const iconBase = window.location.origin;
+  const socialEntries = [["instagram","s-ig"],["facebook","s-fb"],["tiktok","s-tt"],["youtube","s-yt"]];
+  const socialTds = socialEntries.map(([name, elId]) => {
+    const url = document.getElementById(elId)?.value || b[name + "_url"] || "";
+    if (!url) return "";
+    return `<td style="padding:0 8px;"><a href="${url}" style="display:inline-block;background:#333333;border-radius:50%;width:38px;height:38px;text-align:center;line-height:38px;text-decoration:none;"><img src="${iconBase}/assets/icon-${name}.svg" alt="${name}" width="22" height="22" style="display:inline-block;vertical-align:middle;margin-top:8px;"></a></td>`;
+  }).join("");
+  const socialRow = socialTds
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 20px;"><tr>${socialTds}</tr></table><hr style="border:0;border-top:1px solid #2c2c2c;margin:0 0 20px;">`
+    : "";
+  const pageBg = _previewDark ? "#111111" : bodyBg;
+  iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    *{box-sizing:border-box}
+    body{margin:0;padding:0;background:${pageBg};font-family:Arial,sans-serif;}
+    @media only screen and (max-width:620px){
+      .wrapper{width:100%!important;max-width:100%!important}
+      .ph{padding-left:20px!important;padding-right:20px!important}
+    }
+  </style></head><body>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${pageBg};"><tr><td align="center" style="padding:28px 16px;">
+<table role="presentation" class="wrapper" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;">
+<tr><td style="background:${headerBg};padding:22px 40px;text-align:center;">${logoHtml}</td></tr>
+<tr><td class="ph" style="background:#ffffff;padding:52px 56px 36px;text-align:center;">
+  <h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:#000000;margin:0 0 22px;line-height:1.2;">Dein Zugangscode</h1>
   <p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;margin:0 0 28px;line-height:1.7;">${greetingHtml}</p>
   <div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;padding:20px 44px;border-radius:6px;">
-    <span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:#000;letter-spacing:10px;">826491</span>
+    <span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:#000000;letter-spacing:10px;">826491</span>
   </div>
 </td></tr>
-<tr><td style="background:#fff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
-<tr><td style="background:#fff;padding:28px 56px 32px;">
+<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
+<tr><td class="ph" style="background:#ffffff;padding:28px 56px 32px;">
   <table width="100%" cellpadding="0" cellspacing="0">
-    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;color:#7a7a7a;">Gültig von</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000;text-align:right;">01.04.2026, 10:00 Uhr</td></tr>
-    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;color:#7a7a7a;">Gültig bis</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000;text-align:right;">01.04.2026, 12:30 Uhr</td></tr>
+    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;padding-bottom:10px;">Gültig von</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;padding-bottom:10px;">01.04.2026, 10:00 Uhr</td></tr>
+    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;">Gültig bis</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;">01.04.2026, 12:30 Uhr</td></tr>
   </table>
 </td></tr>
-<tr><td style="background:#fff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
-<tr><td style="background:#fff;padding:4px 56px 52px;text-align:center;">
+<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
+<tr><td class="ph" style="background:#ffffff;padding:4px 56px 52px;text-align:center;">
   <p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;margin:0 0 20px;line-height:1.7;">${belowCode}</p>
-  <a href="#" style="display:inline-block;background:${accent};color:#fff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a>
+  <a href="#" style="display:inline-block;background:${accent};color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a>
 </td></tr>
 <tr><td style="background:${footerBg};padding:40px 40px 32px;text-align:center;">
-  <p style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;margin:0 0 16px;line-height:1.7;">${footerText.replace(/\n/g, "<br>")}</p>
+  ${socialRow}
+  <div style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;line-height:1.7;">${footerText}</div>
 </td></tr>
 </table></td></tr></table></body></html>`;
 }
 
-function setPreviewMode(mode, btn) { $$(".preview-toggle-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); const f = document.getElementById("preview-frame"); if (mode === "mobile") f?.classList.add("mobile"); else f?.classList.remove("mobile"); }
+function setPreviewMode(mode, btn) { $$(".vp-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); const f = document.getElementById("preview-frame"); if (mode === "mobile") f?.classList.add("mobile"); else f?.classList.remove("mobile"); }
+
+function setPreviewScheme(scheme, btn) { $$(".sc-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); _previewDark = (scheme === "dark"); updateEmailPreview(); }
 
 async function saveAll(btn) {
   await withBtn(btn, async () => {

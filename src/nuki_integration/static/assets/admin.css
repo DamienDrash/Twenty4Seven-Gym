@@ -931,8 +931,9 @@ label {
   top: calc(var(--header-h) + 16px);
   overflow: hidden;
 }
-.preview-frame iframe { width: 100%; height: 560px; border: 0; }
-.preview-frame.mobile iframe { max-width: 375px; margin: 0 auto; display: block; }
+.preview-frame iframe { width: 100%; height: 580px; border: 0; }
+.preview-frame.mobile { overflow: hidden; }
+.preview-frame.mobile iframe { width: 375px; max-width: 375px; margin: 0 auto; display: block; height: 580px; }
 
 .preview-toggle-bar {
   display: flex; gap: 3px; padding: 3px;
