@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#e05d38"/>
   <text x="32" y="21" fill="white" font-family="system-ui,sans-serif" font-size="16" font-weight="800" text-anchor="middle" dominant-baseline="middle" letter-spacing="1">OPEN</text>
-  <text x="32" y="43" fill="white" font-family="system-ui,sans-serif" font-size="16" font-weight="800" text-anchor="middle" dominant-baseline="middle" letter-spacing="5.5">GYM</text>
+  <text x="32" y="43" fill="white" font-family="system-ui,sans-serif" font-size="16" font-weight="800" text-anchor="middle" dominant-baseline="middle" letter-spacing="3">GYM</text>
 </svg>

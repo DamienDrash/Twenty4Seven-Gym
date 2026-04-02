@@ -223,7 +223,7 @@ img { max-width: 100%; display: block; }
   gap: 1px;
 }
 .sidebar-brand-mark .mark-top { font-size: 11px; font-weight: 800; line-height: 1; letter-spacing: 0.5px; margin-right: -0.5px; }
-.sidebar-brand-mark .mark-bot { font-size: 11px; font-weight: 800; line-height: 1; letter-spacing: 3.5px; margin-right: -3.5px; }
+.sidebar-brand-mark .mark-bot { font-size: 11px; font-weight: 800; line-height: 1; letter-spacing: 2px; margin-right: -2px; }
 
 .sidebar-brand-name {
   color: var(--sidebar-foreground);
@@ -672,7 +672,7 @@ label {
   gap: 2px;
 }
 .checks-brand-mark .mark-top { font-size: 14px; font-weight: 800; line-height: 1; letter-spacing: 0.5px; margin-right: -0.5px; }
-.checks-brand-mark .mark-bot { font-size: 14px; font-weight: 800; line-height: 1; letter-spacing: 4.5px; margin-right: -4.5px; }
+.checks-brand-mark .mark-bot { font-size: 14px; font-weight: 800; line-height: 1; letter-spacing: 2.5px; margin-right: -2.5px; }
 
 .checks-title {
   font-size: 20px;
