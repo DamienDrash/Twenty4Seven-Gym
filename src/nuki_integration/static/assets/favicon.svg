@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#1c2433"/>
-  <text x="8" y="46" fill="#e05d38" font-family="system-ui,sans-serif" font-size="38" font-weight="800">24</text>
+  <rect width="64" height="64" rx="14" fill="#e05d38"/>
+  <text x="32" y="22" fill="white" font-family="system-ui,sans-serif" font-size="20" font-weight="800" text-anchor="middle" dominant-baseline="middle">24/7</text>
+  <text x="33" y="44" fill="white" font-family="system-ui,sans-serif" font-size="15" font-weight="800" text-anchor="middle" dominant-baseline="middle" letter-spacing="5">GYM</text>
 </svg>

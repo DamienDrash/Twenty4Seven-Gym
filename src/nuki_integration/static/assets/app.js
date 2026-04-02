@@ -138,7 +138,7 @@ function ico(name, size = 18) {
 function renderAuth() {
   const forgot = S.view === "forgot";
   app.innerHTML = `<div class="auth-shell"><div class="auth-card">
-    <div class="checks-brand"><div class="checks-brand-mark">24</div><div class="checks-title">${forgot ? "Passwort vergessen" : "Admin Login"}</div><div class="checks-subtitle">Twenty4Seven-Gym Betriebskonsole</div></div>
+    <div class="checks-brand"><div class="checks-brand-mark"><span class="mark-top">24/7</span><span class="mark-bot">GYM</span></div><div class="checks-title">${forgot ? "Passwort vergessen" : "Admin Login"}</div><div class="checks-subtitle">Twenty4Seven-Gym Betriebskonsole</div></div>
     ${S.msg ? `<div class="toast toast-${S.msgType === "error" ? "error" : "success"}">${esc(S.msg)}</div>` : ""}
     <form id="auth-form" style="display:flex;flex-direction:column;gap:14px;">
       <div class="field"><label>E-Mail</label><input name="email" type="email" class="input" required></div>
@@ -212,7 +212,7 @@ function renderAdmin() {
     <div class="sidebar-overlay" onclick="$('.sidebar').classList.remove('open');this.classList.remove('open')"></div>
     <div class="app-layout">
       <aside class="sidebar">
-        <div class="sidebar-brand"><div class="sidebar-brand-mark">24</div><span class="sidebar-brand-name">Twenty4Seven-Gym</span></div>
+        <div class="sidebar-brand"><div class="sidebar-brand-mark"><span class="mark-top">24/7</span><span class="mark-bot">GYM</span></div><span class="sidebar-brand-name">Twenty4Seven-Gym</span></div>
         <nav class="sidebar-nav">
           <div class="sidebar-section-label">Betrieb</div>
           ${nav("overview", "Dashboard", "overview")}
@@ -712,7 +712,7 @@ function _toEmbedUrl(url) {
 
 function renderChecksLogin() {
   app.innerHTML = `<div class="checks-shell"><div class="checks-container"><div class="checks-card"><div class="checks-card-body">
-    <div class="checks-brand"><div class="checks-brand-mark">24</div><div class="checks-title">Studio Check-In</div><div class="checks-subtitle">Gib deinen Zugangscode ein, um dein Training zu starten.</div></div>
+    <div class="checks-brand"><div class="checks-brand-mark"><span class="mark-top">24/7</span><span class="mark-bot">GYM</span></div><div class="checks-title">Studio Check-In</div><div class="checks-subtitle">Gib deinen Zugangscode ein, um dein Training zu starten.</div></div>
     ${S.msg ? `<div class="toast toast-${S.msgType === "error" ? "error" : "success"}">${esc(S.msg)}</div>` : ""}
     <form id="ck-form" style="display:flex;flex-direction:column;gap:14px;">
       <div class="field"><label>E-Mail</label><input name="email" type="email" class="input" required></div>
@@ -730,7 +730,7 @@ function renderChecksLogin() {
 function renderChecksWindows() {
   const wins = S.ck.windows || [];
   app.innerHTML = `<div class="checks-shell"><div class="checks-container">
-    <div class="checks-brand" style="margin-bottom:24px;"><div class="checks-brand-mark">24</div><div class="checks-title">Hallo, ${esc(S.ck.member_name)}!</div><div class="checks-subtitle">Wähle dein Training für Check-in oder Check-out.</div></div>
+    <div class="checks-brand" style="margin-bottom:24px;"><div class="checks-brand-mark"><span class="mark-top">24/7</span><span class="mark-bot">GYM</span></div><div class="checks-title">Hallo, ${esc(S.ck.member_name)}!</div><div class="checks-subtitle">Wähle dein Training für Check-in oder Check-out.</div></div>
     ${wins.map(w => {
       const ciDone = !!w.checkin_confirmed_at;
       const coDone = !!w.checkout_confirmed_at;
@@ -889,7 +889,7 @@ function renderStepperIntro(f) {
   const label = S.ckFunnelType === "checkout" ? "Check-out" : "Check-in";
   const cnt = (f.steps || []).length;
   app.innerHTML = `<div class="checks-shell"><div class="checks-container" style="max-width:480px;"><div class="checks-card"><div class="checks-card-body" style="text-align:center;">
-    <div class="checks-brand-mark" style="margin:0 auto 20px;">24</div>
+    <div class="checks-brand-mark" style="margin:0 auto 20px;"><span class="mark-top">24/7</span><span class="mark-bot">GYM</span></div>
     <div class="checks-title">${esc(f.template_name)}</div>
     <div class="checks-subtitle" style="margin-bottom:24px;">${esc(f.description || `${cnt} Schritte zum ${label}.`)}</div>
     <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-bottom:24px;text-align:left;">
@@ -1090,7 +1090,7 @@ function render() {
 }
 
 function renderResetPw() {
-  app.innerHTML = `<div class="auth-shell"><div class="auth-card"><div class="checks-brand"><div class="checks-brand-mark">24</div><div class="checks-title">Passwort neu setzen</div></div>
+  app.innerHTML = `<div class="auth-shell"><div class="auth-card"><div class="checks-brand"><div class="checks-brand-mark"><span class="mark-top">24/7</span><span class="mark-bot">GYM</span></div><div class="checks-title">Passwort neu setzen</div></div>
     ${S.msg ? `<div class="toast toast-${S.msgType === "error" ? "error" : "success"}">${esc(S.msg)}</div>` : ""}
     <form id="reset-form" style="display:flex;flex-direction:column;gap:14px;"><div class="field"><label>Neues Passwort</label><input name="password" type="password" class="input" required minlength="12"></div><button type="submit" class="btn btn-dark btn-block btn-lg">Passwort speichern</button></form>
   </div></div>`;
