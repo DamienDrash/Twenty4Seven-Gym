@@ -452,11 +452,13 @@ class EmailContentUpdateRequest(BaseModel):
     greeting_text: str | None = None
     below_code_text: str | None = None
     cta_button_text: str | None = None
+    block_order: list[str] | None = None
 
 class EmailContentResponse(BaseModel):
     greeting_text: str
     below_code_text: str
     cta_button_text: str
+    block_order: list[str] = ["greeting", "code", "validity", "cta"]
 
 
 # ── v2.1 House Rules & Email Versioning ──────────────────────────

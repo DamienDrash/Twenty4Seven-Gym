@@ -981,6 +981,52 @@ label {
 }
 .logo-preview-box img { max-width: 180px; max-height: 64px; object-fit: contain; }
 
+/* ── Block sortable (email reorder) ────────────────────────────── */
+
+.block-sortable {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  user-select: none;
+}
+
+.block-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  transition: background 0.15s, box-shadow 0.15s;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.block-item:active { cursor: grabbing; }
+
+.block-item.dragging {
+  opacity: 0.4;
+}
+
+.block-item.drag-over {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.drag-handle {
+  font-size: 16px;
+  color: var(--muted-foreground);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.block-label {
+  font-weight: 500;
+}
+
 /* ── Mobile sidebar ────────────────────────────────────────────── */
 
 .sidebar-toggle {

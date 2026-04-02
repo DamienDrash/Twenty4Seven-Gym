@@ -562,6 +562,14 @@ async function deleteFunnelStep(stepId) {
    BRANDING / EMAIL EDITOR
    ═══════════════════════════════════════════════════════════════ */
 let _previewDark = false;
+const _EMAIL_BLOCK_DEFS = [
+  { id: "greeting",  label: "Begrüßungstext" },
+  { id: "code",      label: "Zugangscode" },
+  { id: "validity",  label: "Gültigkeit" },
+  { id: "cta",       label: "Check-In Button" },
+];
+let _blockOrder = ["greeting", "code", "validity", "cta"];
+let _dndSrc = null;
 
 const SOCIAL_SVG = {
   instagram: (c) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22"><rect x="2" y="2" width="20" height="20" rx="5" fill="none" stroke="${c}" stroke-width="1.8"/><circle cx="12" cy="12" r="4.2" fill="none" stroke="${c}" stroke-width="1.8"/><circle cx="17.3" cy="6.7" r="1.1" fill="${c}"/></svg>`,
@@ -574,6 +582,8 @@ function renderBranding() {
   if (S.role !== "admin") return '<div class="empty">Nur Admins</div>';
   const b = S.brandingSettings || {};
   const ec = S.emailContent || {};
+  const _savedOrder = ec.block_order;
+  if (Array.isArray(_savedOrder) && _savedOrder.length > 0) _blockOrder = _savedOrder.slice();
   return `<div class="editor-layout">
     <div class="editor-panel">
       <div class="card"><div class="card-header"><span class="card-title">Studio-Identität</span></div><div class="card-body">
@@ -603,7 +613,12 @@ function renderBranding() {
         </div>
       </div></div>
       <div class="card"><div class="card-header"><span class="card-title">E-Mail Texte</span></div><div class="card-body">
-        <div class="field"><label>Begrüßungstext</label>
+        <div class="field"><label>Reihenfolge der E-Mail-Elemente</label>
+          <div class="block-sortable" id="block-sortable">
+            ${_blockOrder.map(id => { const d = _EMAIL_BLOCK_DEFS.find(b => b.id === id); return `<div class="block-item" draggable="true" data-id="${id}"><span class="drag-handle">⠃</span><span class="block-label">${d ? d.label : id}</span></div>`; }).join("")}
+          </div>
+        </div>
+        <div class="field" style="margin-top:16px;"><label>Begrüßungstext</label>
           <textarea id="ec-greeting" class="input" rows="3" placeholder="Hallo {member_name},\n\nhier ist dein Zugangscode…">${esc(ec.greeting_text || "")}</textarea>
         </div>
         <div class="field" style="margin-top:16px;"><label>Text unterhalb des Zugangscodes</label>
@@ -629,7 +644,47 @@ function renderBranding() {
   </div>`;
 }
 
+function initBlockSortable() {
+  const container = document.getElementById("block-sortable");
+  if (!container) return;
+  container.querySelectorAll(".block-item").forEach(item => {
+    item.addEventListener("dragstart", e => {
+      _dndSrc = item;
+      e.dataTransfer.effectAllowed = "move";
+      setTimeout(() => item.classList.add("dragging"), 0);
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      container.querySelectorAll(".block-item").forEach(i => i.classList.remove("drag-over"));
+    });
+    item.addEventListener("dragover", e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (item !== _dndSrc) {
+        container.querySelectorAll(".block-item").forEach(i => i.classList.remove("drag-over"));
+        item.classList.add("drag-over");
+      }
+    });
+    item.addEventListener("dragleave", () => item.classList.remove("drag-over"));
+    item.addEventListener("drop", e => {
+      e.preventDefault();
+      if (_dndSrc && item !== _dndSrc) {
+        const items = [...container.querySelectorAll(".block-item")];
+        const srcIdx = items.indexOf(_dndSrc);
+        const dstIdx = items.indexOf(item);
+        item.classList.remove("drag-over");
+        if (srcIdx !== -1 && dstIdx !== -1) {
+          if (srcIdx < dstIdx) item.after(_dndSrc); else item.before(_dndSrc);
+          _blockOrder = [...container.querySelectorAll(".block-item")].map(i => i.dataset.id);
+          updateEmailPreview();
+        }
+      }
+    });
+  });
+}
+
 function initBrandingEditor() {
+  initBlockSortable();
   ["c-accent","c-header","c-body","c-footer","c-icon","c-social-bg","s-ig","s-fb","s-tt","s-yt","footer-text","ec-greeting","ec-below","ec-cta"].forEach(id => {
     document.getElementById(id)?.addEventListener("input", updateEmailPreview);
   });
@@ -646,6 +701,17 @@ function initBrandingEditor() {
     reader.readAsDataURL(file);
   });
   setTimeout(updateEmailPreview, 100);
+}
+
+function _previewBodyRows(greetingHtml, belowCode, ctaText, accent) {
+  const sep = '<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>';
+  const blocks = {
+    greeting: `<tr><td class="ph" style="background:#ffffff;padding:52px 56px 28px;text-align:center;"><h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:#000000;margin:0 0 22px;line-height:1.2;">Dein Zugangscode</h1><p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;margin:0;line-height:1.7;">${greetingHtml}</p></td></tr>`,
+    code: '<tr><td class="ph" style="background:#ffffff;padding:28px 56px;text-align:center;"><div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;padding:20px 44px;border-radius:6px;"><span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:#000000;letter-spacing:10px;">826491</span></div></td></tr>',
+    validity: '<tr><td class="ph" style="background:#ffffff;padding:28px 56px;"><table width="100%" cellpadding="0" cellspacing="0"><tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;padding-bottom:10px;">Gültig von</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;padding-bottom:10px;">01.04.2026, 10:00 Uhr</td></tr><tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;">Gültig bis</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;">01.04.2026, 12:30 Uhr</td></tr></table></td></tr>',
+    cta: `<tr><td class="ph" style="background:#ffffff;padding:8px 56px 52px;text-align:center;"><p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;margin:0 0 20px;line-height:1.7;">${belowCode}</p><a href="#" style="display:inline-block;background:${accent};color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a></td></tr>`,
+  };
+  return _blockOrder.map((id, i) => (i === 0 ? "" : sep) + (blocks[id] || "")).join("");
 }
 
 function updateEmailPreview() {
@@ -697,25 +763,7 @@ body{margin:0;padding:0;background:${pageBg};font-family:Arial,sans-serif;}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${pageBg};"><tr><td align="center" style="padding:28px 16px;">
 <table role="presentation" class="wrapper" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;${dmFilter}">
 <tr><td style="background:${headerBg};padding:22px 40px;text-align:center;">${logoHtml}</td></tr>
-<tr><td class="ph" style="background:#ffffff;padding:52px 56px 36px;text-align:center;">
-  <h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:#000000;margin:0 0 22px;line-height:1.2;">Dein Zugangscode</h1>
-  <p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;margin:0 0 28px;line-height:1.7;">${greetingHtml}</p>
-  <div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;padding:20px 44px;border-radius:6px;">
-    <span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:#000000;letter-spacing:10px;">826491</span>
-  </div>
-</td></tr>
-<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
-<tr><td class="ph" style="background:#ffffff;padding:28px 56px 32px;">
-  <table width="100%" cellpadding="0" cellspacing="0">
-    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;padding-bottom:10px;">Gültig von</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;padding-bottom:10px;">01.04.2026, 10:00 Uhr</td></tr>
-    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;">Gültig bis</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000000;text-align:right;">01.04.2026, 12:30 Uhr</td></tr>
-  </table>
-</td></tr>
-<tr><td class="ph" style="background:#ffffff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
-<tr><td class="ph" style="background:#ffffff;padding:4px 56px 52px;text-align:center;">
-  <p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;margin:0 0 20px;line-height:1.7;">${belowCode}</p>
-  <a href="#" style="display:inline-block;background:${accent};color:#ffffff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a>
-</td></tr>
+${_previewBodyRows(greetingHtml, belowCode, ctaText, accent)}
 <tr><td style="background:${footerBg};padding:40px 40px 32px;text-align:center;">
   ${socialRow}
   <div style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;line-height:1.7;">${footerText}</div>
@@ -749,6 +797,7 @@ async function saveAll(btn) {
         greeting_text: document.getElementById("ec-greeting")?.value || "",
         below_code_text: document.getElementById("ec-below")?.value || "",
         cta_button_text: document.getElementById("ec-cta")?.value || "",
+        block_order: _blockOrder,
       }) }),
     ]);
     toast("Gespeichert"); await loadData();

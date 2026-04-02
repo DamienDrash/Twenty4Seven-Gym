@@ -130,6 +130,70 @@ ACCESS_CODE_CHECKS_ROW = """\
   </td>
 </tr>"""
 
+
+_DEFAULT_BLOCK_ORDER: list[str] = ["greeting", "code", "validity", "cta"]
+
+_SEP = '<tr><td style="background:#fff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>'
+
+_BLOCK_GREETING = (
+    '<tr>'
+    '<td style="background:#fff;padding:52px 56px 28px;text-align:center;">'
+    '<h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;'
+    'color:#000;margin:0 0 22px;line-height:1.2;">Dein Zugangscode</h1>'
+    '<p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;'
+    'margin:0;line-height:1.7;">{greeting_html}</p>'
+    '</td></tr>'
+)
+
+_BLOCK_CODE = (
+    '<tr>'
+    '<td style="background:#fff;padding:28px 56px;text-align:center;">'
+    '<div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;'
+    'padding:20px 44px;border-radius:6px;">'
+    '<span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;'
+    'color:#000;letter-spacing:10px;">{code}</span>'
+    '</div>'
+    '</td></tr>'
+)
+
+_BLOCK_VALIDITY = (
+    '<tr>'
+    '<td style="background:#fff;padding:28px 56px;">'
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+    '<tr>'
+    '<td style="padding-bottom:10px;font-family:Arial,sans-serif;font-size:12px;'
+    'font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;">'
+    'G\u00fcltig von</td>'
+    '<td style="padding-bottom:10px;font-family:Arial,sans-serif;font-size:14px;'
+    'font-weight:700;color:#000;text-align:right;">{valid_from}</td>'
+    '</tr>'
+    '<tr>'
+    '<td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;'
+    'text-transform:uppercase;letter-spacing:1px;color:#7a7a7a;">'
+    'G\u00fcltig bis</td>'
+    '<td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;'
+    'color:#000;text-align:right;">{valid_until}</td>'
+    '</tr>'
+    '</table>'
+    '</td></tr>'
+)
+
+_BLOCK_CTA = (
+    '<tr>'
+    '<td style="background:#fff;padding:8px 56px 52px;text-align:center;">'
+    '<p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;'
+    'margin:0 0 20px;line-height:1.7;">{below_code_text}</p>'
+    '<a href="{checks_url}"'
+    ' style="display:inline-block;background:{accent_color};color:#fff;'
+    'font-family:Arial,sans-serif;font-size:15px;font-weight:700;'
+    'letter-spacing:1px;text-transform:uppercase;text-decoration:none;'
+    'padding:16px 48px;border-radius:6px;">'
+    '{cta_button_text}'
+    '</a>'
+    '</td></tr>'
+)
+
+
 RESET_BODY_HTML = """\
 <tr>
   <td style="background:#fff;padding:52px 56px 36px;text-align:center;">
@@ -222,13 +286,14 @@ def get_email_template(db: Database) -> dict[str, str]:
     }
 
 
-def get_email_content(db: Database) -> dict[str, str]:
+def get_email_content(db: Database) -> dict[str, Any]:
     """Read structured email content from DB."""
     raw = db.get_system_setting("email_content") or {}
     return {
         "greeting_text": raw.get("greeting_text") or "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode für das Freie Training:",
         "below_code_text": raw.get("below_code_text") or "Bitte melde dich vor und nach dem Training über den Check-In/Out-Link an.",
         "cta_button_text": raw.get("cta_button_text") or "Check-In / Check-Out",
+        "block_order": raw.get("block_order") or list(_DEFAULT_BLOCK_ORDER),
     }
 
 
@@ -324,25 +389,35 @@ def build_access_code_email_html(
     greeting_raw = content["greeting_text"].replace("{member_name}", member_name)
     greeting_html = greeting_raw.replace("\n", "<br>")
 
-    checks_row = ""
+    block_htmls: dict[str, str] = {
+        "greeting": _BLOCK_GREETING.replace("{greeting_html}", greeting_html),
+        "code": _BLOCK_CODE.replace("{code}", code),
+        "validity": (
+            _BLOCK_VALIDITY
+            .replace("{valid_from}", valid_from)
+            .replace("{valid_until}", valid_until)
+        ),
+    }
     if checks_url:
-        checks_row = (
-            ACCESS_CODE_CHECKS_ROW
+        block_htmls["cta"] = (
+            _BLOCK_CTA
             .replace("{checks_url}", checks_url)
             .replace("{accent_color}", accent)
             .replace("{below_code_text}", content["below_code_text"])
             .replace("{cta_button_text}", content["cta_button_text"])
         )
 
-    body = (
-        ACCESS_CODE_BODY_HTML
-        .replace("{greeting_html}", greeting_html)
-        .replace("{code}", code)
-        .replace("{valid_from}", valid_from)
-        .replace("{valid_until}", valid_until)
-        .replace("{checks_url}", checks_url or "#")
-        .replace("{checks_row}", checks_row)
-    )
+    block_order = content.get("block_order") or _DEFAULT_BLOCK_ORDER
+    parts: list[str] = []
+    for block_name in block_order:
+        html = block_htmls.get(block_name)
+        if html is None:
+            continue
+        if parts:
+            parts.append(_SEP)
+        parts.append(html)
+
+    body = "".join(parts)
     return _assemble_email_html(db, settings, body)
 
 
