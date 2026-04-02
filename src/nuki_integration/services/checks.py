@@ -154,7 +154,7 @@ def submit_checks_funnel(
                     step_id=sid,
                     score=int(sd["nps_score"]),
                     comment=(sd.get("note") or "").strip() or None,
-                    question=step.get("body") or step.get("title") or "",
+                    question=step.get("video_url") or step.get("body") or step.get("title") or "",
                 )
             except Exception:
                 logger.exception("Failed to save NPS response for window=%s step=%s", window_id, sid)

@@ -22,7 +22,7 @@ const S = {
   brandingSettings: null, emailTemplate: null,
   funnelsList: [],
   funnelDetail: null, selectedFunnelId: null, stepEditorId: null,
-  npsStats: null, npsResponses: null, checksLog: null,
+  npsStats: null, npsResponses: null, checksLog: null, checksLogPage: 1,
 
   // /checks
   ck: null, ckFunnel: null, ckWindowId: null, ckFunnelType: null,
@@ -956,33 +956,72 @@ function renderChecksLog() {
   loadChecksLog();
   const rows = S.checksLog;
   if (!rows) return `<div class="empty">Lade Daten…</div>`;
+
+  const PAGE = 20;
+  const visible = rows.slice(0, (S.checksLogPage || 1) * PAGE);
+  const hasMore = rows.length > visible.length;
+
+  function npsCircle(score) {
+    if (score === null || score === undefined) return '';
+    const col = score >= 9 ? 'var(--success)' : score >= 7 ? '#f59e0b' : 'var(--error)';
+    return `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:${col};color:#fff;font-size:11px;font-weight:800;flex-shrink:0;">${score}</span>`;
+  }
+
+  function stepRow(s) {
+    const type = s.step_type || 'confirmation';
+    if (type === 'nps') {
+      const score = s.nps_score ?? null;
+      const question = s.nps_question || s.video_url || s.step_title || '';
+      const comment = s.nps_comment || s.note || '';
+      return `<div style="display:flex;gap:8px;align-items:flex-start;padding:3px 0;">
+        ${npsCircle(score)}
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:12px;color:var(--text-muted);">${esc(question)}</div>
+          ${comment ? `<div style="font-size:12px;font-style:italic;margin-top:1px;">"${esc(comment)}"</div>` : ''}
+        </div>
+      </div>`;
+    }
+    const note = s.note || '';
+    const isNo = note.toLowerCase() === 'nein';
+    const checkColor = isNo ? 'var(--error)' : 'var(--success)';
+    const checkIcon = isNo ? ico('x', 12) : ico('check', 12);
+    const noteTag = type === 'yes_no' && note
+      ? `<span class="badge ${isNo ? 'badge-error' : 'badge-success'}" style="margin-left:6px;font-size:10px;">${esc(note)}</span>`
+      : note ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;font-style:italic;">${esc(note)}</span>` : '';
+    return `<div style="display:flex;gap:8px;align-items:center;padding:2px 0;">
+      <span style="color:${checkColor};display:flex;flex-shrink:0;">${checkIcon}</span>
+      <span style="font-size:12px;flex:1;">${esc(s.step_title || '')}</span>
+      ${noteTag}
+    </div>`;
+  }
+
   return `<div class="card">
     <div class="card-header">
       <span class="card-title">Checks-Log</span>
-      <button class="btn btn-outline btn-sm" onclick="S.checksLog=null;render()">${ico("sync", 14)} Aktualisieren</button>
+      <button class="btn btn-outline btn-sm" onclick="S.checksLog=null;S.checksLogPage=1;render()">${ico('sync', 14)} Aktualisieren</button>
     </div>
-    <div class="card-body" style="padding:0;max-height:720px;overflow-y:auto;">
-      ${rows.length === 0 ? '<div class="empty">Noch keine Einträge.</div>' : rows.map(r => {
-        const typeLabel = r.entry_source?.includes('checkout') || r.funnel_type === 'checkout' ? 'Check-Out' : 'Check-in';
-        const steps = (r.step_events || []).map(s =>
-          `<div style="font-size:11px;color:var(--text-muted);padding:2px 0;">${esc(s.step_title || s.step_id || '')}${s.note ? ': <em>' + esc(s.note) + '</em>' : ''}${s.checked ? ' ✓' : ''}</div>`
-        ).join('');
-        return `<div class="list-row" style="flex-direction:column;align-items:stretch;gap:4px;">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-            <div>
-              <strong style="font-size:13px;">${esc(r.first_name||'')} ${esc(r.last_name||'')}</strong>
-              <span style="font-size:12px;color:var(--text-muted);margin-left:6px;">${esc(r.email||'')}</span>
+    <div class="card-body" style="padding:0;">
+      ${rows.length === 0 ? '<div class="empty">Noch keine Einträge.</div>' : visible.map(r => {
+        const isOut = (r.entry_source || '').includes('checkout') || r.funnel_type === 'checkout';
+        const typeLabel = isOut ? 'Check-Out' : 'Check-In';
+        const typeCls = isOut ? 'badge-warning' : 'badge-success';
+        const steps = (r.step_events || []).map(stepRow).join('');
+        return `<div class="list-row" style="flex-direction:column;align-items:stretch;gap:6px;padding:14px 16px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span class="badge ${typeCls}">${typeLabel}</span>
+              <strong style="font-size:13px;">${esc(r.first_name || '')} ${esc(r.last_name || '')}</strong>
+              <span style="font-size:12px;color:var(--text-muted);">${esc(r.email || '')}</span>
             </div>
-            <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;margin-left:12px;">${fmtDt(r.submitted_at||r.created_at||'')}</span>
+            <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">${fmtDt(r.created_at || '')}</span>
           </div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            ${badge(typeLabel)}
-            ${r.status||r.window_status ? badge(r.status||r.window_status) : ''}
-            <span style="font-size:11px;color:var(--text-muted);">${fmtDt(r.starts_at||'')} – ${fmtDt(r.ends_at||'')}</span>
-          </div>
-          ${steps ? `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:2px;">${steps}</div>` : ''}
+          <div style="font-size:11px;color:var(--text-muted);">Fenster: ${fmtDt(r.starts_at || '')} – ${fmtDt(r.ends_at || '')}</div>
+          ${steps ? `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px;">${steps}</div>` : ''}
         </div>`;
       }).join('')}
+      ${hasMore ? `<div style="padding:12px 16px;text-align:center;border-top:1px solid var(--border);">
+        <button class="btn btn-outline btn-sm" onclick="S.checksLogPage=(S.checksLogPage||1)+1;render()">Mehr laden (${rows.length - visible.length} weitere)</button>
+      </div>` : ''}
     </div>
   </div>`;
 }

@@ -653,7 +653,13 @@ class Database:
                                 'status', fse.status,
                                 'note', fse.note,
                                 'step_title', fst.title,
-                                'step_type', fst.step_type
+                                'step_type', fst.step_type,
+                                'video_url', fst.video_url,
+                                'is_mandatory', fst.is_mandatory,
+                                'requires_note', fst.requires_note,
+                                'nps_score', nr.score,
+                                'nps_comment', nr.comment,
+                                'nps_question', nr.question
                             ) ORDER BY fse.id
                         ) FILTER (WHERE fse.id IS NOT NULL),
                         '[]'::json
@@ -664,6 +670,7 @@ class Database:
                 JOIN members m ON m.id = aw.member_id
                 LEFT JOIN funnel_step_events fse ON fse.submission_id = fs.id
                 LEFT JOIN funnel_steps fst ON fst.id = fse.step_id
+                LEFT JOIN nps_responses nr ON nr.submission_id = fs.id AND nr.step_id = fse.step_id
                 GROUP BY fs.id, ft.name, ft.funnel_type,
                          m.first_name, m.last_name, m.email, m.id,
                          aw.starts_at, aw.ends_at
