@@ -29,7 +29,7 @@ from .models import (
     SMTPSettingsUpdateRequest, TelegramSettingsResponse, TelegramSettingsUpdateRequest,
     TelegramTestRequest, UserCreateRequest, UserRecord, UserSummary, UserUpdateRequest,
     HouseRulesResponse, HouseRulesCreateRequest, EmailTemplateVersionResponse, AccessWindowSummary,
-    FunnelTemplateDetail,
+    FunnelTemplateDetail, EmailContentUpdateRequest, EmailContentResponse,
 )
 from .notifications import EmailService, TelegramService
 from .nuki_client import NukiClient
@@ -48,6 +48,7 @@ from .services import (
     upsert_funnel_template_service, upsert_funnel_step_service,
     list_house_rules_versions, create_house_rules_version,
     list_template_versions, restore_template_version, get_active_house_rules,
+    get_email_content,
 )
 
 logger = logging.getLogger(__name__)
@@ -370,6 +371,17 @@ def admin_get_branding(u: UserRecord = Depends(require_admin), db: Database = De
 @app.put("/admin/system/branding")
 def admin_put_branding(payload: BrandingSettingsUpdateRequest, u: UserRecord = Depends(require_admin), db: Database = Depends(get_database)) -> dict[str, bool]:
     db.upsert_setting("branding", payload.model_dump(mode="json"))
+    return {"updated": True}
+
+
+@app.get("/admin/system/email-content", response_model=EmailContentResponse)
+def admin_get_email_content(u: UserRecord = Depends(require_admin), db: Database = Depends(get_database)) -> EmailContentResponse:
+    return EmailContentResponse.model_validate(get_email_content(db))
+
+
+@app.put("/admin/system/email-content")
+def admin_put_email_content(payload: EmailContentUpdateRequest, u: UserRecord = Depends(require_admin), db: Database = Depends(get_database)) -> dict[str, bool]:
+    db.upsert_setting("email_content", payload.model_dump(exclude_none=True, mode="json"))
     return {"updated": True}
 
 

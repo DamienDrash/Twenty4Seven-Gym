@@ -44,5 +44,9 @@ def upsert_funnel_step_service(
     )
 
 
+def delete_funnel_template(*, db: Database, template_id: int) -> None:
+    db.delete_funnel_template(template_id=template_id)
+
+
 def delete_funnel_step(*, db: Database, step_id: int) -> None:
     db.delete_funnel_step(step_id=step_id)

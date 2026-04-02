@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .access import (
+    cleanup_orphaned_nuki_codes,
     deactivate_access_window,
     deprovision_expired_codes,
     issue_emergency_access_code,
@@ -23,10 +24,12 @@ from .email_builder import (
     build_password_reset_email_html,
     build_test_email_html,
     get_email_template,
+    get_email_content,
 )
 from .formatting import fmt_dt_de, member_display_name, to_berlin
 from .funnels import (
     delete_funnel_step,
+    delete_funnel_template,
     get_funnel_template,
     list_funnel_templates,
     upsert_funnel_step_service,
@@ -70,6 +73,7 @@ from .sync import (
 )
 
 __all__ = [
+    "cleanup_orphaned_nuki_codes",
     "deactivate_access_window",
     "deprovision_expired_codes",
     "issue_emergency_access_code",
@@ -92,6 +96,7 @@ __all__ = [
     "build_password_reset_email_html",
     "build_test_email_html",
     "get_email_template",
+    "get_email_content",
     "fmt_dt_de",
     "member_display_name",
     "to_berlin",

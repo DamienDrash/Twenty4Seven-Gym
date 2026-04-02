@@ -22,7 +22,7 @@ const S = {
   brandingSettings: null, emailTemplate: null,
   funnelsList: [],
   funnelDetail: null, selectedFunnelId: null, stepEditorId: null,
-  npsStats: null, npsResponses: null, checksLog: null, checksLogPage: 1,
+  npsStats: null, npsResponses: null, checksLog: null, checksLogPage: 1, emailContent: null,
 
   // /checks
   ck: null, ckFunnel: null, ckWindowId: null, ckFunnelType: null,
@@ -565,7 +565,7 @@ async function deleteFunnelStep(stepId) {
 function renderBranding() {
   if (S.role !== "admin") return '<div class="empty">Nur Admins</div>';
   const b = S.brandingSettings || {};
-  const tpl = S.emailTemplate || {};
+  const ec = S.emailContent || {};
   return `<div class="editor-layout">
     <div class="editor-panel">
       <div class="card"><div class="card-header"><span class="card-title">Studio-Identität</span></div><div class="card-body">
@@ -591,24 +591,22 @@ function renderBranding() {
         <div class="field" style="margin-top:20px;"><label>Footer-Text</label>
           <textarea id="footer-text" class="input" rows="3" placeholder="Adresse, Telefon…">${esc(b.footer_text || "")}</textarea>
         </div>
-        <button class="btn btn-accent btn-block" style="margin-top:16px;" onclick="saveBranding(this)">Branding speichern</button>
       </div></div>
-      <div class="card"><div class="card-header"><span class="card-title">Zugangscode-Email</span></div><div class="card-body">
-        <textarea id="tpl-body" class="code-editor" style="min-height:350px;">${esc(tpl.access_code_body_html || "")}</textarea>
-        <div style="margin-top:12px;"><label style="margin-bottom:6px;">Variablen:</label>
-          <div class="placeholder-chips">
-            <button class="placeholder-chip" onclick="insertPlaceholder('{member_name}')">{member_name}</button>
-            <button class="placeholder-chip" onclick="insertPlaceholder('{code}')">{code}</button>
-            <button class="placeholder-chip" onclick="insertPlaceholder('{valid_from}')">{valid_from}</button>
-            <button class="placeholder-chip" onclick="insertPlaceholder('{valid_until}')">{valid_until}</button>
-            <button class="placeholder-chip" onclick="insertPlaceholder('{checks_row}')">{checks_row}</button>
-          </div>
+      <div class="card"><div class="card-header"><span class="card-title">E-Mail Texte</span></div><div class="card-body">
+        <div class="field"><label>Begrüßungstext</label>
+          <textarea id="ec-greeting" class="input" rows="3" placeholder="Hallo {member_name},\n\nhier ist dein Zugangscode…">${esc(ec.greeting_text || "")}</textarea>
         </div>
-        <div style="display:flex;gap:8px;margin-top:16px;">
-          <button class="btn btn-accent" onclick="saveTemplate(this)">Template speichern</button>
-          <button class="btn btn-outline" onclick="sendTestEmail(this)">Test-Mail</button>
+        <div class="field" style="margin-top:16px;"><label>Text unterhalb des Zugangscodes</label>
+          <textarea id="ec-below" class="input" rows="3" placeholder="Bitte melde dich vor und nach dem Training an.">${esc(ec.below_code_text || "")}</textarea>
+        </div>
+        <div class="field" style="margin-top:16px;"><label>Schaltfläche: Beschriftung</label>
+          <input id="ec-cta" class="input" placeholder="Check-In / Check-Out" value="${esc(ec.cta_button_text || "")}">
         </div>
       </div></div>
+      <div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn btn-accent" style="flex:1;" onclick="saveAll(this)">Alle Einstellungen speichern</button>
+        <button class="btn btn-outline" onclick="sendTestEmail(this)">Test-Mail</button>
+      </div>
     </div>
     <div class="editor-panel">
       <div class="card" style="position:sticky;top:calc(var(--header-h) + 20px);"><div class="card-header"><span class="card-title">Vorschau</span>
@@ -619,7 +617,7 @@ function renderBranding() {
 }
 
 function initBrandingEditor() {
-  ["c-accent","c-header","c-body","c-footer","s-ig","s-fb","s-tt","s-yt","footer-text","tpl-body"].forEach(id => {
+  ["c-accent","c-header","c-body","c-footer","s-ig","s-fb","s-tt","s-yt","footer-text","ec-greeting","ec-below","ec-cta"].forEach(id => {
     document.getElementById(id)?.addEventListener("input", updateEmailPreview);
   });
   document.getElementById("logo-upload")?.addEventListener("change", async e => {
@@ -632,42 +630,76 @@ function initBrandingEditor() {
 
 function updateEmailPreview() {
   const iframe = document.getElementById("preview-iframe"); if (!iframe) return;
-  const body = document.getElementById("tpl-body")?.value || "";
   const b = S.brandingSettings || {};
+  const ec = S.emailContent || {};
   const accent = document.getElementById("c-accent")?.value || b.accent_color || "#b5ac9e";
+  const headerBg = document.getElementById("c-header")?.value || b.header_bg_color || "#000000";
+  const bodyBg = document.getElementById("c-body")?.value || b.body_bg_color || "#f0ede9";
+  const footerBg = document.getElementById("c-footer")?.value || b.footer_bg_color || "#000000";
   const footerText = document.getElementById("footer-text")?.value || b.footer_text || "";
+  const greeting = document.getElementById("ec-greeting")?.value || ec.greeting_text || "Hallo Max Mustermann,\n\nhier ist dein persönlicher Zugangscode:";
+  const belowCode = document.getElementById("ec-below")?.value || ec.below_code_text || "Bitte melde dich vor und nach dem Training an.";
+  const ctaText = document.getElementById("ec-cta")?.value || ec.cta_button_text || "Check-In / Check-Out";
   const logoUrl = b.logo_url || "";
   const logoHtml = logoUrl ? `<img src="${logoUrl}" alt="Logo" style="max-width:200px;height:auto;display:block;margin:0 auto;">` : "GETIMPULSE";
-  const rendered = body.replace(/{member_name}/g, "Max Mustermann").replace(/{code}/g, "826491").replace(/{valid_from}/g, "1. April 2026, 10:00 Uhr").replace(/{valid_until}/g, "1. April 2026, 12:30 Uhr").replace(/{checks_url}/g, "#").replace(/{checks_row}/g, `<a href="#" style="display:inline-block;background:${accent};color:#fff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">Check-In & Hausordnung</a>`);
-  iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:0;background:#f0ede9;font-family:Arial,sans-serif;}</style></head><body><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0ede9;"><tr><td align="center" style="padding:28px 16px;"><table width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;"><tr><td style="background:#000;padding:22px 40px;text-align:center;"><span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:4px;color:#fff;text-transform:uppercase;">${logoHtml}</span></td></tr>${rendered}<tr><td style="background:#000;padding:40px;text-align:center;"><p style="font-family:Arial,sans-serif;font-size:13px;font-weight:700;color:#fff;margin:0 0 10px;">Get-Impulse Berlin GmbH</p><p style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;margin:0 0 16px;line-height:1.7;">${footerText.replace(/\n/g, "<br>")}</p><p style="font-family:Arial,sans-serif;font-size:11px;color:#4a4a4a;">&copy; 2026 TWENTY4SEVEN-GYM</p></td></tr></table></td></tr></table></body></html>`;
+  const greetingHtml = greeting.replace(/\n/g, "<br>").replace(/{member_name}/g, "Max Mustermann");
+  iframe.srcdoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:0;background:${bodyBg};font-family:Arial,sans-serif;}</style></head><body>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${bodyBg};"><tr><td align="center" style="padding:28px 16px;">
+<table width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;">
+<tr><td style="background:${headerBg};padding:22px 40px;text-align:center;"><span style="font-family:Arial,sans-serif;font-size:18px;font-weight:700;letter-spacing:4px;color:#fff;text-transform:uppercase;">${logoHtml}</span></td></tr>
+<tr><td style="background:#fff;padding:52px 56px 36px;text-align:center;">
+  <h1 style="font-family:Arial,sans-serif;font-size:36px;font-weight:700;color:#000;margin:0 0 22px;">Dein Zugangscode</h1>
+  <p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;margin:0 0 28px;line-height:1.7;">${greetingHtml}</p>
+  <div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;padding:20px 44px;border-radius:6px;">
+    <span style="font-family:Arial,sans-serif;font-size:34px;font-weight:700;color:#000;letter-spacing:10px;">826491</span>
+  </div>
+</td></tr>
+<tr><td style="background:#fff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
+<tr><td style="background:#fff;padding:28px 56px 32px;">
+  <table width="100%" cellpadding="0" cellspacing="0">
+    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;color:#7a7a7a;">Gültig von</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000;text-align:right;">01.04.2026, 10:00 Uhr</td></tr>
+    <tr><td style="font-family:Arial,sans-serif;font-size:12px;font-weight:700;text-transform:uppercase;color:#7a7a7a;">Gültig bis</td><td style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#000;text-align:right;">01.04.2026, 12:30 Uhr</td></tr>
+  </table>
+</td></tr>
+<tr><td style="background:#fff;padding:0 56px;"><hr style="border:0;border-top:1px solid #e4e0db;margin:0;"></td></tr>
+<tr><td style="background:#fff;padding:4px 56px 52px;text-align:center;">
+  <p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;margin:0 0 20px;line-height:1.7;">${belowCode}</p>
+  <a href="#" style="display:inline-block;background:${accent};color:#fff;font-family:Arial,sans-serif;font-size:15px;font-weight:700;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:16px 48px;border-radius:6px;">${ctaText}</a>
+</td></tr>
+<tr><td style="background:${footerBg};padding:40px 40px 32px;text-align:center;">
+  <p style="font-family:Arial,sans-serif;font-size:13px;font-weight:700;color:#fff;margin:0 0 10px;">Get-Impulse Berlin GmbH</p>
+  <p style="font-family:Arial,sans-serif;font-size:12px;color:#7a7a7a;margin:0 0 16px;line-height:1.7;">${footerText.replace(/\n/g, "<br>")}</p>
+</td></tr>
+</table></td></tr></table></body></html>`;
 }
 
 function setPreviewMode(mode, btn) { $$(".preview-toggle-btn").forEach(b => b.classList.remove("active")); btn.classList.add("active"); const f = document.getElementById("preview-frame"); if (mode === "mobile") f?.classList.add("mobile"); else f?.classList.remove("mobile"); }
 
-function insertPlaceholder(text) { const el = document.getElementById("tpl-body"); if (!el) return; const s = el.selectionStart; el.value = el.value.substring(0, s) + text + el.value.substring(el.selectionEnd); el.selectionStart = el.selectionEnd = s + text.length; el.focus(); updateEmailPreview(); }
-
-async function saveBranding(btn) {
+async function saveAll(btn) {
   await withBtn(btn, async () => {
-    await api("/admin/system/branding", { method: "PUT", body: JSON.stringify({
-      accent_color: document.getElementById("c-accent")?.value, header_bg_color: document.getElementById("c-header")?.value,
-      body_bg_color: document.getElementById("c-body")?.value, footer_bg_color: document.getElementById("c-footer")?.value,
-      logo_link_url: document.getElementById("logo-link")?.value || "",
-      instagram_url: document.getElementById("s-ig")?.value || "", facebook_url: document.getElementById("s-fb")?.value || "",
-      tiktok_url: document.getElementById("s-tt")?.value || "", youtube_url: document.getElementById("s-yt")?.value || "",
-      footer_text: document.getElementById("footer-text")?.value || "",
-    }) }); toast("Branding gespeichert"); await loadData();
+    await Promise.all([
+      api("/admin/system/branding", { method: "PUT", body: JSON.stringify({
+        accent_color: document.getElementById("c-accent")?.value,
+        header_bg_color: document.getElementById("c-header")?.value,
+        body_bg_color: document.getElementById("c-body")?.value,
+        footer_bg_color: document.getElementById("c-footer")?.value,
+        logo_link_url: document.getElementById("logo-link")?.value || "",
+        instagram_url: document.getElementById("s-ig")?.value || "",
+        facebook_url: document.getElementById("s-fb")?.value || "",
+        tiktok_url: document.getElementById("s-tt")?.value || "",
+        youtube_url: document.getElementById("s-yt")?.value || "",
+        footer_text: document.getElementById("footer-text")?.value || "",
+      }) }),
+      api("/admin/system/email-content", { method: "PUT", body: JSON.stringify({
+        greeting_text: document.getElementById("ec-greeting")?.value || "",
+        below_code_text: document.getElementById("ec-below")?.value || "",
+        cta_button_text: document.getElementById("ec-cta")?.value || "",
+      }) }),
+    ]);
+    toast("Gespeichert"); await loadData();
   }, "Speichern…");
 }
 
-async function saveTemplate(btn) {
-  const body = document.getElementById("tpl-body")?.value || "";
-  await withBtn(btn, async () => {
-    await api("/admin/system/email-template", { method: "PUT", body: JSON.stringify({
-      header_html: S.emailTemplate?.header_html || "", body_html: S.emailTemplate?.body_html || "",
-      footer_html: S.emailTemplate?.footer_html || "", access_code_body_html: body, reset_body_html: S.emailTemplate?.reset_body_html || "",
-    }) }); toast("Template gespeichert"); await loadData();
-  }, "Speichern…");
-}
 
 async function sendTestEmail(btn) {
   await withBtn(btn, async () => { await api("/admin/system/email-test-code", { method: "POST", body: JSON.stringify({ to_email: S.me.email }) }); toast(`Test-Mail an ${S.me.email} gesendet`); }, "Sende…");
@@ -1167,6 +1199,7 @@ async function loadData() {
         api("/admin/system/telegram-settings"), api("/admin/system/nuki-settings"),
         api("/admin/system/magicline-settings"), api("/admin/funnels"),
         api("/admin/system/branding"), api("/admin/nps/stats"),
+        api("/admin/system/email-content"),
       ]);
       if (adminResults[0].status === "fulfilled") S.emailSettings = adminResults[0].value;
       if (adminResults[1].status === "fulfilled") S.emailTemplate = adminResults[1].value;
@@ -1176,6 +1209,7 @@ async function loadData() {
       if (adminResults[5].status === "fulfilled") S.funnelsList = adminResults[5].value;
       if (adminResults[6].status === "fulfilled") S.brandingSettings = adminResults[6].value;
       if (adminResults[7].status === "fulfilled") S.npsStats = adminResults[7].value;
+      if (adminResults[8].status === "fulfilled") S.emailContent = adminResults[8].value;
       
       if (adminResults.some(r => r.status === "rejected")) {
         console.warn("Some admin settings failed to load", adminResults.filter(r => r.status === "rejected"));

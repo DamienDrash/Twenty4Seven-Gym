@@ -1,19 +1,11 @@
-"""Email template storage, assembly, and rendering.
-
-The built-in templates live here as constants.  DB overrides (via
-system_settings 'email_template') take precedence when present.
-"""
-
+"""Email template storage, assembly, and rendering."""
 from __future__ import annotations
-
 from typing import Any
-
 from ..config import Settings
 from ..db import Database
 from .settings import get_branding_settings
 
-# ── Built-in template fragments ───────────────────────────────────
-# Each fragment uses {placeholders} that are replaced at render time.
+# ── Template fragments ────────────────────────────────────────────
 
 HEADER_HTML = """\
 <style type="text/css">
@@ -22,7 +14,7 @@ HEADER_HTML = """\
   img{-ms-interpolation-mode:bicubic;border:0;display:block;outline:none}
   *{box-sizing:border-box}
   :root{color-scheme:light only;supported-color-schemes:light}
-  body{margin:0!important;padding:0!important;background-color:#f0ede9!important;color:#000!important;width:100%!important}
+  body{margin:0!important;padding:0!important;background-color:{body_bg_color}!important;color:#000!important;width:100%!important}
   @media only screen and (max-width:620px){
     .wrapper{width:100%!important;max-width:100%!important}
     .h1{font-size:27px!important;line-height:1.25!important}
@@ -33,12 +25,12 @@ HEADER_HTML = """\
   }
 </style>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-       style="background-color:#f0ede9;">
+       style="background-color:{body_bg_color};">
 <tr><td align="center" style="padding:28px 16px;">
 <table role="presentation" class="wrapper" width="600" cellpadding="0" cellspacing="0"
        border="0" style="width:600px;max-width:600px;">
 <tr>
-  <td style="background-color:#000;padding:22px 40px;text-align:center;">
+  <td style="background-color:{header_bg_color};padding:22px 40px;text-align:center;">
     <a href="{logo_link_url}"
        style="font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:700;
               letter-spacing:4px;color:#fff;text-decoration:none;text-transform:uppercase;">
@@ -58,7 +50,7 @@ BODY_HTML = """\
 
 FOOTER_HTML = """\
 <tr>
-  <td style="background:#000;padding:40px 40px 32px;text-align:center;">
+  <td style="background:{footer_bg_color};padding:40px 40px 32px;text-align:center;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"
            align="center" style="margin:0 auto 28px;">
       <tr>{social_icons}</tr>
@@ -85,8 +77,7 @@ ACCESS_CODE_BODY_HTML = """\
     </h1>
     <p style="font-family:Arial,sans-serif;font-size:15px;color:#3a3a3a;
               margin:0 0 28px;line-height:1.7;">
-      Hallo {member_name},<br><br>
-      hier ist dein persönlicher Zugangscode für das <strong>Freie Training</strong>:
+      {greeting_html}
     </p>
     <div style="display:inline-block;background:#f0ede9;border:1px solid #e4e0db;
                 padding:20px 44px;border-radius:6px;">
@@ -128,14 +119,14 @@ ACCESS_CODE_CHECKS_ROW = """\
   <td style="background:#fff;padding:4px 56px 52px;text-align:center;">
     <p style="font-family:Arial,sans-serif;font-size:14px;color:#3a3a3a;
               margin:0 0 20px;line-height:1.7;">
-      Bitte melde dich vor und nach dem Training über den Check-In/Out-Link an.
+      {below_code_text}
     </p>
     <a href="{checks_url}"
-       style="display:inline-block;background:#b5ac9e;color:#fff;
+       style="display:inline-block;background:{accent_color};color:#fff;
               font-family:Arial,sans-serif;font-size:15px;font-weight:700;
               letter-spacing:1px;text-transform:uppercase;text-decoration:none;
               padding:16px 48px;border-radius:6px;">
-      Check-In / Check-Out
+      {cta_button_text}
     </a>
   </td>
 </tr>"""
@@ -176,10 +167,9 @@ _BUILTIN_TEMPLATE: dict[str, str] = {
 }
 
 
-# ── Template CRUD ─────────────────────────────────────────────────
+# ── Settings helpers ──────────────────────────────────────────────
 
 def get_email_template(db: Database) -> dict[str, str]:
-    """Load the email template from DB or seed it with the built-in default."""
     raw = db.get_system_setting("email_template")
     if raw is None:
         db.set_system_setting(key="email_template", value=_BUILTIN_TEMPLATE)
@@ -193,15 +183,29 @@ def get_email_template(db: Database) -> dict[str, str]:
     }
 
 
+def get_email_content(db: Database) -> dict[str, str]:
+    """Read structured email content from DB."""
+    raw = db.get_system_setting("email_content") or {}
+    return {
+        "greeting_text": raw.get("greeting_text") or "Hallo {member_name},\n\nhier ist dein persönlicher Zugangscode für das Freie Training:",
+        "below_code_text": raw.get("below_code_text") or "Bitte melde dich vor und nach dem Training über den Check-In/Out-Link an.",
+        "cta_button_text": raw.get("cta_button_text") or "Check-In / Check-Out",
+    }
+
+
 # ── Rendering helpers ─────────────────────────────────────────────
 
 def _social_icon_td(name: str, url: str, base_url: str) -> str:
     icon_url = f"{base_url}/assets/icon-{name}.svg"
     return (
-        f'<td style="padding:0 10px;">'
-        f'<a href="{url}" title="{name.capitalize()}">'
-        f'<img src="{icon_url}" alt="{name}" width="26" height="26">'
-        f"</a></td>"
+        f'<td style="padding:0 8px;">'
+        f'<a href="{url}" title="{name.capitalize()}" '
+        f'style="display:inline-block;background:#333333;border-radius:50%;'
+        f'width:38px;height:38px;text-align:center;line-height:38px;'
+        f'text-decoration:none;">'
+        f'<img src="{icon_url}" alt="{name}" width="22" height="22" '
+        f'style="display:inline-block;vertical-align:middle;margin-top:8px;">'
+        f'</a></td>'
     )
 
 
@@ -210,11 +214,14 @@ def _assemble_email_html(
     settings: "Settings",
     body_content: str,
 ) -> str:
-    """Wrap *body_content* in the full header + footer chrome."""
     branding = get_branding_settings(db)
 
-    logo_link = branding["logo_link_url"] or "https://getimpulse.de/"
-    if branding["logo_url"]:
+    header_bg = (branding.get("header_bg_color") or "#000000").strip() or "#000000"
+    body_bg = (branding.get("body_bg_color") or "#f0ede9").strip() or "#f0ede9"
+    footer_bg = (branding.get("footer_bg_color") or "#000000").strip() or "#000000"
+
+    logo_link = (branding.get("logo_link_url") or "https://getimpulse.de/").strip() or "https://getimpulse.de/"
+    if branding.get("logo_url", "").strip():
         logo_placeholder = (
             f'<img src="{branding["logo_url"]}" alt="Logo" '
             f'style="max-width:200px;height:auto;display:block;margin:0 auto;">'
@@ -224,24 +231,26 @@ def _assemble_email_html(
 
     header = (
         HEADER_HTML
+        .replace("{body_bg_color}", body_bg)
+        .replace("{header_bg_color}", header_bg)
         .replace("{logo_link_url}", logo_link)
         .replace("{logo_placeholder}", logo_placeholder)
     )
 
     base_url = settings.app_public_base_url.rstrip("/")
-    socials = [
-        ("instagram", branding["instagram_url"] or "https://www.instagram.com/getimpulse/"),
-        ("facebook", branding["facebook_url"] or "https://www.facebook.com/getimpulse.berlinheidestrasse/"),
-        ("tiktok", branding["tiktok_url"] or "https://www.tiktok.com/@getimpulse"),
-        ("youtube", branding["youtube_url"] or "https://www.youtube.com/@getimpulse886"),
-    ]
-    social_html = "".join(_social_icon_td(n, u, base_url) for n, u in socials)
+    social_parts = []
+    for name in ("instagram", "facebook", "tiktok", "youtube"):
+        url = (branding.get(f"{name}_url") or "").strip()
+        if url:
+            social_parts.append(_social_icon_td(name, url, base_url))
+    social_html = "".join(social_parts)
 
-    footer_text = (branding["footer_text"] or "Heidestraße 11, 10557 Berlin<br>030 30106609")
+    footer_text_raw = (branding.get("footer_text") or "Heidestraße 11, 10557 Berlin<br>030 30106609").strip()
     footer = (
         FOOTER_HTML
+        .replace("{footer_bg_color}", footer_bg)
         .replace("{social_icons}", social_html)
-        .replace("{footer_text}", footer_text.replace("\n", "<br>"))
+        .replace("{footer_text}", footer_text_raw.replace("\n", "<br>"))
     )
 
     return (
@@ -266,15 +275,26 @@ def build_access_code_email_html(
     valid_until: str,
     checks_url: str | None,
 ) -> str:
-    tpl = get_email_template(db)
+    content = get_email_content(db)
+    branding = get_branding_settings(db)
+    accent = (branding.get("accent_color") or "#b5ac9e").strip() or "#b5ac9e"
+
+    greeting_raw = content["greeting_text"].replace("{member_name}", member_name)
+    greeting_html = greeting_raw.replace("\n", "<br>")
 
     checks_row = ""
     if checks_url:
-        checks_row = ACCESS_CODE_CHECKS_ROW.replace("{checks_url}", checks_url)
+        checks_row = (
+            ACCESS_CODE_CHECKS_ROW
+            .replace("{checks_url}", checks_url)
+            .replace("{accent_color}", accent)
+            .replace("{below_code_text}", content["below_code_text"])
+            .replace("{cta_button_text}", content["cta_button_text"])
+        )
 
     body = (
-        tpl["access_code_body_html"]
-        .replace("{member_name}", member_name)
+        ACCESS_CODE_BODY_HTML
+        .replace("{greeting_html}", greeting_html)
         .replace("{code}", code)
         .replace("{valid_from}", valid_from)
         .replace("{valid_until}", valid_until)
@@ -290,8 +310,7 @@ def build_password_reset_email_html(
     *,
     reset_url: str,
 ) -> str:
-    tpl = get_email_template(db)
-    body = tpl["reset_body_html"].replace("{reset_url}", reset_url)
+    body = RESET_BODY_HTML.replace("{reset_url}", reset_url)
     return _assemble_email_html(db, settings, body)
 
 

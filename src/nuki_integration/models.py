@@ -318,6 +318,7 @@ class ChecksFunnelStepData(BaseModel):
     step_id: int
     checked: bool = False
     note: str = ""
+    nps_score: int | None = None
 
 class ChecksSubmitRequest(BaseModel):
     token: str = Field(min_length=20)
@@ -345,6 +346,28 @@ class ChecksFunnelResponse(BaseModel):
     funnel_type: str
     description: str | None = None
     steps: list[ChecksFunnelStep]
+
+# ── NPS Models ──────────────────────────────────────────────────
+
+class NpsResponseRecord(BaseModel):
+    id: int
+    access_window_id: int
+    member_id: int
+    score: int
+    comment: str | None = None
+    question: str
+    created_at: datetime
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+
+class NpsStatsResponse(BaseModel):
+    score: int | None = None
+    total: int
+    promoters: int
+    passives: int
+    detractors: int
+    trend: list[dict] = Field(default_factory=list)
 
 # ── Magicline Models ─────────────────────────────────────────────
 
@@ -420,6 +443,17 @@ class EmailTemplateResponse(BaseModel):
     footer_html: str
     access_code_body_html: str
     reset_body_html: str
+
+class EmailContentUpdateRequest(BaseModel):
+    greeting_text: str | None = None
+    below_code_text: str | None = None
+    cta_button_text: str | None = None
+
+class EmailContentResponse(BaseModel):
+    greeting_text: str
+    below_code_text: str
+    cta_button_text: str
+
 
 # ── v2.1 House Rules & Email Versioning ──────────────────────────
 

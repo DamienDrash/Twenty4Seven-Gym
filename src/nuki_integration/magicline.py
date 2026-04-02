@@ -64,35 +64,29 @@ class MagiclineClient:
         customers = self.list_customers()
         relevant = []
         for customer in customers:
-            bookings = [b for b in self.list_customer_bookings(customer.id) if is_access_booking(b, self._settings)]
+            bookings = [b for b in self.list_customer_bookings(customer.id) if is_relevant_booking(b, self._settings)]
             if bookings:
                 relevant.append((customer, bookings, self.list_customer_contracts(customer.id)))
         logger.info("Magicline sync candidates=%s", len(relevant))
         return relevant
 
 
-def _name_matches(candidate: str | None, expected: str) -> bool:
-    return bool(candidate and expected.lower() in candidate.lower())
-
-
 def derive_entitlements(contracts: list[dict[str, Any]], settings: Settings) -> dict[str, bool]:
-    has_xxlarge = has_ftp = False
-    for c in contracts:
-        if c.get("contractStatus") != "ACTIVE":
-            continue
-        if _name_matches(c.get("rateName"), settings.magicline_entitlement_rate_name):
-            has_xxlarge = True
-        for mod in c.get("moduleContracts", []):
-            if mod.get("contractStatus") == "ACTIVE" and _name_matches(mod.get("rateName"), settings.magicline_entitlement_product_name):
-                has_ftp = True
-        for fee in c.get("flatFeeContracts", []):
-            if fee.get("contractStatus") == "ACTIVE" and _name_matches(fee.get("rateName"), settings.magicline_entitlement_product_name):
-                has_ftp = True
-    return {"has_xxlarge": has_xxlarge, "has_free_training_product": has_ftp}
+    # XXLARGE is obsolete. We now only care about the bookings.
+    # We still return a dict for compatibility with the database schema.
+    return {"has_xxlarge": False, "has_free_training_product": True}
+
+
+def is_relevant_booking(booking: MagiclineBooking, settings: Settings) -> bool:
+    """Title match only — used for sync to DB (includes past bookings)."""
+    target = settings.magicline_relevant_appointment_title.strip().lower()
+    actual = (booking.title or "").strip().lower()
+    return actual == target
 
 
 def is_access_booking(booking: MagiclineBooking, settings: Settings) -> bool:
-    return booking.title == settings.magicline_relevant_appointment_title and booking.end_date_time >= datetime.now(UTC)
+    """Title match AND not yet ended — used for inspect/debug views."""
+    return is_relevant_booking(booking, settings) and booking.end_date_time >= datetime.now(UTC)
 
 
 def booking_effective_received_at() -> datetime:
