@@ -790,12 +790,12 @@ class Database:
             with conn.cursor() as cur:
                 if keep_booking_ids:
                     cur.execute(
-                        "DELETE FROM access_windows WHERE member_id=%s AND status IN (%s,%s,%s) AND booking_id <> ALL(%s)",
+                        "DELETE FROM access_windows WHERE member_id=%s AND status IN (%s,%s,%s) AND booking_id <> ALL(%s) AND access_reason != 'manual'",
                         (member_id, *prunable, keep_booking_ids),
                     )
                 else:
                     cur.execute(
-                        "DELETE FROM access_windows WHERE member_id=%s AND status IN (%s,%s,%s)",
+                        "DELETE FROM access_windows WHERE member_id=%s AND status IN (%s,%s,%s) AND access_reason != 'manual'",
                         (member_id, *prunable),
                     )
                 deleted = cur.rowcount

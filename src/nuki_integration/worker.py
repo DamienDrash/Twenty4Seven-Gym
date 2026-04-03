@@ -5,7 +5,7 @@ from .config import get_settings
 from .db import Database
 from .logging_setup import configure_logging
 from .datetime_utils import now_utc
-from .services import cleanup_orphaned_nuki_codes, deprovision_expired_codes, provision_due_codes, sync_magicline_bookings
+from .services import cleanup_orphaned_nuki_codes, deprovision_expired_codes, lock_if_no_active_sessions, provision_due_codes, sync_magicline_bookings
 
 def run_forever() -> None:
     settings = get_settings()
@@ -18,6 +18,8 @@ def run_forever() -> None:
         while True:
             now = now_utc()
             expired_db = db.expire_finished_windows(now)
+            if expired_db > 0:
+                lock_if_no_active_sessions(db, settings)
             deleted_nuki = deprovision_expired_codes(db, settings)
             orphans_removed = cleanup_orphaned_nuki_codes(db, settings)
             sync_result = sync_magicline_bookings(db, settings)

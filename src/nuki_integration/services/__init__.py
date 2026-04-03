@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .access import (
     cleanup_orphaned_nuki_codes,
+    lock_if_no_active_sessions,
     deactivate_access_window,
     deprovision_expired_codes,
     issue_emergency_access_code,
@@ -74,6 +75,7 @@ from .sync import (
 
 __all__ = [
     "cleanup_orphaned_nuki_codes",
+    "lock_if_no_active_sessions",
     "deactivate_access_window",
     "deprovision_expired_codes",
     "issue_emergency_access_code",

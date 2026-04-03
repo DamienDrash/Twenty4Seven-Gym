@@ -232,7 +232,7 @@ def deprovision_expired_codes(db: Database, settings: Settings) -> int:
     try:
         for row in expired:
             try:
-                nuki.delete_keypad_code(auth_id=int(row["nuki_auth_id"]))
+                nuki.delete_keypad_code(auth_id=row["nuki_auth_id"])
                 with db.connection() as conn, conn.cursor() as cur:
                     cur.execute(
                         "UPDATE access_codes SET nuki_auth_id = NULL WHERE id = %s",
@@ -279,6 +279,16 @@ def cleanup_orphaned_nuki_codes(db: Database, settings: Settings) -> int:
             )
             keep_ids: set[str] = {str(r["nuki_auth_id"]) for r in cur.fetchall()}
 
+        with db.connection() as conn2, conn2.cursor() as cur2:
+            cur2.execute(
+                "SELECT aw.member_id, aw.booking_id FROM access_windows aw"
+                " WHERE aw.status IN ('scheduled', 'active')"
+            )
+            keep_names: set[str] = {
+                (f"member-{r['member_id']}-cluster-{r['booking_id']}")[:20]
+                for r in cur2.fetchall()
+            }
+
         nuki_codes = nuki.list_keypad_codes()
         count = 0
         for code in nuki_codes:
@@ -287,7 +297,7 @@ def cleanup_orphaned_nuki_codes(db: Database, settings: Settings) -> int:
                 # Manually created — skip
                 continue
             auth_id = code.get("id")
-            if auth_id is None or str(auth_id) in keep_ids:
+            if auth_id is None or str(auth_id) in keep_ids or name in keep_names:
                 continue
             try:
                 nuki.delete_keypad_code(auth_id=auth_id)
@@ -320,7 +330,7 @@ def resend_access_code(
     if previous_code:
         db.mark_code_replaced(code_id=int(previous_code["id"]))
 
-    replacement = f"{secrets.randbelow(1_000_000):06d}"
+    replacement = _generate_secure_nuki_code(db)
     new_code_id = _issue_window_code(
         db=db, settings=settings, window=window,
         code=replacement, is_emergency=False,
@@ -390,7 +400,7 @@ def issue_emergency_access_code(
     if previous_code:
         db.mark_code_replaced(code_id=int(previous_code["id"]))
 
-    emergency = f"{secrets.randbelow(1_000_000):06d}"
+    emergency = _generate_secure_nuki_code(db)
     new_code_id = _issue_window_code(
         db=db, settings=settings, window=window,
         code=emergency, is_emergency=True,
@@ -427,3 +437,50 @@ def issue_emergency_access_code(
         "is_emergency": True,
         "sent": True,
     }
+
+
+# ── Lock on session end ───────────────────────────────────────────────
+
+def lock_if_no_active_sessions(db: Database, settings: Settings) -> bool:
+    """Lock the smartlock when the last active training session has ended.
+
+    Queries whether any access window currently covers the current time
+    (starts_at <= now < ends_at, status not expired/cancelled).
+    If none remain → triggers remote_lock().
+
+    Returns True if a lock command was sent.
+    """
+    now = datetime.now(UTC)
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM access_windows
+            WHERE status NOT IN ('expired', 'cancelled')
+              AND starts_at <= %s
+              AND ends_at > %s
+            """,
+            (now, now),
+        )
+        row = cur.fetchone()
+        active_count = int(row["cnt"]) if row else 0
+
+    if active_count > 0:
+        logger.info(
+            "lock_if_no_active_sessions: %s session(s) still active — skipping lock",
+            active_count,
+        )
+        return False
+
+    nuki_cfg = get_effective_nuki_config(db, settings)
+    effective_settings = settings.model_copy(update=nuki_cfg)
+    nuki = NukiClient(effective_settings)
+    try:
+        nuki.remote_lock()
+        logger.info("lock_if_no_active_sessions: lock triggered — no active sessions remaining")
+        return True
+    except Exception as exc:
+        logger.error("lock_if_no_active_sessions: lock command failed: %s", exc)
+        return False
+    finally:
+        nuki.close()

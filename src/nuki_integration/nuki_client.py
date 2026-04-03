@@ -129,7 +129,7 @@ class NukiClient:
     ) -> int | None:
         """Create a type-13 (keypad) authorization on the smart lock.
 
-        Returns the nuki auth ID if retrievable, None otherwise.
+        Returns the nuki auth ID (hex string) if retrievable, None otherwise.
         Note: PUT returns 204 No Content — the ID must be fetched separately.
         """
         if self._settings.nuki_dry_run:
@@ -162,24 +162,47 @@ class NukiClient:
     def _find_auth_id_by_name(self, name: str) -> int | None:
         """Look up a freshly created auth entry by name.
 
-        There can be a sync delay before the auth appears in the list,
-        so this may return None even after a successful create.
+        Retries with increasing delays to handle Nuki API sync latency -- the
+        PUT endpoint returns 204 immediately but the new auth may not appear
+        in GET /auth for several seconds.
         """
-        try:
-            auths = self._request(
-                "GET",
-                f"/smartlock/{self._settings.nuki_smartlock_id}/auth",
-            )
-            if not isinstance(auths, list):
-                return None
-            match = next(
-                (a for a in auths if a.get("name") == name and a.get("type") == 13),
-                None,
-            )
-            return int(match["id"]) if match else None
-        except Exception:
-            logger.warning("Could not retrieve auth ID for '%s'", name)
-            return None
+        import time
+        for attempt in range(5):
+            if attempt > 0:
+                wait = attempt * 4  # 4s, 8s, 12s, 16s
+                logger.info(
+                    "_find_auth_id_by_name: attempt %d/5, waiting %ds for Nuki sync (name=%r)",
+                    attempt + 1, wait, name,
+                )
+                time.sleep(wait)
+            try:
+                auths = self._request(
+                    "GET",
+                    f"/smartlock/{self._settings.nuki_smartlock_id}/auth",
+                )
+                if not isinstance(auths, list):
+                    return None
+                match = next(
+                    (a for a in auths if a.get("name") == name and a.get("type") == 13),
+                    None,
+                )
+                if match:
+                    logger.info(
+                        "_find_auth_id_by_name: found auth_id=%s for %r on attempt %d",
+                        match["id"], name, attempt + 1,
+                    )
+                    return match["id"]
+            except Exception:
+                logger.warning(
+                    "_find_auth_id_by_name: request failed (attempt %d, name=%r)",
+                    attempt + 1, name,
+                )
+        logger.error(
+            "_find_auth_id_by_name: auth ID for %r not found after 5 attempts -- "
+            "code is on Nuki keypad but DB will have nuki_auth_id=NULL",
+            name,
+        )
+        return None
 
     def update_keypad_code(
         self,
