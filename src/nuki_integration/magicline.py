@@ -30,8 +30,20 @@ class MagiclineClient:
         return response.json()
 
     def list_customers(self) -> list[MagiclineCustomer]:
-        data = self._request("GET", "/v1/customers")
-        return [MagiclineCustomer.model_validate(i) for i in data.get("result", data)]
+        customers: list[MagiclineCustomer] = []
+        offset: str | None = None
+        while True:
+            path = "/v1/customers?size=100"
+            if offset:
+                path += f"&offset={offset}"
+            data = self._request("GET", path)
+            result = data.get("result", data) if isinstance(data, dict) else data
+            customers.extend(MagiclineCustomer.model_validate(i) for i in result)
+            if not (isinstance(data, dict) and data.get("hasNext") and data.get("offset")):
+                break
+            offset = str(data["offset"])
+        logger.info("Magicline list_customers total=%s", len(customers))
+        return customers
 
     def search_customer_by_email(self, email: str) -> MagiclineCustomer | None:
         data = self._request("POST", "/v1/customers/search", json_body={"email": email})
