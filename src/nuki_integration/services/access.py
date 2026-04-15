@@ -25,16 +25,20 @@ logger = logging.getLogger(__name__)
 def _generate_secure_nuki_code(db: Database) -> str:
     """
     Generate a 6-digit code (digits 1-9 only, Nuki Keypad safe).
-    Avoids trivial patterns and recent reuse within 180 days.
+    Avoids trivial patterns, "12" prefix (Nuki hardware restriction),
+    and recent reuse within 180 days.
     """
     for _ in range(100):
         digits = [str(secrets.randbelow(9) + 1) for _ in range(6)]
         code = "".join(digits)
-        if code in ("123456", "654321") or len(set(code)) == 1:
+        if code in ("123456", "654321") or len(set(code)) == 1 or code.startswith("12"):
             continue
         if not db.is_code_recently_used(code):
             return code
-    return "".join(str(secrets.randbelow(9) + 1) for _ in range(6))
+    while True:
+        code = "".join(str(secrets.randbelow(9) + 1) for _ in range(6))
+        if not code.startswith("12") and len(set(code)) > 1:
+            return code
 
 
 # ── Internal provisioning helper ──────────────────────────────────
