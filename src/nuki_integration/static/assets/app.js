@@ -5,6 +5,22 @@
 
 const QS = new URLSearchParams(location.search);
 
+/* Deployment prefix (e.g. "/opengym") derived from this script's own URL, so the
+   SPA works both at the domain root and under a path prefix. Absolute API paths
+   ("/admin/…") get the prefix prepended; relative ones ("./admin/…") already
+   resolve against the page URL and are left untouched. */
+const API_PREFIX = (function () {
+  try {
+    const marker = "/assets/app.js";
+    const s = [...document.scripts].find(x => x.src && x.src.indexOf(marker) !== -1);
+    if (s) {
+      const p = new URL(s.src).pathname;
+      return p.slice(0, p.indexOf(marker));
+    }
+  } catch (e) { /* fall through */ }
+  return "";
+})();
+
 const S = {
   token: localStorage.getItem("t247_token") || "",
   role: localStorage.getItem("t247_role") || "",
@@ -39,7 +55,8 @@ function api(path, opts = {}) {
   const h = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (S.token) h.Authorization = `Bearer ${S.token}`;
   if (opts.body instanceof FormData) delete h["Content-Type"];
-  return fetch(path, { ...opts, headers: h }).then(async r => {
+  const url = path.charAt(0) === "/" ? API_PREFIX + path : path;
+  return fetch(url, { ...opts, headers: h }).then(async r => {
     const t = await r.text();
     const d = t ? JSON.parse(t) : {};
     if (!r.ok) throw new Error(d.detail || t || "Request failed");

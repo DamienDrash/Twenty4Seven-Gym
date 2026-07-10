@@ -136,3 +136,11 @@ def get_branding_settings(db: Database) -> dict[str, str | None]:
         "social_icon_color": raw.get("social_icon_color", "#ffffff"),
         "social_icon_bg_color": raw.get("social_icon_bg_color", "#333333"),
     }
+
+
+def get_effective_business_hours(db: Database, settings: Settings) -> dict:
+    from ..datetime_utils import DEFAULT_BUSINESS_HOURS
+    raw = db.get_system_setting("business_hours") or {}
+    if not raw:
+        return DEFAULT_BUSINESS_HOURS
+    return {**DEFAULT_BUSINESS_HOURS, **raw}

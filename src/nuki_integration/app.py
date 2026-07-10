@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -30,6 +30,7 @@ from .models import (
     TelegramTestRequest, UserCreateRequest, UserRecord, UserSummary, UserUpdateRequest,
     HouseRulesResponse, HouseRulesCreateRequest, EmailTemplateVersionResponse, AccessWindowSummary,
     FunnelTemplateDetail, EmailContentUpdateRequest, EmailContentResponse,
+    MagiclineWebhookEnvelope, EmailTestRequest,
 )
 from .notifications import EmailService, TelegramService
 from .nuki_client import NukiClient
@@ -229,6 +230,22 @@ def admin_remote_open(u: UserRecord = Depends(get_current_user), db: Database = 
 @app.get("/admin/alerts", response_model=list[AlertRecord])
 def admin_alerts(u: UserRecord = Depends(get_current_user), db: Database = Depends(get_database)) -> list[AlertRecord]:
     return [AlertRecord.model_validate(i) for i in db.list_alerts()]
+
+
+@app.get("/admin/timewindow/status")
+def admin_timewindow_status(
+    u: UserRecord = Depends(get_current_user),
+    db: Database = Depends(get_database),
+) -> dict[str, object]:
+    """Slot-/Rotations-Status des Zeitfenster-PIN-Modells (M2b)."""
+    from .datetime_utils import now_utc, to_berlin_tz
+    from .timewindow import store as tw_store
+    from .timewindow import pin_pool
+    tw_store.ensure_schema(db)
+    today = to_berlin_tz(now_utc(), settings.timezone).date()
+    status = tw_store.rotation_status(db, today)
+    status["expected_slots"] = pin_pool.POOL_PER_HOUR * len(pin_pool.compute_offpeak_buckets())
+    return status
 
 
 @app.get("/admin/house-rules", response_model=HouseRulesResponse)
@@ -483,6 +500,25 @@ def magicline_webhook(payload: MagiclineWebhookEnvelope = Body(...), x_api_key: 
     if not rs.magicline_webhook_api_key or x_api_key != rs.magicline_webhook_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     return process_magicline_webhook(db, rs, payload.model_dump(mode="json"))
+
+
+@app.get("/webhooks/nuki")
+@app.get("/webhook/nuki")
+async def nuki_webhook_probe() -> dict[str, bool]:
+    """Reachability probe for the Nuki Advanced API webhook URL."""
+    return {"ok": True}
+
+
+@app.post("/webhooks/nuki")
+@app.post("/webhook/nuki")
+async def nuki_webhook(request: Request) -> dict[str, bool]:
+    """Nuki Advanced API webhook receiver (DEVICE_AUTHS / DEVICE_STATUS / DEVICE_LOGS).
+    Acknowledges with 200 so Nuki marks it delivered. HMAC verification of
+    X-Nuki-Signature-SHA256 + event processing are added once the secret exists."""
+    raw = await request.body()
+    signed = bool(request.headers.get("X-Nuki-Signature-SHA256"))
+    logger.info("Nuki webhook: %d bytes signed=%s body=%s", len(raw), signed, raw[:600].decode("utf-8", "replace"))
+    return {"received": True}
 
 
 # ── Public /checks ────────────────────────────────────────────────

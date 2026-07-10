@@ -173,7 +173,7 @@ CREATE INDEX IF NOT EXISTS idx_access_windows_dispatch_at
 CREATE TABLE IF NOT EXISTS access_codes (
     id BIGSERIAL PRIMARY KEY,
     access_window_id BIGINT NOT NULL REFERENCES access_windows(id) ON DELETE CASCADE,
-    nuki_auth_id BIGINT,
+    nuki_auth_id TEXT,
     code_hash TEXT NOT NULL,
     code_last4 TEXT NOT NULL,
     status TEXT NOT NULL,
@@ -850,7 +850,7 @@ class Database:
 
     def store_access_code(
         self, *, access_window_id: int, raw_code: str,
-        nuki_auth_id: int | None, status: str, expires_at: datetime,
+        nuki_auth_id: str | None, status: str, expires_at: datetime,
         is_emergency: bool = False,
     ) -> int:
         code_hash = hash_password(raw_code)

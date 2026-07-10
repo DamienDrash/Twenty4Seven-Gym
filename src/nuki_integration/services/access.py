@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import UTC, datetime
+from ..datetime_utils import is_within_business_hours, to_berlin_tz
 
 from ..config import Settings
 from ..db import Database
@@ -15,7 +16,7 @@ from .alerts import create_operational_alert, notify_telegram
 from .auth_tokens import build_check_in_link, build_checks_link
 from .email_builder import build_access_code_email_html
 from .formatting import fmt_dt_de, member_display_name, to_berlin
-from .settings import get_effective_check_in_settings, get_effective_nuki_config, get_effective_smtp_config
+from .settings import get_effective_business_hours, get_effective_check_in_settings, get_effective_nuki_config, get_effective_smtp_config
 
 logger = logging.getLogger(__name__)
 
@@ -289,7 +290,7 @@ def cleanup_orphaned_nuki_codes(db: Database, settings: Settings) -> int:
                 " WHERE aw.status IN ('scheduled', 'active')"
             )
             keep_names: set[str] = {
-                (f"member-{r['member_id']}-cluster-{r['booking_id']}")[:20]
+                (f"member-{r['member_id']}-cluster-{r['booking_id']}")[:32]
                 for r in cur2.fetchall()
             }
 
@@ -473,6 +474,15 @@ def lock_if_no_active_sessions(db: Database, settings: Settings) -> bool:
         logger.info(
             "lock_if_no_active_sessions: %s session(s) still active — skipping lock",
             active_count,
+        )
+        return False
+
+    biz_hours = get_effective_business_hours(db, settings)
+    now_berlin = to_berlin_tz(now, settings.timezone)
+    if is_within_business_hours(biz_hours, now_berlin):
+        logger.info(
+            "lock_if_no_active_sessions: within business hours (%s) — skipping lock",
+            now_berlin.strftime("%a %H:%M"),
         )
         return False
 

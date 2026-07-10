@@ -131,7 +131,7 @@ def _sync_nuki_validity(
     try:
         if active_code.get("nuki_auth_id") is not None:
             nuki.update_keypad_code(
-                auth_id=int(active_code["nuki_auth_id"]),
+                auth_id=active_code["nuki_auth_id"],
                 name=f"member-{member_id}-cluster-{rep['id']}",
                 allowed_from=(rep["start_at"] - timedelta(minutes=15)).isoformat(),
                 allowed_until=ends_at.isoformat(),

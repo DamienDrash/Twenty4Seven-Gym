@@ -41,6 +41,25 @@ def validate_keypad_code(code: str) -> None:
         )
 
 
+def evaluate_materialization(auths: list[dict[str, Any]], code: str) -> dict[str, Any]:
+    """Pure check: is ``code`` present as a *materialised* type-13 auth?
+
+    An auth that exists but whose ``updateDate`` is None (or missing) counts as
+    NOT materialised — that is exactly the 204-but-not-materialised failure mode.
+    """
+    want = int(code)
+    for auth in auths:
+        if auth.get("type") == 13 and auth.get("code") == want:
+            update_date = auth.get("updateDate")
+            return {
+                "materialised": update_date is not None,
+                "simulated": False,
+                "auth_id": auth.get("id"),
+                "update_date": update_date,
+            }
+    return {"materialised": False, "simulated": False, "auth_id": None, "update_date": None}
+
+
 # Server state mapping (from Nuki Web API docs)
 _SERVER_STATE = {
     0: "OK",
@@ -119,6 +138,38 @@ class NukiClient:
 
     # ── Keypad code lifecycle ─────────────────────────────────────
 
+    def _build_keypad_payload(
+        self,
+        *,
+        name: str,
+        code: str | None,
+        allowed_from: str,
+        allowed_until: str,
+        allowed_week_days: int = 127,
+        allowed_from_time: int | None = None,
+        allowed_until_time: int | None = None,
+    ) -> dict[str, Any]:
+        """Build a type-13 auth payload, incl. optional time-window restriction.
+
+        ``allowed_from_time`` / ``allowed_until_time`` are minutes since midnight
+        (0–1439); when both are given, the code only opens during that daily
+        window on the days in ``allowed_week_days`` (Nuki bitmask Mo=64 … So=1).
+        """
+        payload: dict[str, Any] = {
+            "name": name[:32],
+            "type": 13,
+            "smartlockIds": [self._settings.nuki_smartlock_id],
+            "allowedFromDate": allowed_from,
+            "allowedUntilDate": allowed_until,
+            "allowedWeekDays": allowed_week_days,
+        }
+        if code is not None:
+            payload["code"] = int(code)
+        if allowed_from_time is not None and allowed_until_time is not None:
+            payload["allowedFromTime"] = allowed_from_time
+            payload["allowedUntilTime"] = allowed_until_time
+        return payload
+
     def create_keypad_code(
         self,
         *,
@@ -126,29 +177,31 @@ class NukiClient:
         code: str,
         allowed_from: str,
         allowed_until: str,
+        allowed_week_days: int = 127,
+        allowed_from_time: int | None = None,
+        allowed_until_time: int | None = None,
     ) -> int | None:
         """Create a type-13 (keypad) authorization on the smart lock.
 
         Returns the nuki auth ID (hex string) if retrievable, None otherwise.
         Note: PUT returns 204 No Content — the ID must be fetched separately.
+        The time-window fields default to a full-week, all-day code (backward
+        compatible with the per-booking caller).
         """
         if self._settings.nuki_dry_run:
             logger.info("DRY_RUN: skip keypad code create for %s", name)
             return None
 
         validate_keypad_code(code)
-        safe_name = name[:20]
+        safe_name = name[:32]
         smartlock_id = self._settings.nuki_smartlock_id
 
-        payload = {
-            "name": safe_name,
-            "type": 13,
-            "code": int(code),
-            "smartlockIds": [self._settings.nuki_smartlock_id],
-            "allowedFromDate": allowed_from,
-            "allowedUntilDate": allowed_until,
-            "allowedWeekDays": 127,
-        }
+        payload = self._build_keypad_payload(
+            name=safe_name, code=code,
+            allowed_from=allowed_from, allowed_until=allowed_until,
+            allowed_week_days=allowed_week_days,
+            allowed_from_time=allowed_from_time, allowed_until_time=allowed_until_time,
+        )
 
         self._request(
             "PUT",
@@ -212,6 +265,9 @@ class NukiClient:
         code: str | None = None,
         allowed_from: str,
         allowed_until: str,
+        allowed_week_days: int = 127,
+        allowed_from_time: int | None = None,
+        allowed_until_time: int | None = None,
         enabled: bool = True,
     ) -> None:
         """Update an existing keypad authorization.
@@ -222,24 +278,42 @@ class NukiClient:
             logger.info("DRY_RUN: skip keypad code update auth_id=%s", auth_id)
             return
 
-        safe_name = name[:20]
-        payload: dict[str, Any] = {
-            "name": safe_name,
-            "type": 13,
-            "allowedFromDate": allowed_from,
-            "allowedUntilDate": allowed_until,
-            "allowedWeekDays": 127,
-            "enabled": enabled,
-        }
         if code is not None:
             validate_keypad_code(code)
-            payload["code"] = int(code)
+        payload = self._build_keypad_payload(
+            name=name, code=code,
+            allowed_from=allowed_from, allowed_until=allowed_until,
+            allowed_week_days=allowed_week_days,
+            allowed_from_time=allowed_from_time, allowed_until_time=allowed_until_time,
+        )
+        payload.pop("smartlockIds", None)  # not accepted on the per-auth update
+        payload["enabled"] = enabled
 
         self._request(
             "POST",
             f"/smartlock/{self._settings.nuki_smartlock_id}/auth/{auth_id}",
             json_body=payload,
         )
+
+    def verify_materialization(self, code: str) -> dict[str, Any]:
+        """Verify (GET after PUT) that ``code`` actually materialised on the device.
+
+        The known Nuki bug: a PUT returns 204 but the code never lands on the
+        keypad (``updateDate`` stays None). This GETs the auth list and checks
+        that the type-13 auth for ``code`` exists **and** has a non-null
+        ``updateDate``. DRY-RUN performs no network call and returns a simulated OK.
+        """
+        if self._settings.nuki_dry_run:
+            logger.info("DRY_RUN: skip materialization check for code ******")
+            return {"materialised": True, "simulated": True, "auth_id": None, "update_date": None}
+        try:
+            auths = self._request(
+                "GET", f"/smartlock/{self._settings.nuki_smartlock_id}/auth"
+            )
+        except Exception as exc:
+            logger.error("verify_materialization: GET failed: %s", exc)
+            return {"materialised": False, "simulated": False, "auth_id": None, "update_date": None}
+        return evaluate_materialization(auths if isinstance(auths, list) else [], code)
 
     def deactivate_keypad_code(self, *, auth_id: int) -> None:
         """Disable a keypad code without deleting it."""

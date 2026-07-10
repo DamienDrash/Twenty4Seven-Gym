@@ -143,14 +143,16 @@ class SMTPSettingsUpdateRequest(BaseModel):
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_use_tls: bool = True
-    smtp_from_email: EmailStr
+    # Tolerate empty in the unconfigured / DRY-RUN state (was EmailStr → 500).
+    smtp_from_email: str = ""
 
 class SMTPSettingsResponse(BaseModel):
     smtp_host: str
     smtp_port: int
     smtp_username: str
     smtp_use_tls: bool
-    smtp_from_email: EmailStr | None = None
+    # Empty string is valid when SMTP is not configured (was EmailStr → 500).
+    smtp_from_email: str = ""
     has_password: bool
 
 class EmailTestRequest(BaseModel):
