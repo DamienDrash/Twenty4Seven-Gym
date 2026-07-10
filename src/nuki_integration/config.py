@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     app_public_base_url: str = Field(default="https://services.frigew.ski/opengym", alias="APP_PUBLIC_BASE_URL")
     media_storage_path: str = Field(default="./media/uploads", alias="MEDIA_STORAGE_PATH")
     media_url_base: str = Field(default="/media", alias="MEDIA_URL_BASE")
+    guardian_enabled: bool = Field(default=True, alias="GUARDIAN_ENABLED")
+    guardian_interval_seconds: int = Field(default=60, alias="GUARDIAN_INTERVAL_SECONDS")
+    guardian_lookahead_minutes: int = Field(default=90, alias="GUARDIAN_LOOKAHEAD_MINUTES")
+    guardian_grace_minutes: int = Field(default=20, alias="GUARDIAN_GRACE_MINUTES")
+    guardian_autofix: bool = Field(default=True, alias="GUARDIAN_AUTOFIX")
+    nuki_log_stale_alert_hours: int = Field(default=48, alias="NUKI_LOG_STALE_ALERT_HOURS")
 
     @property
     def active_nuki_token(self) -> str:

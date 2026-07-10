@@ -179,7 +179,7 @@ def rotate_daily(
     try:
         for a in nuki.list_keypad_codes():
             nm = a.get("name") or ""
-            if nm.startswith("og-h") and a.get("id") is not None:
+            if nm.startswith("og-") and a.get("id") is not None:
                 pre.setdefault(nm, []).append(a["id"])
     except Exception as exc:
         logger.error("rotate_daily: could not fetch current auths (%s)", exc)
@@ -268,6 +268,8 @@ def assign_and_deliver(
     day: date | None = None,
     tz_name: str = "Europe/Berlin",
     mark_handled=None,
+    nuki=None,
+    settings=None,
 ) -> dict:
     """Ordne eine Buchung einem Slot zu und stelle den Tages-PIN zu.
 
@@ -306,6 +308,36 @@ def assign_and_deliver(
         return {"window_id": window.get("id"), "no_code": False, "assigned": False,
                 "delivered": False, "reason": "no-rotation"}
 
+    # ── Wächter B: verifiziere den zu SENDENDEN Code am Schloss (nur erste Stunde) ──
+    verified = True
+    if nuki is not None and settings is not None:
+        from . import guardian
+        local = to_berlin_tz(window["starts_at"], tz_name)
+        v = guardian.verify_for_send(
+            nuki, db, settings, smartlock_id=smartlock_id, slot_hour=slot_hour,
+            pool_index=pool_index, pin=pin, weekday=weekday,
+            start_minute=local.hour * 60 + local.minute, on_date=local.date(), day=day,
+        )
+        pin = v["pin"]
+        pool_index = v["pool_index"]
+        verified = v["verified"]
+        slot_name = guardian.slot_name(slot_hour, pool_index)
+        if not verified:
+            logger.error("[ALERT] assign_and_deliver: unverified code window=%s slot=%s (%s)",
+                         window.get("id"), slot_name, v.get("reason"))
+            try:
+                from ..enums import AlertSeverity
+                from ..services.alerts import create_operational_alert
+                create_operational_alert(
+                    db=db, settings=settings, severity=AlertSeverity.ERROR,
+                    kind="delivery_unverified",
+                    message=(f"Zugangscode für Buchung {window.get('id')} ({slot_name}) "
+                             f"konnte NICHT am Schloss verifiziert werden ({v.get('reason')}). "
+                             "Best-effort versendet — Materialisierung prüfen."),
+                )
+            except Exception:
+                logger.exception("assign_and_deliver: alert failed")
+
     store.record_assignment(
         db, member_ref=member_ref, weekday=weekday, hour=slot_hour,
         pool_index=pool_index, assigned_date=day,
@@ -330,6 +362,7 @@ def assign_and_deliver(
     return {
         "window_id": window.get("id"), "no_code": False, "assigned": True,
         "pool_index": pool_index, "slot_name": slot_name, "delivered": delivered,
+        "verified": verified,
     }
 
 
@@ -381,7 +414,7 @@ def run_timewindow_cycle(db, settings) -> dict:
             r = assign_and_deliver(
                 db, window=window, email_service=email_service,
                 smartlock_id=smartlock_id, day=day, tz_name=settings.timezone,
-                mark_handled=_mark_handled,
+                mark_handled=_mark_handled, nuki=nuki, settings=effective,
             )
             if r.get("no_code"):
                 no_code += 1

@@ -515,6 +515,19 @@ class NukiClient:
             logger.error("Failed to list Nuki keypad codes: %s", exc)
             return []
 
+    def get_log(self, *, limit: int = 20) -> list[dict]:
+        """Return recent smart-lock activity-log entries (newest first)."""
+        if self._settings.nuki_dry_run:
+            return []
+        try:
+            data = self._request(
+                "GET", f"/smartlock/{self._settings.nuki_smartlock_id}/log?limit={limit}"
+            )
+            return data if isinstance(data, list) else []
+        except Exception as exc:
+            logger.error("Failed to fetch Nuki log: %s", exc)
+            return []
+
     # ── Sync ──────────────────────────────────────────────────────
 
     def force_sync(self) -> None:

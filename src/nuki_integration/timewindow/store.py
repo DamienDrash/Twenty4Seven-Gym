@@ -214,3 +214,20 @@ def record_assignment(db, *, member_ref: str, weekday: int, hour: int,
                 (member_ref, weekday, hour, pool_index, assigned_date),
             )
         conn.commit()
+
+
+def assigned_pool_index(db, *, member_ref: str, weekday: int, hour: int,
+                        assigned_date) -> int | None:
+    """Zuletzt an (Mitglied, Wochentag, slot-hour) an ``assigned_date`` vergebener
+    Pool-Index — der Wächter rekonstruiert damit den zugestellten Slot."""
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT pool_index FROM nuki_assignments
+            WHERE member_ref=%s AND weekday=%s AND hour=%s AND assigned_date=%s
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (member_ref, weekday, hour, assigned_date),
+        )
+        row = cur.fetchone()
+        return int(row["pool_index"]) if row else None
