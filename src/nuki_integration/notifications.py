@@ -71,6 +71,15 @@ class EmailService:
             msg.add_alternative(html_body, subtype="html")
         return self._send(msg)
 
+    def send_alert(self, *, to_email: str, subject: str, text: str) -> bool:
+        """Generische Betriebs-/Wächter-Alarm-Mail an den Betreiber."""
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = self._smtp.from_email
+        msg["To"] = to_email
+        msg.set_content(text)
+        return self._send(msg)
+
     def send_password_reset_email(self, *, to_email: str, reset_url: str,
                                    html_body: str | None = None) -> bool:
         msg = EmailMessage()
