@@ -37,6 +37,21 @@ class Settings(BaseSettings):
     nuki_api_token: str = Field(default="", alias="NUKI_API_TOKEN")
     nuki_smartlock_id: int = Field(default=0, alias="NUKI_SMARTLOCK_ID")
     nuki_dry_run: bool = Field(default=True, alias="NUKI_DRY_RUN")
+    # Shared secret protecting the Nuki webhook guardian. Nuki Advanced-API
+    # webhooks may carry an HMAC-SHA256 signature (X-Nuki-Signature-SHA256);
+    # when they don't, this same secret is accepted as a path/header token.
+    # Empty → the guardian refuses to act on webhook events (fail closed).
+    nuki_webhook_secret: str = Field(default="", alias="NUKI_WEBHOOK_SECRET")
+    # Cooldown (seconds) between guardian reconciliations — rate-limit guard so a
+    # burst of Nuki error events triggers at most one reconcile per window.
+    nuki_guardian_cooldown_seconds: int = Field(default=60, alias="NUKI_GUARDIAN_COOLDOWN_SECONDS")
+    # Periodischer Worker-Fallback: der Wächter reconciled relevante Buchungen auch
+    # ohne eingehenden Webhook höchstens einmal pro diesem Intervall. Rate-limit-/
+    # idempotenz-sicher über denselben atomaren DB-Slot wie der Webhook-Trigger, ein
+    # kurz zuvor per Webhook ausgelöster Reconcile unterdrückt den Fallback.
+    nuki_guardian_fallback_interval_seconds: int = Field(
+        default=900, alias="NUKI_GUARDIAN_FALLBACK_INTERVAL_SECONDS"
+    )
 
     bootstrap_admin_email: str = Field(alias="BOOTSTRAP_ADMIN_EMAIL")
     bootstrap_admin_password: str = Field(alias="BOOTSTRAP_ADMIN_PASSWORD")
@@ -53,12 +68,6 @@ class Settings(BaseSettings):
     app_public_base_url: str = Field(default="https://services.frigew.ski/opengym", alias="APP_PUBLIC_BASE_URL")
     media_storage_path: str = Field(default="./media/uploads", alias="MEDIA_STORAGE_PATH")
     media_url_base: str = Field(default="/media", alias="MEDIA_URL_BASE")
-    guardian_enabled: bool = Field(default=True, alias="GUARDIAN_ENABLED")
-    guardian_interval_seconds: int = Field(default=60, alias="GUARDIAN_INTERVAL_SECONDS")
-    guardian_lookahead_minutes: int = Field(default=90, alias="GUARDIAN_LOOKAHEAD_MINUTES")
-    guardian_grace_minutes: int = Field(default=20, alias="GUARDIAN_GRACE_MINUTES")
-    guardian_autofix: bool = Field(default=True, alias="GUARDIAN_AUTOFIX")
-    nuki_log_stale_alert_hours: int = Field(default=48, alias="NUKI_LOG_STALE_ALERT_HOURS")
 
     @property
     def active_nuki_token(self) -> str:

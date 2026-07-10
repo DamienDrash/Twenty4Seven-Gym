@@ -35,6 +35,42 @@ class GuardTests(unittest.TestCase):
         self.assertTrue(p.needs_keypad_code(6, 10))   # So zu
 
 
+class FallbackSlotTests(unittest.TestCase):
+    """Die 5 Business-Hours-Fallback-Codes: Mo–Sa 08–21, NICHT Sonntag."""
+
+    def test_five_slots_named_og_bh(self):
+        fb = p.build_fallback_slots()
+        self.assertEqual(len(fb), p.FALLBACK_POOL)
+        self.assertEqual([s.name for s in fb], [f"og-bh-p{i}" for i in range(5)])
+
+    def test_excludes_sunday_includes_mon_to_sat(self):
+        b = p.build_fallback_slots()[0].bucket
+        self.assertEqual(b.weekdays, [0, 1, 2, 3, 4, 5])          # Mo–Sa
+        self.assertEqual(b.weekday_mask, 126)                     # 127 minus So-Bit(1)
+        self.assertFalse(b.weekday_mask & p.WEEKDAY_BIT[6])       # Sonntag NICHT gesetzt
+        self.assertTrue(b.weekday_mask & p.WEEKDAY_BIT[5])        # Samstag gesetzt
+
+    def test_time_window_08_to_21(self):
+        b = p.build_fallback_slots()[0].bucket
+        self.assertEqual(b.from_time, 8 * 60)    # 08:00
+        self.assertEqual(b.until_time, 21 * 60)  # 21:00
+
+    def test_expected_slot_count_is_101(self):
+        self.assertEqual(p.expected_slot_count(), 96 + 5)
+        total = p.build_slots(p.compute_offpeak_buckets()) + p.build_fallback_slots()
+        self.assertEqual(len(total), p.expected_slot_count())
+        p.assert_within_budget(total)
+
+    def test_choose_fallback_index_cycles_all_five(self):
+        picks, recent = [], []
+        for _ in range(p.FALLBACK_POOL):
+            idx = p.choose_fallback_index(recent)
+            picks.append(idx)
+            recent.append(idx)
+        self.assertEqual(sorted(picks), list(range(p.FALLBACK_POOL)))
+        self.assertEqual(p.choose_fallback_index([]), 0)
+
+
 class PinTests(unittest.TestCase):
     def test_unique_valid_rotation(self):
         slots = p.build_slots(p.compute_offpeak_buckets())

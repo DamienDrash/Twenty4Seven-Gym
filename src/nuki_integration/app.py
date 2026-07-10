@@ -62,6 +62,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = get_database()
     db.ensure_schema()
     db.ensure_schema_v2()
+    from .services.nuki_guardian import ensure_schema as ensure_guardian_schema
+    from .timewindow import store as tw_store
+    tw_store.ensure_schema(db)
+    ensure_guardian_schema(db)
     db.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
     get_email_template(db)
     logger.info("Access platform starting")
@@ -244,7 +248,7 @@ def admin_timewindow_status(
     tw_store.ensure_schema(db)
     today = to_berlin_tz(now_utc(), settings.timezone).date()
     status = tw_store.rotation_status(db, today)
-    status["expected_slots"] = pin_pool.POOL_PER_HOUR * len(pin_pool.compute_offpeak_buckets())
+    status["expected_slots"] = pin_pool.expected_slot_count()
     return status
 
 
@@ -504,21 +508,69 @@ def magicline_webhook(payload: MagiclineWebhookEnvelope = Body(...), x_api_key: 
 
 @app.get("/webhooks/nuki")
 @app.get("/webhook/nuki")
+@app.get("/webhooks/nuki/{token}")
 async def nuki_webhook_probe() -> dict[str, bool]:
     """Reachability probe for the Nuki Advanced API webhook URL."""
     return {"ok": True}
 
 
+async def _dispatch_nuki_webhook(
+    request: Request, token: str | None, db: Database, rs: Settings,
+) -> JSONResponse:
+    """Authenticate + hand a Nuki webhook to the guardian (see nuki_guardian.py).
+
+    Authentication (fail closed): HMAC-SHA256 signature or a shared-secret token in
+    the path/header. On rejection returns 401 and does NOT act on the payload.
+    """
+    from .services.nuki_guardian import handle_nuki_webhook
+
+    raw = await request.body()
+    signature = request.headers.get("X-Nuki-Signature-SHA256")
+    header_token = request.headers.get("X-Webhook-Token")
+    query_token = request.query_params.get("token")
+    auth_header = request.headers.get("Authorization", "")
+    bearer = auth_header[7:].strip() if auth_header[:7].lower() == "bearer " else None
+    result = handle_nuki_webhook(
+        db, rs, raw_body=raw, signature=signature,
+        token=token or header_token or query_token or bearer,
+        headers=dict(request.headers),
+    )
+    if not result.get("accepted"):
+        # Never echo the payload/secret; opaque rejection.
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"accepted": False})
+    return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+
+
 @app.post("/webhooks/nuki")
 @app.post("/webhook/nuki")
-async def nuki_webhook(request: Request) -> dict[str, bool]:
-    """Nuki Advanced API webhook receiver (DEVICE_AUTHS / DEVICE_STATUS / DEVICE_LOGS).
-    Acknowledges with 200 so Nuki marks it delivered. HMAC verification of
-    X-Nuki-Signature-SHA256 + event processing are added once the secret exists."""
-    raw = await request.body()
-    signed = bool(request.headers.get("X-Nuki-Signature-SHA256"))
-    logger.info("Nuki webhook: %d bytes signed=%s body=%s", len(raw), signed, raw[:600].decode("utf-8", "replace"))
-    return {"received": True}
+async def nuki_webhook(
+    request: Request, db: Database = Depends(get_database), rs: Settings = Depends(get_runtime_settings),
+) -> JSONResponse:
+    """Nuki Advanced API webhook receiver → error-event guardian (fail closed)."""
+    return await _dispatch_nuki_webhook(request, None, db, rs)
+
+
+@app.post("/webhooks/nuki/{token}")
+@app.post("/webhook/nuki/{token}")
+async def nuki_webhook_tokenized(
+    token: str, request: Request,
+    db: Database = Depends(get_database), rs: Settings = Depends(get_runtime_settings),
+) -> JSONResponse:
+    """Nuki webhook with the shared secret carried in the URL path."""
+    return await _dispatch_nuki_webhook(request, token, db, rs)
+
+
+@app.get("/admin/nuki/guardian-audit")
+def admin_guardian_audit(
+    u: UserRecord = Depends(get_current_user),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Database = Depends(get_database),
+) -> list[dict[str, object]]:
+    """Audit trail of guardian reconciliations (traceability)."""
+    from .services.nuki_guardian import ensure_schema, list_guardian_audit
+    ensure_schema(db)
+    return list_guardian_audit(db, limit=limit, offset=offset)
 
 
 # ── Public /checks ────────────────────────────────────────────────
@@ -580,13 +632,8 @@ def admin_ml_debug(email: str = Query(...), u: UserRecord = Depends(get_current_
     return inspect_magicline_member_by_email(rs, email)
 
 
-# ── Health & Routing ──────────────────────────────────────────────
-
-@app.get("/healthz/ready")
-def readiness(db: Database = Depends(get_database)) -> dict[str, str]:
-    if not db.health_check():
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unavailable")
-    return {"status": "ready"}
+# ── Routing ───────────────────────────────────────────────────────
+# (health/readiness live at the top of the module — no duplicate here)
 
 
 @app.get("/admin/nps/stats", response_model=NpsStatsResponse)

@@ -78,6 +78,9 @@ def get_effective_nuki_config(db: Database, settings: Settings) -> dict[str, obj
         "nuki_dry_run": bool(
             raw["nuki_dry_run"] if "nuki_dry_run" in raw else settings.nuki_dry_run
         ),
+        "nuki_webhook_secret": str(
+            raw.get("nuki_webhook_secret") or settings.nuki_webhook_secret
+        ),
     }
 
 

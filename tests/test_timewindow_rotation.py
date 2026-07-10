@@ -6,6 +6,8 @@ from unittest import mock
 from nuki_integration.timewindow import rotation
 from nuki_integration.timewindow import pin_pool
 
+from support import InMemoryStore as MatStore, FakeNuki as MatNuki
+
 DAY = date(2026, 7, 6)  # Monday
 
 
@@ -90,23 +92,113 @@ class RotateDailyTests(unittest.TestCase):
         self.addCleanup(self.patch.stop)
 
     def test_rotate_daily_dry_run(self):
+        # Dry-Run-Vertrag: alle 101 Slots (96 Off-Peak + 5 Business-Hours-Fallback)
+        # werden simuliert/materialisiert-geprüft, aber NICHTS wird gepusht/erzeugt.
         nuki = FakeNuki()
         res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY, dry_run=True)
-        self.assertEqual(res["slots"], 96)
-        self.assertEqual(res["pushed"], 0)          # DRY-RUN: nothing pushed
-        self.assertEqual(res["materialised"], 96)   # simulated OK
+        self.assertEqual(res["slots"], 101)
+        self.assertEqual(res["pushed"], 0)           # DRY-RUN: nichts gepusht
+        self.assertEqual(res["created"], 0)          # DRY-RUN: keine create-Calls
+        self.assertEqual(res["materialised"], 101)   # simulated OK
         self.assertEqual(res["alerts"], 0)
-        self.assertEqual(nuki.creates, 96)
-        self.assertEqual(nuki.verifies, 96)
-        # time-window fields present on the push payload
-        self.assertIn("allowed_from_time", nuki.last_kwargs)
-        self.assertIn("allowed_week_days", nuki.last_kwargs)
+        self.assertTrue(res["dry_run"])
+        self.assertFalse(res["skipped"])
+        self.assertEqual(nuki.creates, 0)            # DRY-RUN ruft create_keypad_code NICHT
+        self.assertEqual(nuki.verifies, 101)         # aber prüft jede Materialisierung
+        # Die 5 Fallback-Slots sind Teil der Rotation (og-bh-*).
+        fb = sum(1 for (h, _p, _d) in self.store.pins if h == pin_pool.FALLBACK_HOUR)
+        self.assertEqual(fb, 5)
 
     def test_rotate_daily_idempotent(self):
         nuki = FakeNuki()
         rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY, dry_run=True)
         again = rotation.rotate_daily(db=None, nuki=FakeNuki(), smartlock_id=0, day=DAY, dry_run=True)
         self.assertTrue(again["skipped"])
+
+
+class FakeLiveNuki:
+    """LIVE Nuki: keeps an in-memory auth list. ``create`` adds a materialised
+    type-13 auth (non-null updateDate), ``delete`` removes it. Records deleted ids
+    so the test can assert the daily rotation actually removed the predecessors.
+    """
+    def __init__(self, existing):
+        # existing: list of (name, id, code) already on the keypad (yesterday's).
+        self._auths = [
+            {"name": n, "id": i, "code": c, "type": 13, "updateDate": "2026-07-05T00:00:00Z"}
+            for (n, i, c) in existing
+        ]
+        self._next_id = 1000
+        self.deleted = []
+        self.created = []
+
+    def list_keypad_codes(self):
+        return [dict(a) for a in self._auths]
+
+    def create_keypad_code(self, *, name, code, allowed_from, allowed_until,
+                           allowed_week_days=127, allowed_from_time=None, allowed_until_time=None):
+        self._next_id += 1
+        new_id = self._next_id
+        self._auths.append({"name": name, "id": new_id, "code": code, "type": 13,
+                            "updateDate": "2026-07-06T00:00:00Z"})  # materialised at once
+        self.created.append((name, new_id))
+        return new_id
+
+    def delete_keypad_code(self, *, auth_id):
+        self.deleted.append(auth_id)
+        self._auths = [a for a in self._auths if a["id"] != auth_id]
+
+    def close(self):
+        pass
+
+
+class LiveRotationDeletesPredecessorsTests(unittest.TestCase):
+    """Regression: the daily CREATE-FIRST rotation must delete the predecessor
+    auths of BOTH the off-peak slots (og-hHH-pX) AND the 5 business-hours fallback
+    slots (og-bh-pX). A too-narrow "og-h" capture filter would leave the 5 fallback
+    predecessors on the keypad forever (stale-but-valid codes + Nuki 200-code limit).
+    """
+    def setUp(self):
+        self.store = InMemoryStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        # No real backoff/pauses in the live loop under test.
+        self.pause = mock.patch.object(rotation, "WRITE_PAUSE_SECS", 0)
+        self.pause.start()
+        self.addCleanup(self.pause.stop)
+
+    def test_live_rotation_deletes_offpeak_and_fallback_predecessors(self):
+        # Yesterday's auths on the keypad: one off-peak slot + all 5 fallback slots.
+        # Old codes contain '0' — gen_pin only emits 1-9, so they can never collide
+        # with a freshly rotated code (keeps the assertions deterministic).
+        offpeak_pred = ("og-h03-p0", 501, "650000")
+        fallback_preds = [(f"og-bh-p{p}", 600 + p, f"70000{p}") for p in range(pin_pool.FALLBACK_POOL)]
+        nuki = FakeLiveNuki([offpeak_pred, *fallback_preds])
+
+        res = rotation.rotate_daily(
+            db=None, nuki=nuki, smartlock_id=7, day=DAY, dry_run=False, force=True,
+        )
+
+        self.assertFalse(res["dry_run"])
+        self.assertEqual(res["created"], 101)  # all 101 slots freshly created
+
+        # Core regression: every predecessor — off-peak AND fallback — was deleted.
+        expected_deleted = {501} | {600 + p for p in range(pin_pool.FALLBACK_POOL)}
+        self.assertTrue(
+            expected_deleted.issubset(set(nuki.deleted)),
+            f"missing predecessor deletions: {expected_deleted - set(nuki.deleted)}",
+        )
+
+        # None of the old predecessors remain on the keypad (no slot leak).
+        remaining_ids = {a["id"] for a in nuki.list_keypad_codes()}
+        self.assertFalse(expected_deleted & remaining_ids)
+
+        # Exactly the 5 (new) fallback auths remain, and no stale old fallback code
+        # survives — the daily rotation guarantee now holds for og-bh-* too.
+        remaining_bh = [a for a in nuki.list_keypad_codes() if a["name"].startswith("og-bh-")]
+        self.assertEqual(len(remaining_bh), pin_pool.FALLBACK_POOL)
+        old_fallback_codes = {c for (_n, _i, c) in fallback_preds}
+        self.assertFalse({a["code"] for a in remaining_bh} & old_fallback_codes)
 
 
 class AssignDeliverTests(unittest.TestCase):
@@ -140,17 +232,22 @@ class AssignDeliverTests(unittest.TestCase):
         self.assertEqual(len(self.store.assignments), 1)
         self.assertEqual(handled[0][0], 1)
 
-    def test_business_hours_no_code(self):
+    def test_business_hours_assigns_fallback_code(self):
+        # Innerhalb der Geschäftszeiten (Mo 10:00 Berlin) → einer der 5
+        # Business-Hours-Fallback-Codes (og-bh-pX), KEIN og-hHH-Stundencode.
         email = FakeEmail()
         handled = []
         r = rotation.assign_and_deliver(
             db=None, window=self._window(8), email_service=email, smartlock_id=0,  # 10:00 Berlin
             day=DAY, mark_handled=lambda wid, **kw: handled.append((wid, kw)),
         )
-        self.assertTrue(r["no_code"])
-        self.assertFalse(r["assigned"])
-        self.assertEqual(email.sends, 0)       # no code → no mail
-        self.assertEqual(len(self.store.assignments), 0)
+        self.assertTrue(r["assigned"])
+        self.assertFalse(r["no_code"])
+        self.assertTrue(r["slot_name"].startswith("og-bh-"))
+        self.assertIn(r["pool_index"], range(pin_pool.FALLBACK_POOL))
+        self.assertEqual(email.sends, 1)       # Code vorhanden → Mail versucht
+        self.assertEqual(len(self.store.assignments), 1)
+        self.assertEqual(handled[0][0], 1)
 
     def test_anti_repeat_across_weeks(self):
         email = FakeEmail()
@@ -161,6 +258,49 @@ class AssignDeliverTests(unittest.TestCase):
             )
             picks.append(r["pool_index"])
         self.assertEqual(sorted(picks), list(range(pin_pool.POOL_PER_HOUR)))
+
+
+class FailClosedAssignTests(unittest.TestCase):
+    """Fail-closed + Anti-Repeat: eine blockierte (nicht materialisierte) Zuweisung
+    darf KEINE Assignment-Zeile schreiben — sonst gälte ein nie versendeter Code als
+    der zuletzt zugestellte (und der Wächter würde den falschen re-materialisieren).
+    """
+    def setUp(self):
+        self.store = MatStore()  # support-Store mit get_slot (für verify_slot_code)
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        for p in range(pin_pool.POOL_PER_HOUR):     # Mon 03:00 Off-Peak-Slot p0..p3
+            self.store.pins[(3, p, DAY)] = f"65432{p}"
+
+    def _window(self):
+        return {"id": 1, "member_id": 42, "email": "m@x.de",
+                "first_name": "A", "last_name": "B",
+                "starts_at": datetime(2026, 7, 6, 1, 0, tzinfo=UTC),   # 03:00 Berlin
+                "ends_at": datetime(2026, 7, 6, 2, 0, tzinfo=UTC)}
+
+    def test_blocked_dispatch_records_no_assignment(self):
+        email = FakeEmail()
+        nuki = MatNuki(materialised=False, covers=False, repair_succeeds=False)
+        r = rotation.assign_and_deliver(
+            db=None, window=self._window(), email_service=email, smartlock_id=0,
+            day=DAY, nuki=nuki, settings=None,
+        )
+        self.assertFalse(r["assigned"])
+        self.assertIs(r["verified"], False)
+        self.assertEqual(email.sends, 0)                   # nichts versendet
+        self.assertEqual(len(self.store.assignments), 0)   # kein "zuletzt zugestellt"
+
+    def test_verified_dispatch_records_assignment(self):
+        email = FakeEmail()
+        nuki = MatNuki(materialised=True, covers=True)
+        r = rotation.assign_and_deliver(
+            db=None, window=self._window(), email_service=email, smartlock_id=0,
+            day=DAY, nuki=nuki, settings=None,
+        )
+        self.assertTrue(r["assigned"])
+        self.assertTrue(r["verified"])
+        self.assertEqual(len(self.store.assignments), 1)
 
 
 if __name__ == "__main__":

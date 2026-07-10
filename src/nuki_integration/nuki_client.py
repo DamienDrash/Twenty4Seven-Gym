@@ -60,6 +60,55 @@ def evaluate_materialization(auths: list[dict[str, Any]], code: str) -> dict[str
     return {"materialised": False, "simulated": False, "auth_id": None, "update_date": None}
 
 
+def _auth_covers_hour(auth: dict[str, Any], weekday: int, hour: int) -> bool:
+    """Does a type-13 auth's time restriction admit the booked ``(weekday, hour)``?
+
+    ``allowedWeekDays`` is the Nuki bitmask (Mo=64 … So=1); a 0/absent mask means
+    every day. ``allowedFromTime``/``allowedUntilTime`` are minutes since midnight;
+    when absent the code has no daily restriction (always covered). A booked hour is
+    covered iff its start minute (``hour*60``) falls inside ``[from, until)`` — this
+    matches exactly how the rotation builds each slot's window.
+    """
+    mask = auth.get("allowedWeekDays")
+    if mask:  # 0 or None → all days
+        if not (mask & (64 >> weekday)):
+            return False
+    from_time = auth.get("allowedFromTime")
+    until_time = auth.get("allowedUntilTime")
+    if from_time is None or until_time is None:
+        return True
+    start = hour * 60
+    return from_time <= start < until_time
+
+
+def evaluate_window_materialization(
+    auths: list[dict[str, Any]], code: str, weekday: int, hour: int
+) -> dict[str, Any]:
+    """Pure check: is ``code`` materialised *and* valid for the booked hour?
+
+    Extends :func:`evaluate_materialization` with a time-window coverage test so a
+    code that exists but whose daily/weekday restriction does not admit the booked
+    first hour is reported as ``valid=False`` (and therefore repaired before send).
+    """
+    want = int(code)
+    for auth in auths:
+        if auth.get("type") == 13 and auth.get("code") == want:
+            materialised = auth.get("updateDate") is not None
+            covers = _auth_covers_hour(auth, weekday, hour)
+            return {
+                "materialised": materialised,
+                "covers_window": covers,
+                "valid": materialised and covers,
+                "simulated": False,
+                "auth_id": auth.get("id"),
+                "update_date": auth.get("updateDate"),
+            }
+    return {
+        "materialised": False, "covers_window": False, "valid": False,
+        "simulated": False, "auth_id": None, "update_date": None,
+    }
+
+
 # Server state mapping (from Nuki Web API docs)
 _SERVER_STATE = {
     0: "OK",
@@ -315,6 +364,34 @@ class NukiClient:
             return {"materialised": False, "simulated": False, "auth_id": None, "update_date": None}
         return evaluate_materialization(auths if isinstance(auths, list) else [], code)
 
+    def verify_code_for_window(self, code: str, *, weekday: int, hour: int) -> dict[str, Any]:
+        """Verify ``code`` is materialised on the device AND valid for the booked hour.
+
+        This is the pre-dispatch gate: it confirms the exact code is present with a
+        non-null ``updateDate`` and that its time restriction admits ``(weekday, hour)``
+        — i.e. the member's FIRST booked hour. DRY-RUN performs no network call and
+        returns a simulated OK.
+        """
+        if self._settings.nuki_dry_run:
+            logger.info("DRY_RUN: skip window verification for code ****** (wd=%s h=%s)", weekday, hour)
+            return {
+                "materialised": True, "covers_window": True, "valid": True,
+                "simulated": True, "auth_id": None, "update_date": None,
+            }
+        try:
+            auths = self._request(
+                "GET", f"/smartlock/{self._settings.nuki_smartlock_id}/auth"
+            )
+        except Exception as exc:
+            logger.error("verify_code_for_window: GET failed: %s", exc)
+            return {
+                "materialised": False, "covers_window": False, "valid": False,
+                "simulated": False, "auth_id": None, "update_date": None,
+            }
+        return evaluate_window_materialization(
+            auths if isinstance(auths, list) else [], code, weekday, hour
+        )
+
     def deactivate_keypad_code(self, *, auth_id: int) -> None:
         """Disable a keypad code without deleting it."""
         if self._settings.nuki_dry_run:
@@ -513,19 +590,6 @@ class NukiClient:
             return [a for a in auths if a.get("type") == 13]
         except Exception as exc:
             logger.error("Failed to list Nuki keypad codes: %s", exc)
-            return []
-
-    def get_log(self, *, limit: int = 20) -> list[dict]:
-        """Return recent smart-lock activity-log entries (newest first)."""
-        if self._settings.nuki_dry_run:
-            return []
-        try:
-            data = self._request(
-                "GET", f"/smartlock/{self._settings.nuki_smartlock_id}/log?limit={limit}"
-            )
-            return data if isinstance(data, list) else []
-        except Exception as exc:
-            logger.error("Failed to fetch Nuki log: %s", exc)
             return []
 
     # ── Sync ──────────────────────────────────────────────────────

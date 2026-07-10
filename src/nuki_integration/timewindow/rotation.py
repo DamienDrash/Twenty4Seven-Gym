@@ -1,7 +1,8 @@
 """Rotation + Zuweisung + Zustellung für das Zeitfenster-Modell (M2b).
 
 Ersetzt das per-Buchung-Provisioning. Ablauf je Worker-Cycle:
-  1. ``rotate_daily`` — 96 feste Slots sicherstellen, Tages-PINs rotieren, jeden
+  1. ``rotate_daily`` — 101 feste Slots (96 Off-Peak + 5 Business-Hours-Fallback)
+     sicherstellen, Tages-PINs rotieren, jeden
      Slot als type-13-Auth mit Zeitfenster pushen (DRY-RUN → skip) + Materiali-
      sierung prüfen, in ``nuki_pin_history`` festhalten. Einmal pro Tag.
   2. Für jede fällige Off-Peak-Buchung ``assign_and_deliver`` — Mitglied→Slot
@@ -120,7 +121,7 @@ def rotate_daily(
     rng=None,
     force: bool = False,
 ) -> dict:
-    """Daily CREATE-FIRST rotation of all 96 time-window slots.
+    """Daily CREATE-FIRST rotation of all 101 slots (96 time-window + 5 fallback).
 
     Trigger (live, non-force): once per calendar day, at/after ROTATION_START_HOUR
     Berlin, but only when NO OpenGym appointment is in progress / imminent — else it
@@ -133,7 +134,7 @@ def rotate_daily(
     day = day or now_utc().date()
     store.ensure_schema(db)
 
-    expected = pin_pool.POOL_PER_HOUR * len(pin_pool.compute_offpeak_buckets())
+    expected = pin_pool.expected_slot_count()  # 96 Off-Peak + 5 Business-Hours-Fallback
     if not force and store.rotation_count_for_day(db, day) >= expected:
         logger.info("rotate_daily: rotation for %s already present — skipping", day)
         return {**store.rotation_status(db, day), "skipped": True}
@@ -179,6 +180,10 @@ def rotate_daily(
     try:
         for a in nuki.list_keypad_codes():
             nm = a.get("name") or ""
+            # "og-" deckt sowohl die Off-Peak-Slots (og-hHH-pX) ALS AUCH die
+            # Business-Hours-Fallback-Slots (og-bh-pX) ab. Ein engerer "og-h"-Filter
+            # würde die 5 Fallback-Vorgänger nie erfassen → sie würden nie gelöscht
+            # (Slot-Leak: stale-aber-gültige Codes + Nuki-200-Limit).
             if nm.startswith("og-") and a.get("id") is not None:
                 pre.setdefault(nm, []).append(a["id"])
     except Exception as exc:
@@ -270,8 +275,20 @@ def assign_and_deliver(
     mark_handled=None,
     nuki=None,
     settings=None,
+    buffer_days: int = BUFFER_DAYS,
 ) -> dict:
     """Ordne eine Buchung einem Slot zu und stelle den Tages-PIN zu.
+
+    Bei mehrstündigen Buchungen wird ausschließlich die ERSTE gebuchte Stunde
+    (``starts_at``) für Slot-Zuordnung UND Verifikation herangezogen.
+
+    Wird ``nuki`` übergeben (Produktionspfad via :func:`run_timewindow_cycle`), gilt
+    **fail closed**: der Code wird vor dem Versand über die Nuki-API verifiziert
+    (materialisiert + gültig für die erste Stunde) und bei Bedarf einmalig
+    repariert. Ohne bestätigte Materialisierung erfolgt KEIN Versand — stattdessen
+    ein Operational Alert; die Buchung bleibt fällig und wird im nächsten Cycle
+    erneut versucht. ``nuki=None`` überspringt die Geräteprüfung (reine
+    Zuordnungslogik, für isolierte Unit-Tests).
 
     ``mark_handled(window_id)`` wird aufgerufen, um die Buchung als erledigt zu
     markieren (Standard: keine Markierung — für Tests). Rückgabe beschreibt den
@@ -279,7 +296,7 @@ def assign_and_deliver(
     """
     day = day or now_utc().date()
     starts_at = window["starts_at"]
-    weekday, hour = berlin_weekday_hour(starts_at, tz_name)
+    weekday, hour = berlin_weekday_hour(starts_at, tz_name)  # erste gebuchte Stunde
     member_ref = str(window["member_id"])
 
     if pin_pool.needs_keypad_code(weekday, hour):
@@ -308,35 +325,29 @@ def assign_and_deliver(
         return {"window_id": window.get("id"), "no_code": False, "assigned": False,
                 "delivered": False, "reason": "no-rotation"}
 
-    # ── Wächter B: verifiziere den zu SENDENDEN Code am Schloss (nur erste Stunde) ──
-    verified = True
-    if nuki is not None and settings is not None:
-        from . import guardian
-        local = to_berlin_tz(window["starts_at"], tz_name)
-        v = guardian.verify_for_send(
-            nuki, db, settings, smartlock_id=smartlock_id, slot_hour=slot_hour,
-            pool_index=pool_index, pin=pin, weekday=weekday,
-            start_minute=local.hour * 60 + local.minute, on_date=local.date(), day=day,
+    # ── Fail-closed Geräte-Verifikation VOR Zuweisung UND Versand ──────────
+    # Die Anti-Repeat-Zuweisung wird ERST NACH bestätigter Materialisierung
+    # geschrieben: ein blockierter (unversendeter) Code darf nie als der zuletzt
+    # dem Mitglied zugestellte gelten (sonst würde der Wächter den falschen Code
+    # re-materialisieren). Ohne injizierten ``nuki`` (reiner Unit-Pfad) entfällt die
+    # Geräteprüfung und die Zuweisung wird wie gehabt geschrieben.
+    if nuki is not None:
+        verify = verify_slot_code(
+            db, nuki=nuki, smartlock_id=smartlock_id, slot_name=slot_name,
+            slot_hour=slot_hour, pool_index=pool_index, code=pin,
+            weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
         )
-        pin = v["pin"]
-        pool_index = v["pool_index"]
-        verified = v["verified"]
-        slot_name = guardian.slot_name(slot_hour, pool_index)
-        if not verified:
-            logger.error("[ALERT] assign_and_deliver: unverified code window=%s slot=%s (%s)",
-                         window.get("id"), slot_name, v.get("reason"))
-            try:
-                from ..enums import AlertSeverity
-                from ..services.alerts import create_operational_alert
-                create_operational_alert(
-                    db=db, settings=settings, severity=AlertSeverity.ERROR,
-                    kind="delivery_unverified",
-                    message=(f"Zugangscode für Buchung {window.get('id')} ({slot_name}) "
-                             f"konnte NICHT am Schloss verifiziert werden ({v.get('reason')}). "
-                             "Best-effort versendet — Materialisierung prüfen."),
-                )
-            except Exception:
-                logger.exception("assign_and_deliver: alert failed")
+        if not verify.get("valid"):
+            _alert_dispatch_blocked(db, settings, window, slot_name, verify)
+            logger.error(
+                "assign_and_deliver: FAIL-CLOSED window=%s slot=%s not materialised — no dispatch",
+                window.get("id"), slot_name,
+            )
+            return {
+                "window_id": window.get("id"), "no_code": False, "assigned": False,
+                "pool_index": pool_index, "slot_name": slot_name,
+                "delivered": False, "verified": False, "reason": "not-materialised",
+            }
 
     store.record_assignment(
         db, member_ref=member_ref, weekday=weekday, hour=slot_hour,
@@ -362,8 +373,70 @@ def assign_and_deliver(
     return {
         "window_id": window.get("id"), "no_code": False, "assigned": True,
         "pool_index": pool_index, "slot_name": slot_name, "delivered": delivered,
-        "verified": verified,
+        "verified": True,
     }
+
+
+def verify_slot_code(
+    db, *, nuki, smartlock_id: int, slot_name: str, slot_hour: int, pool_index: int,
+    code: str, weekday: int, hour: int, day: date, buffer_days: int = BUFFER_DAYS,
+) -> dict:
+    """Verify (and repair once) that ``code`` is materialised for the booked hour.
+
+    Loads the slot's persisted Nuki time-window fields and delegates to
+    :func:`services.nuki_verification.ensure_code_materialised`. Falls back to the
+    pin_pool-derived window if the slot row is not (yet) persisted.
+    """
+    from ..services.nuki_verification import ensure_code_materialised
+
+    slot = store.get_slot(db, smartlock_id=smartlock_id, hour=slot_hour, pool_index=pool_index)
+    if slot is not None:
+        weekday_mask = int(slot["weekday_mask"])
+        from_time = int(slot["from_time"])
+        until_time = int(slot["until_time"])
+        auth_id = slot.get("nuki_auth_id")
+    else:
+        weekday_mask = pin_pool.WEEKDAY_BIT[weekday]
+        if slot_hour == pin_pool.FALLBACK_HOUR:
+            from_time, until_time = pin_pool.FALLBACK_FROM_MIN, pin_pool.FALLBACK_UNTIL_MIN
+        else:
+            from_time, until_time = slot_hour * 60, min((slot_hour + 1) * 60, 1439)
+        auth_id = None
+
+    allowed_from = f"{day.isoformat()}T00:00:00Z"
+    allowed_until = f"{(day + timedelta(days=buffer_days)).isoformat()}T23:59:59Z"
+    return ensure_code_materialised(
+        nuki, slot_name=slot_name, code=code, weekday=weekday, hour=hour,
+        weekday_mask=weekday_mask, from_time=from_time, until_time=until_time,
+        allowed_from=allowed_from, allowed_until=allowed_until, auth_id=auth_id,
+    )
+
+
+def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: dict) -> None:
+    """Persist an operational alert when a dispatch is blocked (fail closed)."""
+    if db is None or settings is None:
+        return
+    try:
+        from ..enums import AlertSeverity
+        from ..services.alerts import create_operational_alert
+        create_operational_alert(
+            db=db, settings=settings, severity=AlertSeverity.ERROR,
+            kind="code-not-materialised",
+            message=(
+                f"Zugangscode für Fenster {window.get('id')} (Slot {slot_name}) nicht "
+                f"materialisiert — Versand blockiert (fail closed)."
+            ),
+            payload={
+                "access_window_id": window.get("id"),
+                "member_id": window.get("member_id"),
+                "slot_name": slot_name,
+                "materialised": verify.get("materialised"),
+                "covers_window": verify.get("covers_window"),
+                "repaired": verify.get("repaired"),
+            },
+        )
+    except Exception:
+        logger.exception("_alert_dispatch_blocked: failed to record alert")
 
 
 # ── Worker-Einstieg: ersetzt provision_due_codes ──────────────────
@@ -385,7 +458,7 @@ def run_timewindow_cycle(db, settings) -> dict:
     nuki = NukiClient(effective)
     email_service = EmailService(settings, get_effective_smtp_config(db, settings))
 
-    day = now_utc().date()
+    day = to_berlin_tz(now_utc(), settings.timezone).date()  # Berlin-Lokaldatum, nicht UTC
 
     def _mark_handled(window_id: int, *, pin: str | None = None, delivered: bool = False) -> None:
         if pin is None:
@@ -409,15 +482,17 @@ def run_timewindow_cycle(db, settings) -> dict:
     try:
         rotation = rotate_daily(db, nuki=nuki, smartlock_id=smartlock_id, day=day, dry_run=dry_run)
         due = db.due_access_windows(now_utc())
-        assigned = no_code = delivered = 0
+        assigned = no_code = delivered = blocked = 0
         for window in due:
             r = assign_and_deliver(
                 db, window=window, email_service=email_service,
                 smartlock_id=smartlock_id, day=day, tz_name=settings.timezone,
-                mark_handled=_mark_handled, nuki=nuki, settings=effective,
+                mark_handled=_mark_handled, nuki=nuki, settings=settings,
             )
             if r.get("no_code"):
                 no_code += 1
+            elif r.get("verified") is False:
+                blocked += 1  # fail closed: not materialised, no dispatch
             elif r.get("assigned"):
                 assigned += 1
                 delivered += int(bool(r.get("delivered")))
@@ -430,12 +505,13 @@ def run_timewindow_cycle(db, settings) -> dict:
         "assigned": assigned,
         "no_code": no_code,
         "delivered": delivered,
+        "blocked": blocked,
         "pushed": rotation.get("pushed", 0),
         "dry_run": dry_run,
     }
     logger.info(
-        "timewindow cycle: slots=%s due=%s assigned=%s no_code=%s delivered=%s pushed=%s (dry_run=%s)",
-        rotation.get("slots"), len(due), assigned, no_code, delivered,
+        "timewindow cycle: slots=%s due=%s assigned=%s no_code=%s delivered=%s blocked=%s pushed=%s (dry_run=%s)",
+        rotation.get("slots"), len(due), assigned, no_code, delivered, blocked,
         rotation.get("pushed", 0), dry_run,
     )
     return result

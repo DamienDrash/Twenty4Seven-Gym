@@ -110,6 +110,49 @@ def count_slots(db, smartlock_id: int) -> int:
         return int(cur.fetchone()["n"])
 
 
+def get_slot(db, *, smartlock_id: int, hour: int, pool_index: int) -> dict[str, Any] | None:
+    """Return the persistent slot row (incl. weekday_mask/from_time/until_time/auth_id).
+
+    Used by the pre-dispatch verifier and the guardian to repair the exact slot
+    with its correct Nuki time-window fields.
+    """
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, smartlock_id, name, hour, pool_index, weekday_mask,
+                   from_time, until_time, nuki_auth_id
+            FROM nuki_slots
+            WHERE smartlock_id=%s AND hour=%s AND pool_index=%s
+            """,
+            (smartlock_id, hour, pool_index),
+        )
+        return cur.fetchone()
+
+
+def relevant_windows(db, *, now, lead_seconds: int = 7200) -> list[dict[str, Any]]:
+    """Access windows that are currently relevant for keypad access.
+
+    Relevant = still scheduled/active, not yet ended, and either in progress now or
+    starting within ``lead_seconds``. These are the bookings the guardian
+    re-materialises the member's already-assigned code for.
+    """
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT aw.id, aw.member_id, aw.starts_at, aw.ends_at,
+                   m.email, m.first_name, m.last_name
+            FROM access_windows aw
+            JOIN members m ON m.id = aw.member_id
+            WHERE aw.status IN ('scheduled', 'active')
+              AND aw.ends_at >= %s
+              AND aw.starts_at <= %s + (%s * interval '1 second')
+            ORDER BY aw.starts_at ASC
+            """,
+            (now, now, lead_seconds),
+        )
+        return list(cur.fetchall())
+
+
 # ── PIN-Historie ──────────────────────────────────────────────────
 def record_rotation(db, *, slot_id: int, rotation_date, pin: str,
                     pushed: bool, materialised: bool, dry_run: bool) -> None:
@@ -214,20 +257,3 @@ def record_assignment(db, *, member_ref: str, weekday: int, hour: int,
                 (member_ref, weekday, hour, pool_index, assigned_date),
             )
         conn.commit()
-
-
-def assigned_pool_index(db, *, member_ref: str, weekday: int, hour: int,
-                        assigned_date) -> int | None:
-    """Zuletzt an (Mitglied, Wochentag, slot-hour) an ``assigned_date`` vergebener
-    Pool-Index — der Wächter rekonstruiert damit den zugestellten Slot."""
-    with db.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT pool_index FROM nuki_assignments
-            WHERE member_ref=%s AND weekday=%s AND hour=%s AND assigned_date=%s
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (member_ref, weekday, hour, assigned_date),
-        )
-        row = cur.fetchone()
-        return int(row["pool_index"]) if row else None
