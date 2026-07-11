@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     magicline_webhook_api_key: str = Field(default="", alias="MAGICLINE_WEBHOOK_API_KEY")
     magicline_studio_id: int = Field(alias="MAGICLINE_STUDIO_ID")
     magicline_studio_name: str = Field(default="", alias="MAGICLINE_STUDIO_NAME")
-    magicline_sync_interval_minutes: int = Field(default=30, alias="MAGICLINE_SYNC_INTERVAL_MINUTES")
+    magicline_sync_interval_minutes: int = Field(default=5, alias="MAGICLINE_SYNC_INTERVAL_MINUTES")
     magicline_relevant_appointment_title: str = Field(default="Freies Training", alias="MAGICLINE_RELEVANT_APPOINTMENT_TITLE")
     magicline_entitlement_rate_name: str = Field(default="XXLARGE", alias="MAGICLINE_ENTITLEMENT_RATE_NAME")
     magicline_entitlement_product_name: str = Field(default="Freies Training", alias="MAGICLINE_ENTITLEMENT_PRODUCT_NAME")

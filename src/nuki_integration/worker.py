@@ -9,6 +9,41 @@ from .services import cleanup_orphaned_nuki_codes, deprovision_expired_codes, lo
 from .services.nuki_guardian import run_guardian_cycle
 from .timewindow.rotation import run_timewindow_cycle
 
+def run_cycle(db, settings, logger) -> dict:
+    """One worker tick.
+
+    Order matters: Magicline bookings are SYNCED first, then time-window
+    processing runs in the SAME tick — so any newly-due access windows/codes are
+    assigned + dispatched immediately, not on a later tick. With the 5-minute
+    interval this bounds post-sync dispatch latency to a single short cycle.
+    """
+    now = now_utc()
+    expired_db = db.expire_finished_windows(now)
+    if expired_db > 0:
+        lock_if_no_active_sessions(db, settings)
+    deleted_nuki = deprovision_expired_codes(db, settings)
+    orphans_removed = cleanup_orphaned_nuki_codes(db, settings)
+    sync_result = sync_magicline_bookings(db, settings)
+    # M2b: per-booking provisioning replaced by the time-window PIN model.
+    # Runs right after the sync so freshly-synced due windows dispatch now.
+    tw = run_timewindow_cycle(db, settings)
+    # Wächter-Fallback: reconciled relevante Buchungen auch ohne Webhook.
+    # Rate-limit-sicher über denselben DB-Slot wie der Webhook-Trigger.
+    guardian = run_guardian_cycle(db, settings)
+    logger.info(
+        "worker cycle: expired_db=%s deleted_nuki=%s orphans_removed=%s windows=%s "
+        "tw_slots=%s tw_assigned=%s tw_no_code=%s tw_delivered=%s tw_blocked=%s tw_pushed=%s "
+        "guardian_reconciled=%s guardian_repaired=%s dry_run=%s",
+        expired_db, deleted_nuki, orphans_removed, sync_result["windows"],
+        tw["rotation"].get("slots"), tw["assigned"], tw["no_code"],
+        tw["delivered"], tw["blocked"], tw["pushed"],
+        guardian.get("reconciled"), guardian.get("repaired", 0), tw["dry_run"],
+    )
+    return {"expired_db": expired_db, "deleted_nuki": deleted_nuki,
+            "orphans_removed": orphans_removed, "sync": sync_result,
+            "tw": tw, "guardian": guardian}
+
+
 def run_forever() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -18,27 +53,7 @@ def run_forever() -> None:
     db.ensure_schema()
     try:
         while True:
-            now = now_utc()
-            expired_db = db.expire_finished_windows(now)
-            if expired_db > 0:
-                lock_if_no_active_sessions(db, settings)
-            deleted_nuki = deprovision_expired_codes(db, settings)
-            orphans_removed = cleanup_orphaned_nuki_codes(db, settings)
-            sync_result = sync_magicline_bookings(db, settings)
-            # M2b: per-booking provisioning replaced by the time-window PIN model.
-            tw = run_timewindow_cycle(db, settings)
-            # Wächter-Fallback: reconciled relevante Buchungen auch ohne Webhook.
-            # Rate-limit-sicher über denselben DB-Slot wie der Webhook-Trigger.
-            guardian = run_guardian_cycle(db, settings)
-            logger.info(
-                "worker cycle: expired_db=%s deleted_nuki=%s orphans_removed=%s windows=%s "
-                "tw_slots=%s tw_assigned=%s tw_no_code=%s tw_delivered=%s tw_blocked=%s tw_pushed=%s "
-                "guardian_reconciled=%s guardian_repaired=%s dry_run=%s",
-                expired_db, deleted_nuki, orphans_removed, sync_result["windows"],
-                tw["rotation"].get("slots"), tw["assigned"], tw["no_code"],
-                tw["delivered"], tw["blocked"], tw["pushed"],
-                guardian.get("reconciled"), guardian.get("repaired", 0), tw["dry_run"],
-            )
+            run_cycle(db, settings, logger)
             time.sleep(settings.magicline_sync_interval_minutes * 60)
     finally:
         db.close()
