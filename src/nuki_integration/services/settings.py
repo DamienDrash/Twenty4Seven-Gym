@@ -67,6 +67,8 @@ def get_effective_telegram_config(db: Database, settings: Settings) -> TelegramC
     return TelegramConfig(
         bot_token=str(raw.get("telegram_bot_token") or settings.telegram_bot_token),
         chat_id=str(raw.get("telegram_chat_id") or settings.telegram_chat_id),
+        message_thread_id=str(raw.get("telegram_message_thread_id")
+                              or settings.telegram_message_thread_id),
     )
 
 

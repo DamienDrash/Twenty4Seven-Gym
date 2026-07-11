@@ -21,6 +21,7 @@ class SMTPConfig:
 class TelegramConfig:
     bot_token: str
     chat_id: str
+    message_thread_id: str = ""  # forum-topic thread within a supergroup (optional)
 
 class EmailService:
     def __init__(self, settings: Settings, smtp_config: SMTPConfig | None = None) -> None:
@@ -98,13 +99,33 @@ class TelegramService:
     def is_configured(self) -> bool:
         return bool(self._config.bot_token and self._config.chat_id)
 
+    def build_payload(self, text: str) -> dict:
+        """Telegram sendMessage payload; includes message_thread_id when a forum
+        topic is configured (needed to post into an OpenGym supergroup topic)."""
+        payload: dict = {"chat_id": self._config.chat_id, "text": text}
+        thread = str(self._config.message_thread_id or "").strip()
+        if thread:
+            payload["message_thread_id"] = int(thread) if thread.lstrip("-").isdigit() else thread
+        return payload
+
     def send_message(self, *, text: str) -> bool:
         if not self.is_configured():
             logger.warning("Telegram not configured")
             return False
         r = httpx.post(
             f"https://api.telegram.org/bot{self._config.bot_token}/sendMessage",
-            json={"chat_id": self._config.chat_id, "text": text}, timeout=20,
+            json=self.build_payload(text), timeout=20,
         )
-        r.raise_for_status()
-        return True
+        # Surface the API reason (e.g. thread/chat invalid, bot not a member) instead
+        # of raising; never log the token (only present in the URL, not logged here).
+        if not r.is_success:
+            try:
+                desc = r.json().get("description")
+            except Exception:
+                desc = r.text[:200]
+            logger.error("Telegram sendMessage failed: HTTP %s — %s", r.status_code, desc)
+            return False
+        try:
+            return bool(r.json().get("ok"))
+        except Exception:
+            return True

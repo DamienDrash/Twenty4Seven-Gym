@@ -9,7 +9,11 @@ from .exceptions import ConfigurationError
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
+    # Secret credential file (mode-600, root-owned; bind-mounted into the container)
+    # is read here so tokens never enter docker-compose.yml or logs. OS env still wins.
+    model_config = SettingsConfigDict(
+        env_file=(".env", "/run/secrets/opengym_telegram.env"),
+        env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
 
     app_env: str = Field(default="development", alias="APP_ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -65,6 +69,7 @@ class Settings(BaseSettings):
     smtp_from_email: str = Field(default="", alias="SMTP_FROM_EMAIL")
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    telegram_message_thread_id: str = Field(default="", alias="TELEGRAM_MESSAGE_THREAD_ID")
     alert_email: str = Field(default="", alias="ALERT_EMAIL")
     # Optional ntfy push for monitoring alerts (dormant unless both are set).
     ntfy_url: str = Field(default="", alias="NTFY_URL")
