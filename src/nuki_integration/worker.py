@@ -7,6 +7,7 @@ from .logging_setup import configure_logging
 from .datetime_utils import now_utc
 from .services import cleanup_orphaned_nuki_codes, deprovision_expired_codes, lock_if_no_active_sessions, sync_magicline_bookings
 from .services.nuki_guardian import run_guardian_cycle
+from .services import monitoring
 from .timewindow.rotation import run_timewindow_cycle
 
 def run_cycle(db, settings, logger) -> dict:
@@ -30,6 +31,12 @@ def run_cycle(db, settings, logger) -> dict:
     # Wächter-Fallback: reconciled relevante Buchungen auch ohne Webhook.
     # Rate-limit-sicher über denselben DB-Slot wie der Webhook-Trigger.
     guardian = run_guardian_cycle(db, settings)
+    # Proactive monitoring: heartbeat + periodic fallback detectors (overdue
+    # dispatch, keypad-rejection poll) so a missed webhook cannot fail silently.
+    try:
+        monitoring.run_worker_monitoring(db, settings)
+    except Exception:
+        logger.exception("run_cycle: monitoring failed")
     logger.info(
         "worker cycle: expired_db=%s deleted_nuki=%s orphans_removed=%s windows=%s "
         "tw_slots=%s tw_assigned=%s tw_no_code=%s tw_delivered=%s tw_blocked=%s tw_pushed=%s "

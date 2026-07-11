@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -57,21 +58,45 @@ STATIC_DIR = Path(__file__).parent / "static"
 settings = get_settings()
 
 
+async def _worker_heartbeat_watch(db, period_secs: int = 60) -> None:
+    """Service-side monitor: independently of the worker, periodically check the
+    worker heartbeat and alert if it is stale (worker crash/hang/cadence broken)."""
+    from .services import monitoring
+    while True:
+        try:
+            await asyncio.sleep(period_secs)
+            await asyncio.to_thread(monitoring.run_service_monitoring, db, settings)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            logger.exception("worker heartbeat watch failed")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     db = get_database()
     db.ensure_schema()
     db.ensure_schema_v2()
     from .services.nuki_guardian import ensure_schema as ensure_guardian_schema
+    from .services import monitoring
     from .timewindow import store as tw_store
     tw_store.ensure_schema(db)
     ensure_guardian_schema(db)
+    monitoring.ensure_schema(db)
     db.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
     get_email_template(db)
     logger.info("Access platform starting")
-    yield
-    logger.info("Access platform shutting down")
-    db.close()
+    monitor_task = asyncio.create_task(_worker_heartbeat_watch(db))
+    try:
+        yield
+    finally:
+        logger.info("Access platform shutting down")
+        monitor_task.cancel()
+        try:
+            await monitor_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        db.close()
 
 
 app = FastAPI(

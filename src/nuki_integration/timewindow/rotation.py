@@ -418,14 +418,14 @@ def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: 
         return
     try:
         from ..enums import AlertSeverity
-        from ..services.alerts import create_operational_alert
-        create_operational_alert(
-            db=db, settings=settings, severity=AlertSeverity.ERROR,
-            kind="code-not-materialised",
-            message=(
-                f"Zugangscode für Fenster {window.get('id')} (Slot {slot_name}) nicht "
-                f"materialisiert — Versand blockiert (fail closed)."
-            ),
+        from ..services import monitoring
+        # Deduped (idempotent, cooldown) so a persistently-blocked window does not
+        # re-alert every worker tick. Keyed by window id.
+        monitoring.notify(
+            db, settings, key=f"code-not-materialised:{window.get('id')}",
+            severity=AlertSeverity.ERROR, kind="code-not-materialised",
+            title=f"Access code for window {window.get('id')} (slot {slot_name}) not materialised — dispatch blocked (fail closed).",
+            detail=f"member#{window.get('member_id')}",
             payload={
                 "access_window_id": window.get("id"),
                 "member_id": window.get("member_id"),
@@ -434,6 +434,7 @@ def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: 
                 "covers_window": verify.get("covers_window"),
                 "repaired": verify.get("repaired"),
             },
+            cooldown_secs=20 * 60,
         )
     except Exception:
         logger.exception("_alert_dispatch_blocked: failed to record alert")

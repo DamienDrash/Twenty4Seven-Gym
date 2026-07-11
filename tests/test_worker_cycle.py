@@ -71,6 +71,7 @@ class PostSyncProcessingTests(unittest.TestCase):
         with mock.patch.object(worker, "sync_magicline_bookings", fake_sync), \
              mock.patch.object(worker, "run_timewindow_cycle", fake_tw), \
              mock.patch.object(worker, "run_guardian_cycle", fake_guardian), \
+             mock.patch.object(worker.monitoring, "run_worker_monitoring", lambda db, s: None), \
              mock.patch.object(worker, "deprovision_expired_codes", lambda db, s: 0), \
              mock.patch.object(worker, "cleanup_orphaned_nuki_codes", lambda db, s: 0):
             result = worker.run_cycle(_FakeDB(), settings=object(), logger=LOG)
