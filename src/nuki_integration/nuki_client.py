@@ -309,7 +309,7 @@ class NukiClient:
     def update_keypad_code(
         self,
         *,
-        auth_id: int,
+        auth_id: int | str,
         name: str,
         code: str | None = None,
         allowed_from: str,
@@ -383,10 +383,13 @@ class NukiClient:
                 "GET", f"/smartlock/{self._settings.nuki_smartlock_id}/auth"
             )
         except Exception as exc:
+            # Device/API unreachable (e.g. Nuki WAN timeout) — NOT the same as a
+            # genuinely missing code. Signal "error" so callers can skip/retry
+            # instead of treating a transient blip as a materialisation failure.
             logger.error("verify_code_for_window: GET failed: %s", exc)
             return {
                 "materialised": False, "covers_window": False, "valid": False,
-                "simulated": False, "auth_id": None, "update_date": None,
+                "simulated": False, "auth_id": None, "update_date": None, "error": True,
             }
         return evaluate_window_materialization(
             auths if isinstance(auths, list) else [], code, weekday, hour

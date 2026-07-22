@@ -95,6 +95,74 @@ class EnsureCodeMaterialisedTests(unittest.TestCase):
         self.assertFalse(r["valid"])
         self.assertTrue(r["repaired"])
 
+    def test_repair_update_passes_hex_auth_id_as_is(self):
+        # Regression: Nuki auth ids are hex strings — int() crashed every repair
+        # ("invalid literal for int() ... '6a607d439baa510030d97d90'"). The lock's
+        # verify response carries that hex id, so it must be passed through as-is.
+        nuki = _HexAuthNuki()
+        r = ensure_code_materialised(nuki, **{**_KW, "auth_id": None})
+        self.assertTrue(r["valid"])                 # repair succeeded (no int() crash)
+        self.assertEqual(len(nuki.updates), 1)
+        self.assertEqual(nuki.updates[0]["auth_id"], _HexAuthNuki.HEX)
+
+
+class _HexAuthNuki:
+    """verify returns a materialised-but-wrong-window auth with a HEX auth id
+    (as the real Nuki API does); repair updates it in place → then valid."""
+    HEX = "6a607d439baa510030d97d90"
+
+    def __init__(self):
+        self.updates = []
+        self.creates = []
+        self._covers = False
+
+    def verify_code_for_window(self, code, *, weekday, hour):  # noqa: ARG002
+        return {"materialised": True, "covers_window": self._covers,
+                "valid": self._covers, "simulated": False,
+                "auth_id": self.HEX, "update_date": None}
+
+    def update_keypad_code(self, **k):
+        self.updates.append(k); self._covers = True  # repair fixes the window
+
+    def create_keypad_code(self, **k):
+        self.creates.append(k); return self.HEX
+
+    def close(self):
+        pass
+
+
+class _UnreachableNuki:
+    """verify_code_for_window signals a transient device/API error (timeout)."""
+    def __init__(self):
+        self.updates = []
+        self.creates = []
+
+    def verify_code_for_window(self, code, *, weekday, hour):  # noqa: ARG002
+        return {"materialised": False, "covers_window": False, "valid": False,
+                "simulated": False, "auth_id": None, "update_date": None, "error": True}
+
+    def update_keypad_code(self, **k):
+        self.updates.append(k)
+
+    def create_keypad_code(self, **k):
+        self.creates.append(k); return 1
+
+    def close(self):
+        pass
+
+
+class UnreachableTests(unittest.TestCase):
+    def test_transient_error_is_unreachable_not_repaired(self):
+        # A Nuki/WAN timeout must NOT be treated as a materialisation failure and
+        # must NOT trigger a blind repair — the guardian skips + retries next cycle.
+        nuki = _UnreachableNuki()
+        r = ensure_code_materialised(nuki, **{**_KW, "auth_id": "abc123"})
+        self.assertTrue(r["unreachable"])
+        self.assertFalse(r["valid"])
+        self.assertFalse(r["repaired"])
+        self.assertEqual(nuki.updates, [])   # no repair attempted while unreachable
+        self.assertEqual(nuki.creates, [])
+
 
 if __name__ == "__main__":
     unittest.main()

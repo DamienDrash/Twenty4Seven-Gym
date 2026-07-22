@@ -61,6 +61,13 @@ def ensure_code_materialised(
         outcome["valid"] = True
         return outcome
 
+    # Device/API unreachable (transient WAN/timeout): we cannot verify, so we must
+    # not repair blindly nor claim a materialisation failure. Report "unreachable"
+    # so the caller skips/retries next cycle instead of alerting on a blip.
+    if check.get("error"):
+        outcome["unreachable"] = True
+        return outcome
+
     # Repair once: keep the SAME code (it may already be in the member's mail).
     # Update the existing auth in place if we know it, else create a fresh one.
     logger.warning(
@@ -70,8 +77,10 @@ def ensure_code_materialised(
     try:
         target_auth_id = outcome["auth_id"] or auth_id
         if target_auth_id is not None:
+            # Nuki auth ids are hex strings (e.g. "6a607d439baa510030d97d90"), NOT
+            # base-10 ints — pass through as-is (int() here crashed every repair).
             nuki.update_keypad_code(
-                auth_id=int(target_auth_id), name=slot_name, code=code,
+                auth_id=target_auth_id, name=slot_name, code=code,
                 allowed_from=allowed_from, allowed_until=allowed_until,
                 allowed_week_days=weekday_mask,
                 allowed_from_time=from_time, allowed_until_time=until_time,
@@ -98,5 +107,6 @@ def ensure_code_materialised(
     outcome["materialised"] = bool(recheck.get("materialised"))
     outcome["covers_window"] = bool(recheck.get("covers_window"))
     outcome["valid"] = bool(recheck.get("valid"))
+    outcome["unreachable"] = bool(recheck.get("error"))
     outcome["auth_id"] = recheck.get("auth_id", outcome["auth_id"])
     return outcome

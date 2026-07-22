@@ -304,7 +304,11 @@ def reconcile_relevant_bookings(
         checked += 1
         if verify.get("repaired") and verify.get("valid"):
             repaired += 1
-        if not verify.get("valid"):
+        if verify.get("unreachable"):
+            # Transient Nuki/WAN blip — could not verify; retry next cycle. NOT a
+            # materialisation failure, so it must not raise a false operator alert.
+            skipped += 1
+        elif not verify.get("valid"):
             failures += 1
         details.append({
             "window_id": window.get("id"), "member_id": window.get("member_id"),
