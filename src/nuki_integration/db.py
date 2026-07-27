@@ -809,9 +809,14 @@ class Database:
                 SELECT aw.id, aw.member_id, aw.booking_id, aw.starts_at,
                        aw.booking_count, aw.ends_at, aw.dispatch_at,
                        aw.checks_key,
+                       -- ungepufferter Start der Repraesentanten-Buchung: das
+                       -- PIN-Slot-Routing braucht die ECHTE erste gebuchte Stunde,
+                       -- nicht aw.starts_at (= Start - 15 min Vor-Puffer).
+                       b.start_at AS booking_starts_at,
                        m.email, m.first_name, m.last_name
                 FROM access_windows aw
                 JOIN members m ON m.id = aw.member_id
+                JOIN bookings b ON b.id = aw.booking_id
                 LEFT JOIN access_codes ac ON ac.access_window_id = aw.id
                 WHERE aw.status = %s AND aw.dispatch_at <= %s AND ac.id IS NULL
                 ORDER BY aw.dispatch_at ASC

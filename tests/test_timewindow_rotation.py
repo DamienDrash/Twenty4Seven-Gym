@@ -303,5 +303,105 @@ class FailClosedAssignTests(unittest.TestCase):
         self.assertEqual(len(self.store.assignments), 1)
 
 
+class FakeCapturingEmail:
+    """Captures the kwargs of the last send_access_code call (delivery = success)."""
+    def __init__(self, result=True):
+        self._result = result
+        self.sends = 0
+        self.last_kwargs = None
+
+    def send_access_code(self, **kwargs):
+        self.sends += 1
+        self.last_kwargs = kwargs
+        return self._result
+
+
+class BrandedAutoDeliveryTests(unittest.TestCase):
+    """Regression (Bug 1): Der automatische Zeitfenster-Versand MUSS dasselbe
+    gebrandete HTML-Zugangscode-Template inkl. Check-in-/Checks-URLs nutzen wie der
+    manuelle Versand (services.access._send_code_email). Zuvor rief
+    assign_and_deliver send_access_code OHNE html_body/checks_url/check_in_url auf ->
+    Mitglieder erhielten nur die ungebrandete Plaintext-Mail.
+    """
+    def setUp(self):
+        self.store = InMemoryStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+        rotation.rotate_daily(db=None, nuki=FakeNuki(), smartlock_id=0, day=DAY, dry_run=True)
+
+    def _window(self):
+        # Mo 03:00 Berlin (Off-Peak) -> stundengenauer Slot; mit checks_key + email.
+        return {
+            "id": 7, "member_id": 42, "email": "m42@example.com",
+            "first_name": "Alex", "last_name": "Muster", "checks_key": "ck-abc",
+            "starts_at": datetime(2026, 7, 6, 1, 0, tzinfo=UTC),
+            "ends_at": datetime(2026, 7, 6, 2, 0, tzinfo=UTC),
+        }
+
+    def test_auto_delivery_uses_branded_template_and_urls(self):
+        email = FakeCapturingEmail(result=True)
+        with mock.patch(
+                "nuki_integration.services.email_builder.build_access_code_email_html",
+                return_value="<html>BRANDED-ACCESS-CODE</html>") as m_html, \
+             mock.patch(
+                "nuki_integration.services.auth_tokens.build_checks_link",
+                return_value="https://svc/checks?key=ck-abc") as m_checks, \
+             mock.patch(
+                "nuki_integration.services.auth_tokens.build_check_in_link",
+                return_value="https://svc/check-in?token=tk"), \
+             mock.patch(
+                "nuki_integration.services.settings.get_effective_check_in_settings",
+                return_value={"enabled": True}):
+            r = rotation.assign_and_deliver(
+                db=mock.Mock(name="db"), window=self._window(), email_service=email,
+                smartlock_id=0, day=DAY, nuki=None, settings=mock.Mock(name="settings"),
+            )
+
+        self.assertTrue(r["assigned"])
+        self.assertTrue(r["delivered"])
+        self.assertEqual(email.sends, 1)
+        kw = email.last_kwargs
+        # 1) Gebrandetes HTML-Template ist verdrahtet (identischer Builder wie manuell).
+        self.assertEqual(kw.get("html_body"), "<html>BRANDED-ACCESS-CODE</html>")
+        # 2) Check-in- UND Checks-URLs sind gesetzt.
+        self.assertEqual(kw.get("checks_url"), "https://svc/checks?key=ck-abc")
+        self.assertEqual(kw.get("check_in_url"), "https://svc/check-in?token=tk")
+        # 3) Der Builder erhielt member_name/code/validity/checks_url konsistent.
+        m_html.assert_called_once()
+        _, hkw = m_html.call_args
+        self.assertEqual(hkw["code"], kw["code"])
+        self.assertEqual(hkw["member_name"], kw["member_name"])
+        self.assertEqual(hkw["checks_url"], kw["checks_url"])
+        self.assertEqual(hkw["valid_from"], kw["valid_from"])
+        self.assertEqual(hkw["valid_until"], kw["valid_until"])
+        # 4) checks_url wurde aus dem window-checks_key gebaut.
+        _, ckw = m_checks.call_args
+        self.assertEqual(ckw["checks_key"], "ck-abc")
+        self.assertEqual(ckw["member_id"], 42)
+
+    def test_auto_delivery_formats_dates_like_manual_send(self):
+        # Manueller Versand nutzt fmt_dt_de -> 'D. Monat JJJJ, HH:MM Uhr'.
+        email = FakeCapturingEmail(result=True)
+        with mock.patch(
+                "nuki_integration.services.email_builder.build_access_code_email_html",
+                return_value="<html>X</html>"), \
+             mock.patch(
+                "nuki_integration.services.auth_tokens.build_checks_link",
+                return_value="u"), \
+             mock.patch(
+                "nuki_integration.services.settings.get_effective_check_in_settings",
+                return_value={"enabled": False}):
+            rotation.assign_and_deliver(
+                db=mock.Mock(), window=self._window(), email_service=email,
+                smartlock_id=0, day=DAY, nuki=None, settings=mock.Mock(),
+            )
+        kw = email.last_kwargs
+        self.assertIn("Juli", kw["valid_from"])
+        self.assertIn("Uhr", kw["valid_from"])
+        # check-in disabled -> keine check_in_url
+        self.assertIsNone(kw.get("check_in_url"))
+
+
 if __name__ == "__main__":
     unittest.main()

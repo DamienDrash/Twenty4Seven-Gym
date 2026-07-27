@@ -56,7 +56,9 @@ class EmailService:
         checks = f"\nCheck-In / Check-Out:\n{checks_url}\n" if checks_url else ""
         msg.set_content(
             f"Hallo {member_name},\n\ndein Zugangscode: {code}\n"
-            f"Gültig von: {valid_from}\nGültig bis: {valid_until}\n{checks}"
+            f"Gültig von: {valid_from}\nGültig bis: {valid_until}\n"
+            f"Hinweis: Der Code funktioniert nur in diesem Zeitfenster – "
+            f"bitte plane deine Ankunft entsprechend.\n{checks}"
         )
         if html_body:
             msg.add_alternative(html_body, subtype="html")

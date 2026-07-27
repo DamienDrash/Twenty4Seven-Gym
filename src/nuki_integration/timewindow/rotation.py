@@ -20,6 +20,7 @@ import time
 from datetime import date, datetime, timedelta
 
 from ..datetime_utils import now_utc, to_berlin_tz
+from ..services.formatting import fmt_dt_de
 from . import pin_pool, store
 
 logger = logging.getLogger(__name__)
@@ -280,7 +281,8 @@ def assign_and_deliver(
     """Ordne eine Buchung einem Slot zu und stelle den Tages-PIN zu.
 
     Bei mehrstündigen Buchungen wird ausschließlich die ERSTE gebuchte Stunde
-    (``starts_at``) für Slot-Zuordnung UND Verifikation herangezogen.
+    (der ungepufferte ``booking_starts_at``, Fallback ``starts_at``) für
+    Slot-Zuordnung UND Verifikation herangezogen.
 
     Wird ``nuki`` übergeben (Produktionspfad via :func:`run_timewindow_cycle`), gilt
     **fail closed**: der Code wird vor dem Versand über die Nuki-API verifiziert
@@ -295,8 +297,13 @@ def assign_and_deliver(
     Ausgang.
     """
     day = day or now_utc().date()
-    starts_at = window["starts_at"]
-    weekday, hour = berlin_weekday_hour(starts_at, tz_name)  # erste gebuchte Stunde
+    # Slot-Routing MUSS auf der TATSAECHLICHEN ersten gebuchten Stunde basieren, nicht
+    # auf ``starts_at`` (= Buchungsstart - 15 min Vor-Puffer). Sonst waehlt eine
+    # 09:00-Buchung faelschlich den 08:00-Slot (og-h08, gueltig 08:00-09:00).
+    # ``due_access_windows`` liefert dazu ``booking_starts_at`` (bookings.start_at der
+    # ersten Cluster-Buchung); Fallback auf ``starts_at`` nur im reinen Unit-Pfad.
+    booking_start = window.get("booking_starts_at") or window["starts_at"]
+    weekday, hour = berlin_weekday_hour(booking_start, tz_name)  # erste Stunde, ungepuffert
     member_ref = str(window["member_id"])
 
     if pin_pool.needs_keypad_code(weekday, hour):
@@ -307,6 +314,9 @@ def assign_and_deliver(
         )
         pool_index = pin_pool.choose_pool_index(recent)
         slot_name = f"og-h{hour:02d}-p{pool_index}"
+        # Echtes Türfenster des Codes = die gebuchte Uhrstunde (Minuten seit
+        # Mitternacht, wie Nuki allowedFromTime/UntilTime des og-hHH-Slots).
+        door_from_min, door_until_min = hour * 60, min((hour + 1) * 60, 1439)
     else:
         # Geschäftszeit: IMMER einen der 5 Business-Hours-Fallback-Codes zustellen
         # (der Laden könnte trotz "Öffnungszeit" zu sein — Feiertag/Urlaub/krank).
@@ -316,6 +326,8 @@ def assign_and_deliver(
         )
         pool_index = pin_pool.choose_fallback_index(recent)
         slot_name = f"og-bh-p{pool_index}"
+        # Business-Hours-Fallback-Code: 08:00–21:00-Fenster (og-bh-Slot).
+        door_from_min, door_until_min = pin_pool.FALLBACK_FROM_MIN, pin_pool.FALLBACK_UNTIL_MIN
 
     pin = store.get_todays_slot_pin(
         db, smartlock_id=smartlock_id, hour=slot_hour, pool_index=pool_index, rotation_date=day
@@ -338,15 +350,20 @@ def assign_and_deliver(
             weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
         )
         if not verify.get("valid"):
-            _alert_dispatch_blocked(db, settings, window, slot_name, verify)
+            # Still fail-closed (never dispatch an unverified code), but only raise an
+            # operator alert for a genuine miss — a transient Nuki/WAN timeout
+            # (unreachable) is retried next cycle, not paged.
+            if not verify.get("unreachable"):
+                _alert_dispatch_blocked(db, settings, window, slot_name, verify)
             logger.error(
-                "assign_and_deliver: FAIL-CLOSED window=%s slot=%s not materialised — no dispatch",
-                window.get("id"), slot_name,
+                "assign_and_deliver: FAIL-CLOSED window=%s slot=%s not dispatched (unreachable=%s)",
+                window.get("id"), slot_name, verify.get("unreachable"),
             )
             return {
                 "window_id": window.get("id"), "no_code": False, "assigned": False,
                 "pool_index": pool_index, "slot_name": slot_name,
-                "delivered": False, "verified": False, "reason": "not-materialised",
+                "delivered": False, "verified": False,
+                "reason": "unreachable" if verify.get("unreachable") else "not-materialised",
             }
 
     store.record_assignment(
@@ -356,11 +373,45 @@ def assign_and_deliver(
 
     delivered = False
     if window.get("email"):
-        valid_from = to_berlin_tz(window["starts_at"], tz_name).strftime("%d.%m.%Y %H:%M")
-        valid_until = to_berlin_tz(window["ends_at"], tz_name).strftime("%d.%m.%Y %H:%M")
+        # Gültigkeit = ECHTES Türfenster des ausgelieferten Codes (die gebuchte
+        # Uhrstunde bzw. das Business-Hours-Fallback-Fenster), NICHT das gepufferte
+        # access_window (starts_at −15 min / ends_at +30 min). Sonst verspricht die
+        # Mail mehr Zutritt, als das Schloss öffnet (Vorfall 24.07.: Mail "bis 07:30",
+        # der og-h06-Code sperrte aber schon 07:00).
+        midnight = to_berlin_tz(booking_start, tz_name).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        valid_from = fmt_dt_de(midnight + timedelta(minutes=door_from_min))
+        valid_until = fmt_dt_de(midnight + timedelta(minutes=door_until_min))
+        member_name = _member_name(window)
+        # Gebrandetes HTML-Template + Check-in-/Checks-Links wie der manuelle Versand
+        # (services.access._send_code_email); nur möglich, wenn ``settings`` vorliegt
+        # (Produktionspfad). Ohne settings (reine Unit-Zuordnung) bleibt es Plaintext.
+        extra: dict = {}
+        if settings is not None:
+            from ..services.auth_tokens import build_check_in_link, build_checks_link
+            from ..services.email_builder import build_access_code_email_html
+            from ..services.settings import get_effective_check_in_settings
+            checks_url = build_checks_link(
+                checks_key=str(window["checks_key"]) if window.get("checks_key") else None,
+                member_id=int(window["member_id"]), settings=settings,
+            )
+            check_in_enabled = bool(get_effective_check_in_settings(db, settings).get("enabled"))
+            extra = {
+                "checks_url": checks_url,
+                "check_in_url": (
+                    build_check_in_link(
+                        access_window_id=int(window["id"]),
+                        ends_at=window["ends_at"], settings=settings,
+                    ) if check_in_enabled else None
+                ),
+                "html_body": build_access_code_email_html(
+                    db, settings, member_name=member_name, code=pin,
+                    valid_from=valid_from, valid_until=valid_until, checks_url=checks_url,
+                ),
+            }
         delivered = bool(email_service.send_access_code(
-            to_email=str(window["email"]), member_name=_member_name(window),
-            code=pin, valid_from=valid_from, valid_until=valid_until,
+            to_email=str(window["email"]), member_name=member_name,
+            code=pin, valid_from=valid_from, valid_until=valid_until, **extra,
         ))
 
     if mark_handled:

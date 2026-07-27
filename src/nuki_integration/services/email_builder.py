@@ -175,6 +175,10 @@ _BLOCK_VALIDITY = (
     'color:#000;text-align:right;">{valid_until}</td>'
     '</tr>'
     '</table>'
+    '<p style="font-family:Arial,sans-serif;font-size:13px;color:#7a7a7a;'
+    'margin:14px 0 0;line-height:1.6;">'
+    '⏱ Dein Code funktioniert nur innerhalb dieses Zeitfensters – '
+    'bitte plane deine Ankunft entsprechend.</p>'
     '</td></tr>'
 )
 
