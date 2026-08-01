@@ -302,18 +302,22 @@ def reconcile_relevant_bookings(
             allowed_from=allowed_from, allowed_until=allowed_until, auth_id=auth_id,
         )
         checked += 1
-        if verify.get("repaired") and verify.get("valid"):
+        if verify.get("repaired") and verify.get("deliverable"):
             repaired += 1
         if verify.get("unreachable"):
             # Transient Nuki/WAN blip — could not verify; retry next cycle. NOT a
             # materialisation failure, so it must not raise a false operator alert.
             skipped += 1
-        elif not verify.get("valid"):
+        elif not verify.get("deliverable"):
+            # A "failure" now means the code is genuinely NOT usable — not present on the
+            # lock / wrong window after repair. A code that is present with the right
+            # window but merely un-confirmed (updateDate lagging) is deliverable and MUST
+            # NOT be counted as a failure (that was the source of the 5-min alert flood).
             failures += 1
         details.append({
             "window_id": window.get("id"), "member_id": window.get("member_id"),
-            "slot_name": slot_name, "valid": verify.get("valid"),
-            "repaired": verify.get("repaired"),
+            "slot_name": slot_name, "deliverable": verify.get("deliverable"),
+            "valid": verify.get("valid"), "repaired": verify.get("repaired"),
         })
 
     return {
@@ -389,14 +393,14 @@ def handle_nuki_webhook(
                 "skipped": result["skipped"]},
     )
     if result["failures"]:
-        create_operational_alert(
-            db=db, settings=settings, severity=AlertSeverity.ERROR,
+        from .monitoring import notify as _notify
+        _notify(
+            db, settings, key="guardian-reconcile-failed", severity=AlertSeverity.ERROR,
             kind="guardian-reconcile-failed",
-            message=(
-                f"Nuki-Wächter: {result['failures']} Buchung(en) konnten nach "
-                f"Webhook-Trigger nicht materialisiert werden."
-            ),
+            title=(f"Nuki-Wächter: {result['failures']} Buchung(en) konnten nach "
+                   f"Webhook-Trigger nicht bereitgestellt werden (Code nicht am Lock)."),
             payload={"repaired": result["repaired"], "failures": result["failures"]},
+            cooldown_secs=6 * 60 * 60,
         )
     return {"accepted": True, "reconciled": True, "error_events": len(error_events), **result}
 
@@ -448,13 +452,13 @@ def run_guardian_cycle(db, settings, *, now=None) -> dict[str, Any]:
         detail={"checked": result["checked"], "skipped": result["skipped"]},
     )
     if result["failures"]:
-        create_operational_alert(
-            db=db, settings=settings, severity=AlertSeverity.ERROR,
+        from .monitoring import notify as _notify
+        _notify(
+            db, settings, key="guardian-reconcile-failed", severity=AlertSeverity.ERROR,
             kind="guardian-reconcile-failed",
-            message=(
-                f"Nuki-Wächter (Worker-Fallback): {result['failures']} Buchung(en) "
-                f"konnten nicht materialisiert werden."
-            ),
+            title=(f"Nuki-Wächter (Worker-Fallback): {result['failures']} Buchung(en) konnten "
+                   f"nicht bereitgestellt werden (Code nicht am Lock)."),
             payload={"repaired": result["repaired"], "failures": result["failures"]},
+            cooldown_secs=6 * 60 * 60,
         )
     return {"reconciled": True, **result}

@@ -516,7 +516,7 @@ def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: 
                 "covers_window": verify.get("covers_window"),
                 "repaired": verify.get("repaired"),
             },
-            cooldown_secs=20 * 60,
+            cooldown_secs=2 * 60 * 60,
         )
     except Exception:
         logger.exception("_alert_dispatch_blocked: failed to record alert")
