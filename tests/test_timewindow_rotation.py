@@ -184,6 +184,40 @@ class UnconfirmedRotationTests(unittest.TestCase):
         self.assertEqual(len(nuki.created), 101)
 
 
+class FakeLiveNukiCreateFails(FakeLiveNuki):
+    """Models the 2026-08-01 failure: create_keypad_code is accepted (no exception) but the
+    code never appears on the lock (present=False) — the rotation must then KEEP the old
+    predecessor codes instead of deleting them into an access gap."""
+    def create_keypad_code(self, *, name, code, **kw):  # noqa: ARG002
+        self.created.append((name, None))
+        return None  # never added to _auths → _wait_present() times out → present=False
+
+
+class SafeDeleteWhenCreateFailsTests(unittest.TestCase):
+    """Safety (iter 4): if the new code did not land on the lock, the working predecessor
+    must be kept — never delete a working code without a live successor."""
+    def setUp(self):
+        self.store = InMemoryStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        self.pause = mock.patch.object(rotation, "WRITE_PAUSE_SECS", 0)
+        self.pause.start(); self.addCleanup(self.pause.stop)
+        # _wait_present would otherwise poll 15s/slot × 101 → mock it to "never present".
+        self.wp = mock.patch.object(rotation, "_wait_present", lambda *a, **k: None)
+        self.wp.start(); self.addCleanup(self.wp.stop)
+
+    def test_predecessors_kept_when_new_code_never_present(self):
+        preds = [("og-h03-p0", 501, "650000")] + [
+            (f"og-bh-p{p}", 600 + p, f"70000{p}") for p in range(pin_pool.FALLBACK_POOL)]
+        nuki = FakeLiveNukiCreateFails(preds)
+        res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=7, day=DAY,
+                                    dry_run=False, force=True)
+        self.assertEqual(nuki.deleted, [])            # NOTHING deleted → no lockout
+        self.assertEqual(res["alerts"], 101)          # every slot flagged as create miss
+        remaining = {a["id"] for a in nuki.list_keypad_codes()}
+        self.assertTrue({501, 600}.issubset(remaining))  # working predecessors still present
+
+
 class LiveRotationDeletesPredecessorsTests(unittest.TestCase):
     """Regression: the daily CREATE-FIRST rotation must delete the predecessor
     auths of BOTH the off-peak slots (og-hHH-pX) AND the 5 business-hours fallback

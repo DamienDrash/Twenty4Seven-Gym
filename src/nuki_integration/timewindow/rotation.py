@@ -239,15 +239,25 @@ def rotate_daily(
             alerts += 1
             logger.error("[ALERT] slot %s new code NOT present on lock (create/push failed)", slot.name)
 
-        # 3) DELETE predecessor(s), tombstone if a delete stays stuck
-        for aid in pre.get(slot.name, []):
-            try:
-                _nuki_write_with_retry(nuki.delete_keypad_code, auth_id=aid)
-            except Exception as exc:
-                logger.warning("rotate_daily: delete old %s failed: %s", slot.name, exc)
-            if not _wait_gone(nuki, aid):
-                tombstones += 1
-                logger.warning("rotate_daily: old auth %s (%s) still visible — tombstoned", slot.name, aid)
+        # 3) DELETE predecessor(s) — ONLY if the new code is actually PRESENT on the lock
+        # (create/push landed). This is the real no-access-gap guarantee: never remove a
+        # working code without a live successor. If the create did not land (present=False),
+        # KEEP the old (working) code so members are never locked out by a rotation whose
+        # creates are failing (the 2026-08-01 near-miss). A left-over predecessor is
+        # harmless (it still opens the door) and gets cleaned up on the next healthy run.
+        if not present:
+            logger.error(
+                "rotate_daily: slot %s new code NOT present — KEEPING predecessor(s), "
+                "no delete without a live successor", slot.name)
+        else:
+            for aid in pre.get(slot.name, []):
+                try:
+                    _nuki_write_with_retry(nuki.delete_keypad_code, auth_id=aid)
+                except Exception as exc:
+                    logger.warning("rotate_daily: delete old %s failed: %s", slot.name, exc)
+                if not _wait_gone(nuki, aid):
+                    tombstones += 1
+                    logger.warning("rotate_daily: old auth %s (%s) still visible — tombstoned", slot.name, aid)
 
         # 4) Persist DB (auth_id + today's pin) — delivery reads pin_history
         new_id = new_auth.get("id") if new_auth else None
