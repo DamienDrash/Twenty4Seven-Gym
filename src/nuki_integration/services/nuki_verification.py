@@ -47,25 +47,40 @@ def ensure_code_materialised(
     On DRY-RUN the injected client returns a simulated OK and no repair happens.
     """
     outcome: dict[str, Any] = {
-        "valid": False, "materialised": False, "covers_window": False,
+        "valid": False, "deliverable": False, "exists": False,
+        "materialised": False, "covers_window": False,
         "repaired": False, "simulated": False, "attempts": 0, "auth_id": auth_id,
     }
 
     check = nuki.verify_code_for_window(code, weekday=weekday, hour=hour)
     outcome["attempts"] = 1
     outcome["simulated"] = bool(check.get("simulated"))
+    outcome["exists"] = bool(check.get("exists"))
     outcome["materialised"] = bool(check.get("materialised"))
     outcome["covers_window"] = bool(check.get("covers_window"))
     outcome["auth_id"] = check.get("auth_id", auth_id)
-    if check.get("valid"):
-        outcome["valid"] = True
-        return outcome
 
     # Device/API unreachable (transient WAN/timeout): we cannot verify, so we must
     # not repair blindly nor claim a materialisation failure. Report "unreachable"
     # so the caller skips/retries next cycle instead of alerting on a blip.
     if check.get("error"):
         outcome["unreachable"] = True
+        return outcome
+
+    if check.get("valid"):
+        # Device-confirmed AND covers the booked hour — the strongest state.
+        outcome["valid"] = True
+        outcome["deliverable"] = True
+        return outcome
+
+    # RESILIENCE gate: the code is present on the lock with the correct time window
+    # (create/push succeeded) but the device has not (yet) echoed a confirmation back
+    # to the cloud (no ``updateDate``). The push is reliable, so this code opens the
+    # door — it is DELIVERABLE. We deliberately skip the (churny) repair here, keep
+    # ``materialised=False`` so the caller can raise an early-warning on the degraded
+    # device→cloud link, and never block a working code on a slow cloud confirmation.
+    if outcome["exists"] and outcome["covers_window"]:
+        outcome["deliverable"] = True
         return outcome
 
     # Repair once: keep the SAME code (it may already be in the member's mail).
@@ -104,9 +119,13 @@ def ensure_code_materialised(
 
     recheck = nuki.verify_code_for_window(code, weekday=weekday, hour=hour)
     outcome["attempts"] = 2
+    outcome["exists"] = bool(recheck.get("exists"))
     outcome["materialised"] = bool(recheck.get("materialised"))
     outcome["covers_window"] = bool(recheck.get("covers_window"))
     outcome["valid"] = bool(recheck.get("valid"))
+    # After a repair the freshly (re)created auth is present with the right window but
+    # typically not yet device-confirmed — still deliverable (see resilience gate above).
+    outcome["deliverable"] = bool(recheck.get("exists")) and bool(recheck.get("covers_window"))
     outcome["unreachable"] = bool(recheck.get("error"))
     outcome["auth_id"] = recheck.get("auth_id", outcome["auth_id"])
     return outcome

@@ -349,22 +349,40 @@ def assign_and_deliver(
             slot_hour=slot_hour, pool_index=pool_index, code=pin,
             weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
         )
-        if not verify.get("valid"):
-            # Still fail-closed (never dispatch an unverified code), but only raise an
-            # operator alert for a genuine miss — a transient Nuki/WAN timeout
-            # (unreachable) is retried next cycle, not paged.
+        if not verify.get("deliverable"):
+            # Fail-closed ONLY when the code is genuinely not usable: not present on the
+            # lock (create/push failed), wrong window after a repair, or the device/API
+            # was unreachable. We never dispatch a code that isn't provisioned. A
+            # transient unreachable is retried next cycle, not paged.
             if not verify.get("unreachable"):
                 _alert_dispatch_blocked(db, settings, window, slot_name, verify)
             logger.error(
-                "assign_and_deliver: FAIL-CLOSED window=%s slot=%s not dispatched (unreachable=%s)",
-                window.get("id"), slot_name, verify.get("unreachable"),
+                "assign_and_deliver: FAIL-CLOSED window=%s slot=%s not dispatched "
+                "(exists=%s covers=%s unreachable=%s)",
+                window.get("id"), slot_name, verify.get("exists"),
+                verify.get("covers_window"), verify.get("unreachable"),
             )
             return {
                 "window_id": window.get("id"), "no_code": False, "assigned": False,
                 "pool_index": pool_index, "slot_name": slot_name,
                 "delivered": False, "verified": False,
-                "reason": "unreachable" if verify.get("unreachable") else "not-materialised",
+                "reason": ("unreachable" if verify.get("unreachable")
+                           else "not-present" if not verify.get("exists")
+                           else "wrong-window"),
             }
+
+        # Deliverable but not device-confirmed: the code IS on the lock and opens the
+        # door (create/push is reliable), but the device→cloud confirmation (updateDate)
+        # is lagging or broken. Deliver anyway — do NOT lock members out on a slow cloud
+        # echo — and raise a deduped early-warning so the operator sees the degraded link
+        # days before it becomes critical (instead of a silent total blackout).
+        if not verify.get("materialised") and not verify.get("simulated"):
+            _alert_delivery_unconfirmed(db, settings, window, slot_name)
+            logger.warning(
+                "assign_and_deliver: window=%s slot=%s delivered UNCONFIRMED "
+                "(code present + window ok, device→cloud confirmation lagging)",
+                window.get("id"), slot_name,
+            )
 
     store.record_assignment(
         db, member_ref=member_ref, weekday=weekday, hour=slot_hour,
@@ -489,6 +507,34 @@ def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: 
         )
     except Exception:
         logger.exception("_alert_dispatch_blocked: failed to record alert")
+
+
+def _alert_delivery_unconfirmed(db, settings, window: dict, slot_name: str) -> None:
+    """Early-warning: a working code was delivered WITHOUT a device confirmation.
+
+    Signals a degraded device→cloud link — codes reach the lock and open the door, but
+    the device is not echoing the confirmation (``updateDate``) back to the cloud. Access
+    still works; this is the heads-up to check the lock's cloud/Wi-Fi connection BEFORE it
+    deteriorates into a full outage. Deduped with a long cooldown (6 h) so it is a health
+    signal, not per-booking spam — keyed globally, not per-window.
+    """
+    if db is None or settings is None:
+        return
+    try:
+        from ..enums import AlertSeverity
+        from ..services import monitoring
+        monitoring.notify(
+            db, settings, key="delivery-unconfirmed",
+            severity=AlertSeverity.WARNING, kind="delivery-unconfirmed",
+            title="Zutrittscodes werden UNBESTÄTIGT zugestellt — Gerät→Cloud-Sync gestört.",
+            detail=("Codes gelangen aufs Schloss und öffnen die Tür, aber das Gerät meldet "
+                    "die Bestätigung (updateDate) nicht mehr an die Cloud zurück. Zutritt "
+                    "funktioniert — Cloud-/WLAN-Anbindung des Nuki prüfen, bevor sie ganz abreißt."),
+            payload={"example_window": window.get("id"), "slot_name": slot_name},
+            cooldown_secs=6 * 60 * 60,
+        )
+    except Exception:
+        logger.exception("_alert_delivery_unconfirmed: failed to record alert")
 
 
 # ── Worker-Einstieg: ersetzt provision_due_codes ──────────────────

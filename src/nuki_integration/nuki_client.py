@@ -95,7 +95,13 @@ def evaluate_window_materialization(
         if auth.get("type") == 13 and auth.get("code") == want:
             materialised = auth.get("updateDate") is not None
             covers = _auth_covers_hour(auth, weekday, hour)
+            # ``exists`` = the code is present on the smart lock's auth list with the
+            # correct window (i.e. the create/push succeeded), independent of whether
+            # the device has echoed a confirmation (``updateDate``) back to the cloud.
+            # Delivery keys off ``exists AND covers`` (see ensure_code_materialised);
+            # ``materialised`` remains a monitoring/health signal only.
             return {
+                "exists": True,
                 "materialised": materialised,
                 "covers_window": covers,
                 "valid": materialised and covers,
@@ -104,6 +110,7 @@ def evaluate_window_materialization(
                 "update_date": auth.get("updateDate"),
             }
     return {
+        "exists": False,
         "materialised": False, "covers_window": False, "valid": False,
         "simulated": False, "auth_id": None, "update_date": None,
     }
@@ -375,6 +382,7 @@ class NukiClient:
         if self._settings.nuki_dry_run:
             logger.info("DRY_RUN: skip window verification for code ****** (wd=%s h=%s)", weekday, hour)
             return {
+                "exists": True,
                 "materialised": True, "covers_window": True, "valid": True,
                 "simulated": True, "auth_id": None, "update_date": None,
             }
@@ -388,6 +396,7 @@ class NukiClient:
             # instead of treating a transient blip as a materialisation failure.
             logger.error("verify_code_for_window: GET failed: %s", exc)
             return {
+                "exists": False,
                 "materialised": False, "covers_window": False, "valid": False,
                 "simulated": False, "auth_id": None, "update_date": None, "error": True,
             }

@@ -74,11 +74,13 @@ class InMemoryStore:
 class FakeNuki:
     """Controllable Nuki double: tracks verify/create/update and can 'repair'."""
 
-    def __init__(self, *, materialised=True, covers=True, simulated=False, repair_succeeds=True):
+    def __init__(self, *, materialised=True, covers=True, simulated=False,
+                 repair_succeeds=True, exists=True):
         self.materialised = materialised
         self.covers = covers
         self.simulated = simulated
         self.repair_succeeds = repair_succeeds
+        self.exists = exists  # code present on the lock (create/push landed), regardless of updateDate
         self.verify_calls = 0
         self.creates = []
         self.updates = []
@@ -86,6 +88,7 @@ class FakeNuki:
     def verify_code_for_window(self, code, *, weekday, hour):  # noqa: ARG002
         self.verify_calls += 1
         return {
+            "exists": self.exists,
             "materialised": self.materialised, "covers_window": self.covers,
             "valid": self.materialised and self.covers, "simulated": self.simulated,
             "auth_id": 7 if self.materialised else None, "update_date": None,
@@ -93,6 +96,7 @@ class FakeNuki:
 
     def _apply_repair(self):
         if self.repair_succeeds:
+            self.exists = True
             self.materialised = True
             self.covers = True
 
