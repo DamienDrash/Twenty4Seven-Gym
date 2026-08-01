@@ -151,6 +151,39 @@ class FakeLiveNuki:
         pass
 
 
+class FakeLiveNukiUnconfirmed(FakeLiveNuki):
+    """Models a DEGRADED device→cloud link: ``create`` puts the code on the lock (it is
+    present + usable) but it is never device-confirmed (``updateDate`` stays None)."""
+    def create_keypad_code(self, *, name, code, **kw):  # noqa: ARG002
+        self._next_id += 1
+        new_id = self._next_id
+        self._auths.append({"name": name, "id": new_id, "code": code, "type": 13,
+                            "updateDate": None})  # present but NOT device-confirmed
+        self.created.append((name, new_id))
+        return new_id
+
+
+class UnconfirmedRotationTests(unittest.TestCase):
+    """Iteration 2: on a degraded link the rotation must NOT hang ~75 s/slot waiting for a
+    confirmation that never comes. It waits for PRESENCE (fast), records materialised=0 as
+    a health signal, and raises NO per-slot alert (the codes ARE on the lock)."""
+    def setUp(self):
+        self.store = InMemoryStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        self.pause = mock.patch.object(rotation, "WRITE_PAUSE_SECS", 0)
+        self.pause.start(); self.addCleanup(self.pause.stop)
+
+    def test_present_but_unconfirmed_completes_without_alerts(self):
+        nuki = FakeLiveNukiUnconfirmed([])
+        res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY,
+                                    dry_run=False, force=True)
+        self.assertEqual(res["pushed"], 101)       # all codes created/pushed to the lock
+        self.assertEqual(res["materialised"], 0)   # none device-confirmed (health signal only)
+        self.assertEqual(res["alerts"], 0)         # NO per-slot alert — the codes are present
+        self.assertEqual(len(nuki.created), 101)
+
+
 class LiveRotationDeletesPredecessorsTests(unittest.TestCase):
     """Regression: the daily CREATE-FIRST rotation must delete the predecessor
     auths of BOTH the off-peak slots (og-hHH-pX) AND the 5 business-hours fallback

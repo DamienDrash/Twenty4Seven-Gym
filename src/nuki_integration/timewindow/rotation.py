@@ -81,15 +81,23 @@ def _opengym_busy(db) -> bool:
         return True
 
 
-def _wait_materialised(nuki, name: str, code, timeout: float = 75.0, step: float = 4.0):
-    """Poll until the auth (name+code) is device-confirmed (updateDate). Returns the
-    matching auth dict, or None on timeout."""
+def _wait_present(nuki, name: str, code, timeout: float = 15.0, step: float = 3.0):
+    """Poll until the auth (name+code) is PRESENT on the lock's auth list — i.e. the
+    create/push landed — regardless of whether the device has echoed a confirmation
+    (``updateDate``) back yet.
+
+    Existence appears cloud-side within seconds of a create; device confirmation may lag
+    for minutes on a degraded link and is unreliable, so waiting on it wasted ~75 s/slot
+    for no gain (the code is already on the lock, and the old code was deleted after the
+    timeout anyway). We therefore wait only for presence. Returns the matching auth dict
+    (the caller reads ``updateDate`` for the health signal), or None if it never appears
+    — a genuine create/push miss."""
     import time as _t
     t0 = _t.time()
     while _t.time() - t0 < timeout:
         try:
             for a in nuki.list_keypad_codes():
-                if a.get("name") == name and str(a.get("code")) == str(code) and a.get("updateDate"):
+                if a.get("name") == name and str(a.get("code")) == str(code):
                     return a
         except Exception:
             pass
@@ -97,7 +105,7 @@ def _wait_materialised(nuki, name: str, code, timeout: float = 75.0, step: float
     return None
 
 
-def _wait_gone(nuki, auth_id, timeout: float = 25.0, step: float = 5.0) -> bool:
+def _wait_gone(nuki, auth_id, timeout: float = 8.0, step: float = 4.0) -> bool:
     """Poll until auth_id disappears from the lock. False if still present (tombstone)."""
     import time as _t
     t0 = _t.time()
@@ -217,14 +225,19 @@ def rotate_daily(
                 raise
         created += 1
 
-        # 2) VERIFY materialisation BEFORE removing the predecessor (no access gap)
-        new_auth = _wait_materialised(nuki, slot.name, slot.code)
-        m = new_auth is not None
+        # 2) VERIFY the new code is PRESENT on the lock before removing the predecessor.
+        # We wait for existence (create/push landed) — fast + reliable — NOT for the
+        # device confirmation (updateDate), which lags/is unreliable and would waste
+        # ~75 s/slot. ``m`` (device-confirmed) is still recorded as a health signal for
+        # the early-warning; the per-slot ALERT now fires only on a genuine create miss.
+        new_auth = _wait_present(nuki, slot.name, slot.code)
+        present = new_auth is not None
+        m = bool(new_auth.get("updateDate")) if new_auth else False
         if m:
             materialised += 1
-        else:
+        if not present:
             alerts += 1
-            logger.error("[ALERT] slot %s new code not materialised in window", slot.name)
+            logger.error("[ALERT] slot %s new code NOT present on lock (create/push failed)", slot.name)
 
         # 3) DELETE predecessor(s), tombstone if a delete stays stuck
         for aid in pre.get(slot.name, []):
@@ -537,6 +550,31 @@ def _alert_delivery_unconfirmed(db, settings, window: dict, slot_name: str) -> N
         logger.exception("_alert_delivery_unconfirmed: failed to record alert")
 
 
+def _alert_rotation_unconfirmed(db, settings, rotation: dict) -> None:
+    """Early-warning at rotation time: all freshly pushed codes are present on the lock
+    but NONE are device-confirmed (updateDate) — the degraded device→cloud link. Fires
+    even on days without bookings. Deduped 6 h."""
+    if db is None or settings is None:
+        return
+    try:
+        from ..enums import AlertSeverity
+        from ..services import monitoring
+        monitoring.notify(
+            db, settings, key="rotation-unconfirmed",
+            severity=AlertSeverity.WARNING, kind="rotation-unconfirmed",
+            title=(f"Rotation: {rotation.get('pushed')} Codes am Lock, aber 0 gerätebestätigt "
+                   "— Gerät→Cloud-Sync gestört."),
+            detail=("Alle heutigen Codes liegen am Schloss (Zutritt funktioniert), aber das Gerät "
+                    "meldet keine Bestätigung zurück. Cloud-/WLAN-Anbindung des Nuki prüfen, bevor "
+                    "sie ganz abreißt."),
+            payload={"pushed": rotation.get("pushed"), "materialised": rotation.get("materialised"),
+                     "tombstones": rotation.get("tombstones")},
+            cooldown_secs=6 * 60 * 60,
+        )
+    except Exception:
+        logger.exception("_alert_rotation_unconfirmed: failed to record alert")
+
+
 # ── Worker-Einstieg: ersetzt provision_due_codes ──────────────────
 def run_timewindow_cycle(db, settings) -> dict:
     """Voller Zeitfenster-Cycle: Rotation + Zuweisung/Zustellung fälliger Buchungen.
@@ -579,6 +617,13 @@ def run_timewindow_cycle(db, settings) -> dict:
 
     try:
         rotation = rotate_daily(db, nuki=nuki, smartlock_id=smartlock_id, day=day, dry_run=dry_run)
+        # Aggregate early-warning: the rotation pushed codes to the lock but NONE are
+        # device-confirmed → the device→cloud link is degraded. Access still works
+        # (delivery keys off presence), and this fires even on days with no bookings, so
+        # the operator sees the degradation before it becomes a hard problem. Deduped 6 h.
+        if (not dry_run and not rotation.get("skipped")
+                and rotation.get("pushed") and rotation.get("materialised") == 0):
+            _alert_rotation_unconfirmed(db, settings, rotation)
         due = db.due_access_windows(now_utc())
         assigned = no_code = delivered = blocked = 0
         for window in due:
