@@ -585,6 +585,41 @@ def _alert_rotation_unconfirmed(db, settings, rotation: dict) -> None:
         logger.exception("_alert_rotation_unconfirmed: failed to record alert")
 
 
+def _reconcile_db_from_lock(db, nuki, smartlock_id: int, day) -> int:
+    """Adopt the codes ACTUALLY on the lock into today's pin_history + slot auth-id.
+
+    The device is the source of truth: the pin that physically opens the door is whatever
+    the lock holds, regardless of what the rotation *intended* to push. On a degraded link
+    the rotation's fresh creates may not land, leaving the DB pointing at absent pins →
+    delivery fails on every booking. This rewrites today's pin_history/auth-id to the
+    on-lock codes so delivery hands out working codes. DB-only (no Nuki writes); a no-op
+    when the rotation synced cleanly. Returns the number of slots adopted."""
+    auths = nuki.list_keypad_codes()
+    lock = {a.get("name"): a for a in auths if (a.get("name") or "").startswith("og-")}
+    if not lock:
+        return 0
+    n = 0
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name FROM nuki_slots WHERE smartlock_id=%s", (smartlock_id,))
+            slotmap = {r["name"]: r["id"] for r in cur.fetchall()}
+            for name, a in lock.items():
+                sid = slotmap.get(name)
+                if sid is None or a.get("code") is None:
+                    continue
+                cur.execute(
+                    "UPDATE nuki_pin_history SET pin=%s, materialised=%s "
+                    "WHERE slot_id=%s AND rotation_date=%s",
+                    (str(a.get("code")), bool(a.get("updateDate")), sid, day))
+                if a.get("id") is not None:
+                    cur.execute("UPDATE nuki_slots SET nuki_auth_id=%s WHERE id=%s",
+                                (str(a["id"]), sid))
+                n += 1
+        conn.commit()
+    logger.info("_reconcile_db_from_lock: adopted %d on-lock codes into %s pin_history", n, day)
+    return n
+
+
 # ── Worker-Einstieg: ersetzt provision_due_codes ──────────────────
 def run_timewindow_cycle(db, settings) -> dict:
     """Voller Zeitfenster-Cycle: Rotation + Zuweisung/Zustellung fälliger Buchungen.
@@ -634,6 +669,17 @@ def run_timewindow_cycle(db, settings) -> dict:
         if (not dry_run and not rotation.get("skipped")
                 and rotation.get("pushed") and rotation.get("materialised") == 0):
             _alert_rotation_unconfirmed(db, settings, rotation)
+        # Self-heal the daily desync: when the fresh codes did not land on the device
+        # (create/push failing on a degraded link) the lock KEEPS the previous working
+        # codes while the DB recorded the new (absent) pins — delivery would then fail on
+        # every booking. Adopt reality: rewrite today's pin_history/auth-id to the codes
+        # ACTUALLY present on the lock, so delivery hands out codes that physically open
+        # the door. DB-only, no device writes; a no-op when the rotation synced cleanly.
+        if not dry_run and not rotation.get("skipped"):
+            try:
+                _reconcile_db_from_lock(db, nuki, smartlock_id, day)
+            except Exception:
+                logger.exception("run_timewindow_cycle: reconcile_db_from_lock failed")
         due = db.due_access_windows(now_utc())
         assigned = no_code = delivered = blocked = 0
         for window in due:
