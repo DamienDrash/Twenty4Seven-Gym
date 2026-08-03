@@ -60,7 +60,13 @@ def run_forever() -> None:
     db.ensure_schema()
     try:
         while True:
-            run_cycle(db, settings, logger)
+            # A single transient failure (e.g. a Nuki API TimeoutError on the degraded
+            # cloud link) must NEVER crash the worker into a restart loop — it just skips
+            # this cycle and retries on the next. Only truly fatal signals propagate.
+            try:
+                run_cycle(db, settings, logger)
+            except Exception:
+                logger.exception("worker cycle failed — continuing to next cycle")
             time.sleep(settings.magicline_sync_interval_minutes * 60)
     finally:
         db.close()
