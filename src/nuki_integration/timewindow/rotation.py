@@ -81,6 +81,19 @@ def _opengym_busy(db) -> bool:
         return True
 
 
+def _present_now(nuki, name: str, code):
+    """Single, non-blocking check: is the auth (name+code) already on the lock's list?
+    Used in the rotation's fast mode once creates are clearly not landing, to avoid the
+    per-slot poll wait. Returns the matching auth dict or None."""
+    try:
+        for a in nuki.list_keypad_codes():
+            if a.get("name") == name and str(a.get("code")) == str(code):
+                return a
+    except Exception:
+        pass
+    return None
+
+
 def _wait_present(nuki, name: str, code, timeout: float = 15.0, step: float = 3.0):
     """Poll until the auth (name+code) is PRESENT on the lock's auth list — i.e. the
     create/push landed — regardless of whether the device has echoed a confirmation
@@ -202,6 +215,7 @@ def rotate_daily(
     materialised = 0
     alerts = 0
     tombstones = 0
+    create_misses = 0  # consecutive slots whose new code did not land → switch to fast mode
     for slot in slots:
         slot_id = store.upsert_slot(
             db, smartlock_id=smartlock_id, name=slot.name, hour=slot.bucket.hour,
@@ -230,8 +244,16 @@ def rotate_daily(
         # device confirmation (updateDate), which lags/is unreliable and would waste
         # ~75 s/slot. ``m`` (device-confirmed) is still recorded as a health signal for
         # the early-warning; the per-slot ALERT now fires only on a genuine create miss.
-        new_auth = _wait_present(nuki, slot.name, slot.code)
+        # ADAPTIVE: once several creates in a row fail to land (device not accepting changes
+        # on a degraded link) stop burning ~15 s/slot — a single quick check instead — so the
+        # whole rotation finishes in minutes, not ~25 min (which stalled the worker heartbeat).
+        # Full wait resumes as soon as a create lands again.
+        if create_misses >= 3:
+            new_auth = _present_now(nuki, slot.name, slot.code)
+        else:
+            new_auth = _wait_present(nuki, slot.name, slot.code)
         present = new_auth is not None
+        create_misses = 0 if present else create_misses + 1
         m = bool(new_auth.get("updateDate")) if new_auth else False
         if m:
             materialised += 1
