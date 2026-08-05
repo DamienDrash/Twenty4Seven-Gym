@@ -25,7 +25,17 @@ _DEFAULTS = {
     "NUKI_SMARTLOCK_ID": "22751454439",
     # Guardian webhook shared secret used by the security tests.
     "NUKI_WEBHOOK_SECRET": "test-webhook-secret",
+    # Timing values the tests rely on — pinned to the repo defaults so a local
+    # production .env (which may override them, e.g. fallback interval 60s)
+    # cannot leak into the suite. Env vars beat the .env file in pydantic-settings.
+    "NUKI_GUARDIAN_COOLDOWN_SECONDS": "60",
+    "NUKI_GUARDIAN_FALLBACK_INTERVAL_SECONDS": "900",
+    "NUKI_FREEZE_THRESHOLD_HOURS": "3",
 }
 
+# Force-set (NOT setdefault): the suite must be hermetic — on a production
+# host the repo .env (read by pydantic-settings via env_file) would otherwise
+# shadow these and break timing-sensitive tests. Env vars take precedence
+# over the .env file, so forcing them here is sufficient.
 for _key, _value in _DEFAULTS.items():
-    os.environ.setdefault(_key, _value)
+    os.environ[_key] = _value
