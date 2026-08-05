@@ -1,11 +1,18 @@
-"""Delivery resilience (fix/delivery-resilience-materialisation).
+"""Delivery gate + outage detector.
 
-A keypad code that is PRESENT on the lock with the correct time window (the
-create/push landed) is DELIVERABLE even when the device has not (yet) echoed a
-confirmation (``updateDate``) back to the cloud. This stops a slow or degraded
-device→cloud link from locking every member out. ``valid`` (device-confirmed)
-remains a monitoring/health signal; ``deliverable`` (present + covers) is the new
-dispatch gate. Genuine fail-closed is preserved for absent / wrong-window codes.
+Two regimes, switched by ``require_device_confirmation``:
+
+* **Default (True) — outage detector.** A code counts as DELIVERABLE only once the
+  device has confirmed it (``updateDate`` present → truly on the keypad). A code that
+  is present in the *cloud* auth list but not device-confirmed is withheld
+  (``unconfirmed=True``, ``deliverable=False``): during a Cloud↔Lock freeze it never
+  reached the physical keypad and would be a dead code (member lockout, 03.08.2026).
+  Stable pre-confirmed codes (the og-bh fallbacks) survive an outage — they are
+  ``valid`` and dispatch normally.
+* **Legacy (False) — deliver on presence.** Present + covers is enough, even without a
+  device confirmation. Retained for environments with a reliable push and a laggy echo.
+
+Genuine fail-closed (absent / wrong-window / repair-failed) is preserved in both.
 """
 import unittest
 
@@ -37,19 +44,41 @@ class EvaluateExistsTests(unittest.TestCase):
         self.assertFalse(r["valid"])
 
 
-class DeliverableGateTests(unittest.TestCase):
-    def test_present_and_covers_but_unconfirmed_is_deliverable_without_repair(self):
-        # THE core case: code on the lock, correct window, NO updateDate (device→cloud lag).
+class OutageDetectorTests(unittest.TestCase):
+    def test_present_but_unconfirmed_is_NOT_deliverable_by_default(self):
+        # THE core case: code in the cloud, correct window, NO updateDate. During a
+        # Cloud↔Lock freeze this code is not on the keypad → fail closed, do NOT dispatch.
         nuki = FakeNuki(materialised=False, covers=True, exists=True)
         r = ensure_code_materialised(nuki, **_KW)
-        self.assertTrue(r["deliverable"])        # → dispatched (members are not locked out)
-        self.assertFalse(r["valid"])             # but flagged unconfirmed for monitoring
+        self.assertFalse(r["deliverable"])       # withheld — no dead code to the member
+        self.assertTrue(r["unconfirmed"])        # flagged for the freeze alert
+        self.assertFalse(r["valid"])
         self.assertFalse(r["materialised"])
-        self.assertFalse(r["repaired"])          # NO churny repair
+        self.assertFalse(r["repaired"])          # NO churny repair on a frozen link
         self.assertEqual(nuki.creates, [])
         self.assertEqual(nuki.updates, [])
         self.assertEqual(r["attempts"], 1)
 
+    def test_present_but_unconfirmed_IS_deliverable_in_legacy_mode(self):
+        # Opt-out restores deliver-on-presence (present + covers, no confirmation).
+        nuki = FakeNuki(materialised=False, covers=True, exists=True)
+        r = ensure_code_materialised(nuki, **_KW, require_device_confirmation=False)
+        self.assertTrue(r["deliverable"])
+        self.assertFalse(r["unconfirmed"])
+        self.assertFalse(r["valid"])
+        self.assertEqual(nuki.creates, [])
+        self.assertEqual(nuki.updates, [])
+
+    def test_freeze_signal_passes_through(self):
+        # The newest device confirmation across the lock is surfaced for alert enrichment.
+        nuki = FakeNuki(materialised=False, covers=True, exists=True,
+                        link_last_confirmed="2026-07-30T08:16:00.000Z")
+        r = ensure_code_materialised(nuki, **_KW)
+        self.assertTrue(r["unconfirmed"])
+        self.assertEqual(r["link_last_confirmed"], "2026-07-30T08:16:00.000Z")
+
+
+class DeliverableGateTests(unittest.TestCase):
     def test_confirmed_and_covers_is_deliverable_and_valid(self):
         nuki = FakeNuki(materialised=True, covers=True, exists=True)
         r = ensure_code_materialised(nuki, **_KW)

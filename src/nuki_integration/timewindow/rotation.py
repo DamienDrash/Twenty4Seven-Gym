@@ -389,29 +389,37 @@ def assign_and_deliver(
     # re-materialisieren). Ohne injizierten ``nuki`` (reiner Unit-Pfad) entfällt die
     # Geräteprüfung und die Zuweisung wird wie gehabt geschrieben.
     if nuki is not None:
+        require_conf = getattr(settings, "nuki_require_device_confirmation", True) if settings else True
         verify = verify_slot_code(
             db, nuki=nuki, smartlock_id=smartlock_id, slot_name=slot_name,
             slot_hour=slot_hour, pool_index=pool_index, code=pin,
             weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
+            require_device_confirmation=require_conf,
         )
         if not verify.get("deliverable"):
             # Fail-closed ONLY when the code is genuinely not usable: not present on the
-            # lock (create/push failed), wrong window after a repair, or the device/API
-            # was unreachable. We never dispatch a code that isn't provisioned. A
-            # transient unreachable is retried next cycle, not paged.
-            if not verify.get("unreachable"):
+            # lock (create/push failed), wrong window after a repair, the device/API was
+            # unreachable, or — the outage detector — the code is in the cloud but NOT
+            # device-confirmed (would be a dead code during a Cloud↔Lock freeze). We never
+            # dispatch a code that isn't provisioned on the keypad. A transient unreachable
+            # is retried next cycle, not paged.
+            if verify.get("unconfirmed"):
+                _alert_unconfirmed_freeze(db, settings, window, slot_name, verify)
+            elif not verify.get("unreachable"):
                 _alert_dispatch_blocked(db, settings, window, slot_name, verify)
             logger.error(
                 "assign_and_deliver: FAIL-CLOSED window=%s slot=%s not dispatched "
-                "(exists=%s covers=%s unreachable=%s)",
+                "(exists=%s covers=%s materialised=%s unconfirmed=%s unreachable=%s)",
                 window.get("id"), slot_name, verify.get("exists"),
-                verify.get("covers_window"), verify.get("unreachable"),
+                verify.get("covers_window"), verify.get("materialised"),
+                verify.get("unconfirmed"), verify.get("unreachable"),
             )
             return {
                 "window_id": window.get("id"), "no_code": False, "assigned": False,
                 "pool_index": pool_index, "slot_name": slot_name,
                 "delivered": False, "verified": False,
                 "reason": ("unreachable" if verify.get("unreachable")
+                           else "unconfirmed" if verify.get("unconfirmed")
                            else "not-present" if not verify.get("exists")
                            else "wrong-window"),
             }
@@ -494,6 +502,7 @@ def assign_and_deliver(
 def verify_slot_code(
     db, *, nuki, smartlock_id: int, slot_name: str, slot_hour: int, pool_index: int,
     code: str, weekday: int, hour: int, day: date, buffer_days: int = BUFFER_DAYS,
+    require_device_confirmation: bool = True,
 ) -> dict:
     """Verify (and repair once) that ``code`` is materialised for the booked hour.
 
@@ -523,6 +532,7 @@ def verify_slot_code(
         nuki, slot_name=slot_name, code=code, weekday=weekday, hour=hour,
         weekday_mask=weekday_mask, from_time=from_time, until_time=until_time,
         allowed_from=allowed_from, allowed_until=allowed_until, auth_id=auth_id,
+        require_device_confirmation=require_device_confirmation,
     )
 
 
@@ -552,6 +562,55 @@ def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: 
         )
     except Exception:
         logger.exception("_alert_dispatch_blocked: failed to record alert")
+
+
+def _alert_unconfirmed_freeze(db, settings, window: dict, slot_name: str, verify: dict) -> None:
+    """Outage detector alert: a code was withheld because it is present in the cloud but
+    NOT confirmed on the physical keypad (fail closed). Enriches the alert with how stale
+    the newest device confirmation is, so the operator can tell a real Cloud↔Lock FREEZE
+    (link down — needs attention) from a transient create→confirm gap (self-heals)."""
+    if db is None or settings is None:
+        return
+    try:
+        from datetime import datetime, timezone
+        from ..enums import AlertSeverity
+        from ..services import monitoring
+        last = verify.get("link_last_confirmed")
+        age_hours = None
+        if last:
+            try:
+                dt = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+                age_hours = (now_utc() - dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+            except (ValueError, TypeError):
+                age_hours = None
+        threshold = getattr(settings, "nuki_freeze_threshold_hours", 3)
+        frozen = age_hours is None or age_hours >= threshold
+        state = (
+            f"Cloud↔Schloss-Sync eingefroren (neueste Geräte-Bestätigung vor "
+            f"{age_hours:.1f} h)" if frozen and age_hours is not None
+            else "keine Geräte-Bestätigung am Schloss vorhanden" if frozen
+            else f"Geräte-Bestätigung steht noch aus (letzte vor {age_hours:.1f} h, "
+                 f"vermutlich transienter Create→Confirm-Gap)"
+        )
+        monitoring.notify(
+            db, settings, key=f"code-unconfirmed-freeze:{window.get('id')}",
+            severity=AlertSeverity.ERROR, kind="code-unconfirmed-freeze",
+            title=(f"Zutrittscode für Fenster {window.get('id')} (Slot {slot_name}) liegt in "
+                   f"der Cloud, ist aber NICHT am Schloss bestätigt — nicht zugestellt "
+                   f"(fail-closed). {state}."),
+            detail=f"member#{window.get('member_id')} — retry nächster Cycle sobald das Gerät bestätigt.",
+            payload={
+                "access_window_id": window.get("id"),
+                "member_id": window.get("member_id"),
+                "slot_name": slot_name,
+                "link_last_confirmed": last,
+                "confirmation_age_hours": round(age_hours, 2) if age_hours is not None else None,
+                "frozen": frozen,
+            },
+            cooldown_secs=2 * 60 * 60,
+        )
+    except Exception:
+        logger.exception("_alert_unconfirmed_freeze: failed to record alert")
 
 
 def _alert_delivery_unconfirmed(db, settings, window: dict, slot_name: str) -> None:

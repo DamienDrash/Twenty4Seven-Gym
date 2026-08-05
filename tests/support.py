@@ -75,12 +75,13 @@ class FakeNuki:
     """Controllable Nuki double: tracks verify/create/update and can 'repair'."""
 
     def __init__(self, *, materialised=True, covers=True, simulated=False,
-                 repair_succeeds=True, exists=True):
+                 repair_succeeds=True, exists=True, link_last_confirmed=None):
         self.materialised = materialised
         self.covers = covers
         self.simulated = simulated
         self.repair_succeeds = repair_succeeds
         self.exists = exists  # code present on the lock (create/push landed), regardless of updateDate
+        self.link_last_confirmed = link_last_confirmed  # newest device confirmation (freeze signal)
         self.verify_calls = 0
         self.creates = []
         self.updates = []
@@ -92,6 +93,7 @@ class FakeNuki:
             "materialised": self.materialised, "covers_window": self.covers,
             "valid": self.materialised and self.covers, "simulated": self.simulated,
             "auth_id": 7 if self.materialised else None, "update_date": None,
+            "link_last_confirmed": self.link_last_confirmed,
         }
 
     def _apply_repair(self):

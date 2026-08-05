@@ -35,6 +35,7 @@ def ensure_code_materialised(
     allowed_from: str,
     allowed_until: str,
     auth_id: int | str | None = None,
+    require_device_confirmation: bool = True,
 ) -> dict[str, Any]:
     """Verify ``code`` for the booked first hour; repair once if not, then re-verify.
 
@@ -48,8 +49,9 @@ def ensure_code_materialised(
     """
     outcome: dict[str, Any] = {
         "valid": False, "deliverable": False, "exists": False,
-        "materialised": False, "covers_window": False,
+        "materialised": False, "covers_window": False, "unconfirmed": False,
         "repaired": False, "simulated": False, "attempts": 0, "auth_id": auth_id,
+        "link_last_confirmed": None,
     }
 
     check = nuki.verify_code_for_window(code, weekday=weekday, hour=hour)
@@ -59,6 +61,7 @@ def ensure_code_materialised(
     outcome["materialised"] = bool(check.get("materialised"))
     outcome["covers_window"] = bool(check.get("covers_window"))
     outcome["auth_id"] = check.get("auth_id", auth_id)
+    outcome["link_last_confirmed"] = check.get("link_last_confirmed")
 
     # Device/API unreachable (transient WAN/timeout): we cannot verify, so we must
     # not repair blindly nor claim a materialisation failure. Report "unreachable"
@@ -73,13 +76,22 @@ def ensure_code_materialised(
         outcome["deliverable"] = True
         return outcome
 
-    # RESILIENCE gate: the code is present on the lock with the correct time window
-    # (create/push succeeded) but the device has not (yet) echoed a confirmation back
-    # to the cloud (no ``updateDate``). The push is reliable, so this code opens the
-    # door — it is DELIVERABLE. We deliberately skip the (churny) repair here, keep
-    # ``materialised=False`` so the caller can raise an early-warning on the degraded
-    # device→cloud link, and never block a working code on a slow cloud confirmation.
+    # OUTAGE DETECTOR: the code is present in the cloud auth list with the correct time
+    # window (the create/push reached the CLOUD) but the device has not echoed a
+    # confirmation back (no ``updateDate``). Cloud-presence ≠ device-presence: during a
+    # Cloud↔Lock freeze this code has NEVER reached the physical keypad, so dispatching
+    # it would hand a member a dead code (lockout — the 03.08.2026 incident).
+    #   require_device_confirmation=True (default, safe): fail closed. Flag
+    #     ``unconfirmed`` so the caller alerts + retries; once the device confirms
+    #     (updateDate appears, usually within a cycle on a healthy link) it becomes
+    #     deliverable. Stable, already-confirmed codes (e.g. the og-bh fallbacks) are
+    #     unaffected — they take the ``valid`` branch above and survive an outage.
+    #   require_device_confirmation=False (legacy): deliver on presence alone.
     if outcome["exists"] and outcome["covers_window"]:
+        if require_device_confirmation and not outcome["materialised"]:
+            outcome["unconfirmed"] = True
+            outcome["deliverable"] = False
+            return outcome
         outcome["deliverable"] = True
         return outcome
 
@@ -123,9 +135,18 @@ def ensure_code_materialised(
     outcome["materialised"] = bool(recheck.get("materialised"))
     outcome["covers_window"] = bool(recheck.get("covers_window"))
     outcome["valid"] = bool(recheck.get("valid"))
+    outcome["link_last_confirmed"] = recheck.get("link_last_confirmed")
     # After a repair the freshly (re)created auth is present with the right window but
-    # typically not yet device-confirmed — still deliverable (see resilience gate above).
-    outcome["deliverable"] = bool(recheck.get("exists")) and bool(recheck.get("covers_window"))
+    # typically not yet device-confirmed. Under the outage detector that is NOT
+    # deliverable (see gate above): a repair on a frozen link only updates the cloud,
+    # not the keypad — so fail closed and flag ``unconfirmed`` rather than dispatch a
+    # code that may not be on the device. Legacy mode delivers on presence.
+    present_ok = bool(recheck.get("exists")) and bool(recheck.get("covers_window"))
+    if require_device_confirmation and present_ok and not outcome["valid"]:
+        outcome["unconfirmed"] = True
+        outcome["deliverable"] = False
+    else:
+        outcome["deliverable"] = present_ok
     outcome["unreachable"] = bool(recheck.get("error"))
     outcome["auth_id"] = recheck.get("auth_id", outcome["auth_id"])
     return outcome

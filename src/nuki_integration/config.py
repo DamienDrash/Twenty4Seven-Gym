@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     nuki_api_token: str = Field(default="", alias="NUKI_API_TOKEN")
     nuki_smartlock_id: int = Field(default=0, alias="NUKI_SMARTLOCK_ID")
     nuki_dry_run: bool = Field(default=True, alias="NUKI_DRY_RUN")
+    # Outage detector (fail-closed against a frozen Cloud↔Lock link). When True, a code
+    # that is present in the cloud auth list but NOT device-confirmed (no updateDate) is
+    # treated as NOT deliverable: during a Cloud↔Lock sync freeze such a code has never
+    # reached the physical keypad and would be a dead code (member lockout). Only
+    # device-confirmed codes (the stable, pre-materialised og-bh fallbacks survive an
+    # outage this way) are dispatched; unconfirmed ones fail closed + alert and retry
+    # next cycle once the device confirms. Set False to restore the legacy
+    # deliver-on-presence behaviour.
+    nuki_require_device_confirmation: bool = Field(default=True, alias="NUKI_REQUIRE_DEVICE_CONFIRMATION")
+    # Age (hours) beyond which the newest device confirmation across all keypad codes is
+    # read as a genuine Cloud↔Lock FREEZE (vs. a transient create→confirm gap). Only
+    # affects alert wording, not the fail-closed gate.
+    nuki_freeze_threshold_hours: int = Field(default=3, alias="NUKI_FREEZE_THRESHOLD_HOURS")
     # Shared secret protecting the Nuki webhook guardian. Nuki Advanced-API
     # webhooks may carry an HMAC-SHA256 signature (X-Nuki-Signature-SHA256);
     # when they don't, this same secret is accepted as a path/header token.

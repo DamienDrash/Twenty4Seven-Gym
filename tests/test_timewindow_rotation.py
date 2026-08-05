@@ -369,6 +369,20 @@ class FailClosedAssignTests(unittest.TestCase):
         self.assertTrue(r["verified"])
         self.assertEqual(len(self.store.assignments), 1)
 
+    def test_outage_detector_withholds_unconfirmed_cloud_code(self):
+        # Code is present on the lock with the right window but NOT device-confirmed
+        # (Cloud↔Lock freeze). It must NOT be dispatched — it would be a dead code.
+        email = FakeEmail()
+        nuki = MatNuki(materialised=False, covers=True, exists=True)
+        r = rotation.assign_and_deliver(
+            db=None, window=self._window(), email_service=email, smartlock_id=0,
+            day=DAY, nuki=nuki, settings=None,           # settings=None → default safe
+        )
+        self.assertFalse(r["assigned"])
+        self.assertEqual(r["reason"], "unconfirmed")
+        self.assertEqual(email.sends, 0)                  # no dead code to the member
+        self.assertEqual(len(self.store.assignments), 0)  # booking stays due → retried
+
 
 class FakeCapturingEmail:
     """Captures the kwargs of the last send_access_code call (delivery = success)."""

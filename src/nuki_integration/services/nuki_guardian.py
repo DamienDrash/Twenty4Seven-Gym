@@ -252,6 +252,7 @@ def _slot_window_fields(slot, slot_hour: int, weekday: int, day, buffer_days: in
 def reconcile_relevant_bookings(
     db, *, nuki, smartlock_id: int, now=None, tz_name: str = "Europe/Berlin",
     day=None, lead_seconds: int = RECONCILE_LEAD_SECONDS, buffer_days: int = BUFFER_DAYS,
+    require_device_confirmation: bool = True,
 ) -> dict[str, Any]:
     """Re-materialise each relevant member's already-assigned code (first hour).
 
@@ -300,6 +301,7 @@ def reconcile_relevant_bookings(
             nuki, slot_name=slot_name, code=pin, weekday=weekday, hour=hour,
             weekday_mask=weekday_mask, from_time=from_time, until_time=until_time,
             allowed_from=allowed_from, allowed_until=allowed_until, auth_id=auth_id,
+            require_device_confirmation=require_device_confirmation,
         )
         checked += 1
         if verify.get("repaired") and verify.get("deliverable"):
@@ -309,10 +311,11 @@ def reconcile_relevant_bookings(
             # materialisation failure, so it must not raise a false operator alert.
             skipped += 1
         elif not verify.get("deliverable"):
-            # A "failure" now means the code is genuinely NOT usable — not present on the
-            # lock / wrong window after repair. A code that is present with the right
-            # window but merely un-confirmed (updateDate lagging) is deliverable and MUST
-            # NOT be counted as a failure (that was the source of the 5-min alert flood).
+            # A "failure" means the code is genuinely NOT usable — not present on the lock,
+            # wrong window after repair, or (outage detector) present in the cloud but not
+            # device-confirmed during a Cloud↔Lock freeze (a would-be dead code). All are
+            # real access failures. Alerts on this count are deduped with a 6h cooldown, so
+            # a persisting freeze does not re-create the old 5-min flood.
             failures += 1
         details.append({
             "window_id": window.get("id"), "member_id": window.get("member_id"),
@@ -421,6 +424,7 @@ def _run_reconcile(db, settings, nuki_cfg: dict[str, Any], *, now) -> dict[str, 
         return reconcile_relevant_bookings(
             db, nuki=nuki, smartlock_id=smartlock_id, now=now, tz_name=tz_name,
             day=to_berlin_tz(now, tz_name).date(),
+            require_device_confirmation=getattr(effective, "nuki_require_device_confirmation", True),
         )
     finally:
         nuki.close()

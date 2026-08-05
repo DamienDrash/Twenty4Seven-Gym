@@ -91,15 +91,24 @@ def evaluate_window_materialization(
     first hour is reported as ``valid=False`` (and therefore repaired before send).
     """
     want = int(code)
+    # Freeze signal: the newest device confirmation (``updateDate``) across ALL keypad
+    # codes. If even the freshest is stale, the device has stopped echoing to the cloud
+    # (Cloud↔Lock link frozen). ISO-8601 UTC (…Z) strings sort lexically = chronologically.
+    link_last_confirmed = max(
+        (a.get("updateDate") for a in auths
+         if a.get("type") == 13 and a.get("updateDate")),
+        default=None,
+    )
     for auth in auths:
         if auth.get("type") == 13 and auth.get("code") == want:
             materialised = auth.get("updateDate") is not None
             covers = _auth_covers_hour(auth, weekday, hour)
             # ``exists`` = the code is present on the smart lock's auth list with the
-            # correct window (i.e. the create/push succeeded), independent of whether
-            # the device has echoed a confirmation (``updateDate``) back to the cloud.
-            # Delivery keys off ``exists AND covers`` (see ensure_code_materialised);
-            # ``materialised`` remains a monitoring/health signal only.
+            # correct window (i.e. the create/push reached the CLOUD), independent of
+            # whether the device has echoed a confirmation (``updateDate``) back. NB:
+            # cloud-presence ≠ device-presence during a Cloud↔Lock freeze — the
+            # outage detector (ensure_code_materialised) therefore requires
+            # ``materialised`` before it treats a code as deliverable.
             return {
                 "exists": True,
                 "materialised": materialised,
@@ -108,11 +117,13 @@ def evaluate_window_materialization(
                 "simulated": False,
                 "auth_id": auth.get("id"),
                 "update_date": auth.get("updateDate"),
+                "link_last_confirmed": link_last_confirmed,
             }
     return {
         "exists": False,
         "materialised": False, "covers_window": False, "valid": False,
         "simulated": False, "auth_id": None, "update_date": None,
+        "link_last_confirmed": link_last_confirmed,
     }
 
 
@@ -385,6 +396,7 @@ class NukiClient:
                 "exists": True,
                 "materialised": True, "covers_window": True, "valid": True,
                 "simulated": True, "auth_id": None, "update_date": None,
+                "link_last_confirmed": None,
             }
         try:
             auths = self._request(
@@ -398,7 +410,8 @@ class NukiClient:
             return {
                 "exists": False,
                 "materialised": False, "covers_window": False, "valid": False,
-                "simulated": False, "auth_id": None, "update_date": None, "error": True,
+                "simulated": False, "auth_id": None, "update_date": None,
+                "link_last_confirmed": None, "error": True,
             }
         return evaluate_window_materialization(
             auths if isinstance(auths, list) else [], code, weekday, hour
