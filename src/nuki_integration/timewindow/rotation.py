@@ -142,6 +142,7 @@ def rotate_daily(
     buffer_days: int = BUFFER_DAYS,
     rng=None,
     force: bool = False,
+    paused: bool = False,
 ) -> dict:
     """Daily CREATE-FIRST rotation of all 101 slots (96 time-window + 5 fallback).
 
@@ -155,6 +156,17 @@ def rotate_daily(
     """
     day = day or now_utc().date()
     store.ensure_schema(db)
+
+    # PAUSE (NUKI_ROTATION_PAUSED): freeze the lock. Make NO create/delete/rotate calls
+    # and generate no new pins — the codes physically on the keypad stay untouched. This
+    # takes precedence over ``force`` on purpose: nothing should mutate the offline lock
+    # while paused. Delivery is unaffected — get_todays_slot_pin falls back to the most
+    # recent rotated pins (the frozen lock codes). Used during a studio-internet outage.
+    if paused:
+        logger.warning(
+            "rotate_daily: PAUSED (NUKI_ROTATION_PAUSED) for %s — no lock changes; "
+            "delivery falls back to the last rotated pins (frozen lock codes).", day)
+        return {**store.rotation_status(db, day), "skipped": True, "paused": True}
 
     expected = pin_pool.expected_slot_count()  # 96 Off-Peak + 5 Business-Hours-Fallback
     if not force and store.rotation_count_for_day(db, day) >= expected:
@@ -742,7 +754,9 @@ def run_timewindow_cycle(db, settings) -> dict:
             db.mark_code_emailed(code_id)
 
     try:
-        rotation = rotate_daily(db, nuki=nuki, smartlock_id=smartlock_id, day=day, dry_run=dry_run)
+        paused = bool(getattr(effective, "nuki_rotation_paused", False))
+        rotation = rotate_daily(db, nuki=nuki, smartlock_id=smartlock_id, day=day,
+                                dry_run=dry_run, paused=paused)
         # Aggregate early-warning: the rotation pushed codes to the lock but NONE are
         # device-confirmed → the device→cloud link is degraded. Access still works
         # (delivery keys off presence), and this fires even on days with no bookings, so

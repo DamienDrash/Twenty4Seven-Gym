@@ -115,6 +115,26 @@ class RotateDailyTests(unittest.TestCase):
         again = rotation.rotate_daily(db=None, nuki=FakeNuki(), smartlock_id=0, day=DAY, dry_run=True)
         self.assertTrue(again["skipped"])
 
+    def test_rotate_daily_paused_makes_no_lock_changes(self):
+        # NUKI_ROTATION_PAUSED: freeze the lock during a studio-internet outage. No
+        # create/verify calls, no new pins written — the keypad codes stay untouched.
+        nuki = FakeNuki()
+        res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY,
+                                    dry_run=False, paused=True)
+        self.assertTrue(res["paused"])
+        self.assertTrue(res["skipped"])
+        self.assertEqual(nuki.creates, 0)          # nothing created on the lock
+        self.assertEqual(nuki.verifies, 0)         # no device round-trips
+        self.assertEqual(len(self.store.pins), 0)  # no new pins generated
+
+    def test_paused_takes_precedence_over_force(self):
+        # A forced run must still not mutate the offline lock while paused.
+        nuki = FakeNuki()
+        res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY,
+                                    dry_run=False, force=True, paused=True)
+        self.assertTrue(res["paused"])
+        self.assertEqual(nuki.creates, 0)
+
 
 class FakeLiveNuki:
     """LIVE Nuki: keeps an in-memory auth list. ``create`` adds a materialised

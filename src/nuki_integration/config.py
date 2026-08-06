@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # next cycle once the device confirms. Set False to restore the legacy
     # deliver-on-presence behaviour.
     nuki_require_device_confirmation: bool = Field(default=True, alias="NUKI_REQUIRE_DEVICE_CONFIRMATION")
+    # Freeze the daily create-first rotation. When True, rotate_daily makes NO lock
+    # changes (no create/delete/rotate) and no new pins are generated — the 101 codes
+    # physically on the keypad stay exactly as they are. Delivery keeps working because
+    # get_todays_slot_pin falls back to the most recent rotated pins (rotation_date <=
+    # today), i.e. the frozen lock codes. Use during a studio-internet outage so the
+    # rotation cannot push codes that never reach the offline lock; clear it once the
+    # link is back so the normal daily rotation resumes.
+    nuki_rotation_paused: bool = Field(default=False, alias="NUKI_ROTATION_PAUSED")
     # Age (hours) beyond which the newest device confirmation across all keypad codes is
     # read as a genuine Cloud↔Lock FREEZE (vs. a transient create→confirm gap). Only
     # affects alert wording, not the fail-closed gate.
