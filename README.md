@@ -6,20 +6,42 @@ Booking-driven 24/7 gym access platform for GETIMPULSE BERLIN.
 
 ## What It Does
 
-- Syncs member bookings from Magicline every 30 min
+- Syncs member bookings from Magicline every 5 min (`MAGICLINE_SYNC_INTERVAL_MINUTES`, default `5`)
 - Provisions Nuki smartlock keypad codes for members with upcoming "Freies Training" bookings
 - Sends access codes via email and Telegram
 - Web-based check-in / check-out funnel with configurable steps (house rules, yes/no, NPS, video)
 - Admin UI for managing funnels, access windows, settings, and audit logs
 - Permanent per-member check-in URL via `?key=<uuid>` — no login required
 
-## Quick Start
+## Quick Start (local / fresh install)
 
 ```bash
 cp .env.example .env
 # Edit .env with your credentials
 docker compose up -d --build
 ```
+
+## Production
+
+> Production is **not** driven by the `docker-compose.yml` in this repo. The live stack
+> is defined in **`/opt/getimpulse/docker-compose.yml`** (Compose project `getimpulse`)
+> and runs as the containers `opengym-service`, `opengym-worker` and `db-service`.
+>
+> The source is **baked into the image** (`COPY src` + `pip install`) — there is no
+> source bind-mount. Therefore a restart or a plain `docker compose up -d` does **not**
+> ship new code; only a rebuild (`docker compose build` / `up -d --build`) is a deploy,
+> and a deploy is approval-gated.
+>
+> Operations, restart vs. deploy, backup/restore, the emergency flags
+> `NUKI_ROTATION_PAUSED` / `NUKI_REQUIRE_DEVICE_CONFIRMATION` and the escalation path
+> are documented in [`docs/BETRIEB.md`](docs/BETRIEB.md).
+
+## Branching
+
+- `main` — production branch; everything that is live is an ancestor of `main`.
+- `fix/**` — short-lived fix branches, merged into `main` (fast-forward preferred).
+- CI (`.github/workflows/tests.yml`) runs pytest on push to `main` / `fix/**` and on
+  PRs. It runs **tests only — it never deploys.**
 
 | URL | Description |
 |-----|-------------|
@@ -29,11 +51,22 @@ docker compose up -d --build
 
 ## Services
 
-| Service | Description |
-|---------|-------------|
-| `db` | PostgreSQL 16 |
-| `web` | FastAPI on port 8080 |
-| `worker` | Background sync + code provisioning loop |
+Local (`docker-compose.yml` in this repo):
+
+| Service | Container | Description |
+|---------|-----------|-------------|
+| `db` | `twenty4seven-gym-db` | PostgreSQL 16 |
+| `web` | `twenty4seven-gym-web` | FastAPI on port 8080 |
+| `worker` | `twenty4seven-gym-worker` | Background sync + code provisioning loop |
+
+Production (`/opt/getimpulse/docker-compose.yml`, project `getimpulse`) — different
+names and a shared database server:
+
+| Container | Description |
+|-----------|-------------|
+| `db-service` | PostgreSQL 15, database `opengym` (shared with the other getimpulse services) |
+| `opengym-service` | FastAPI, no published ports — reachable only via the api-gateway |
+| `opengym-worker` | Background sync + rotation + delivery loop |
 
 ## Project Structure
 

@@ -86,5 +86,24 @@ class KeypadClassificationTests(unittest.TestCase):
         self.assertEqual(cat, "keypad-accepted")
 
 
+class HealthEndpointTests(unittest.TestCase):
+    def test_health_endpoints(self):
+        from fastapi.testclient import TestClient
+        from nuki_integration.app import app
+        client = TestClient(app)
+
+        r_health = client.get("/health")
+        self.assertEqual(r_health.status_code, 200)
+        self.assertEqual(r_health.json(), {"status": "ready"})
+
+        r_live = client.get("/healthz/live")
+        self.assertEqual(r_live.status_code, 200)
+        self.assertEqual(r_live.json(), {"status": "alive"})
+
+        r_ready = client.get("/healthz/ready")
+        self.assertEqual(r_ready.status_code, 200)
+        self.assertEqual(r_ready.json(), {"status": "ready"})
+
+
 if __name__ == "__main__":
     unittest.main()

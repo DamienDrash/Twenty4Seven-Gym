@@ -138,16 +138,17 @@ def root() -> dict[str, str]:
 
 # ── Health ────────────────────────────────────────────────────────
 
-@app.get("/healthz/live")
-def liveness() -> dict[str, str]:
-    return {"status": "alive"}
-
-
+@app.get("/health")
 @app.get("/healthz/ready")
 def readiness(db: Database = Depends(get_database)) -> dict[str, str]:
     if not db.health_check():
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database unavailable")
     return {"status": "ready"}
+
+
+@app.get("/healthz/live")
+def liveness() -> dict[str, str]:
+    return {"status": "alive"}
 
 
 # ── Auth ──────────────────────────────────────────────────────────

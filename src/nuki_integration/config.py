@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import os
 from functools import lru_cache
 
 from pydantic import Field, field_validator
@@ -8,11 +7,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .exceptions import ConfigurationError
 
 
+def _get_readable_env_files() -> tuple[str, ...]:
+    candidates = (".env", "/run/secrets/opengym_telegram.env")
+    return tuple(f for f in candidates if os.path.exists(f) and os.access(f, os.R_OK))
+
+
 class Settings(BaseSettings):
     # Secret credential file (mode-600, root-owned; bind-mounted into the container)
     # is read here so tokens never enter docker-compose.yml or logs. OS env still wins.
     model_config = SettingsConfigDict(
-        env_file=(".env", "/run/secrets/opengym_telegram.env"),
+        env_file=_get_readable_env_files(),
         env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
 
     app_env: str = Field(default="development", alias="APP_ENV")
