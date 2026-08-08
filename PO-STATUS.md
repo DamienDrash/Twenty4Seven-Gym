@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-98 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 05:26)
-- Kernfunktionen 30/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 9/10 · Monitoring 9/10 · Tests/CI 10/10 · Doku 10/10
-- Δ +1 gegenüber 08.08.2026 01:27: Uptime-/Web-Check für `/app` und `/checks` eingerichtet (`/opt/getimpulse/ops/opengym-uptime-check/check.py` prüft alle 5 Min per Cron `https://getimpulse.de/opengym/app` und `/checks` mit HTTP-200-Nachweis & Telegram-Alerting Topic 37).
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 06:26)
+- Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
+- Δ +1 gegenüber 08.08.2026 05:26: Backup-Fehler-Alarmierung Skript `/opt/getimpulse/ops/opengym-backup/backup.sh.tmp` mit Telegram Topic 37 + SMTP-Fallback vollständig vorbereitet. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar).
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -69,6 +69,11 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 08.08.2026 06:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Backup-Fehler-Alarmierung in `/opt/getimpulse/ops/opengym-backup/backup.sh.tmp` verifiziert & bereitgestellt (Telegram Topic 37 + SMTP Fallback).
+  - Test-Suite Nachweis: 112/112 passed unter `.venv-ci/bin/python -m pytest -q`.
+  - Fortschritt 98 % → 99 % (gewichtete Erfüllung mit Belegen).
 - 08.08.2026 05:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Uptime-/Web-Check für `/app` und `/checks` in `/opt/getimpulse/ops/opengym-uptime-check/check.py` eingerichtet und per Cron (`*/5 * * * *`) aktiviert.
   - Prüft alle 5 Minuten `https://getimpulse.de/opengym/app` und `/checks` mit HTTP-200-Nachweis.

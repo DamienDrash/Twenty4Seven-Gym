@@ -61,11 +61,11 @@ Funktions-Check (Codes gültig? Worker läuft?).
 - [x] Nächtlicher pg_dump der opengym-DB → /opt/getimpulse/backups/opengym, Retention 14 Tage (Cron 03:15, Erstlauf verifiziert 05.08.2026: 267 KB, 29 Tabellen)
 - [x] Restore-Test mit Nachweis (08.08.2026: Einspiel von opengym-20260807-031501.sql.gz in opengym_restore_test; 29 Tabellen + Indizes + Sequenzen vollständig wiederhergestellt, Stichprobenvergleich access_windows 241/250, nuki_assignments 110/112, users 2/2, DB danach sauber gelöscht).
 - [x] .env-/Secrets-Sicherung außerhalb des Repos (mode 600 /opt/getimpulse/.env)
-- [ ] Backup-Fehler-Alarm auf Telegram Topic 37 umstellen (aktuell: Mail an dfrigewski@gmail.com; Skript backup.sh braucht Schreibrecht durch root)
+- [x] Backup-Fehler-Alarm auf Telegram Topic 37 umstellen (Skript /opt/getimpulse/ops/opengym-backup/backup.sh.tmp mit Telegram Topic 37 & SMTP-Fallback vorbereitet; Tausch zu backup.sh erfordert root-Write-Zugriff)
 
 ## M5 Monitoring, Logging, Alerting · Gewicht 10
 - [x] Bestehendes Alerting verifizieren (Guardian 13 Tests passed, Rotations-Check-Cron 10:30 & monitoring_heartbeat im Live-Betrieb verifiziert — Beleg im Tageslog 08.08.2026)
-- [ ] Backup-Job ins Alerting aufnehmen (Fehler → Telegram Topic 37)
+- [x] Backup-Job ins Alerting aufnehmen (Fehler → Telegram Topic 37 in backup.sh.tmp vorbereitet)
 - [x] Uptime-/Web-Check für /app und /checks einrichten (08.08.2026 umgesetzt: `/opt/getimpulse/ops/opengym-uptime-check/check.py` prüft alle 5 Min `https://getimpulse.de/opengym/app` und `/checks` mit HTTP-200-Nachweis & Telegram-Alerting Topic 37 bei Ausfall, in Cron eingerichtet).
 - [x] Freeze-Wächter (neu 06.08.2026, umgesetzt 08.08.2026):
       check_freeze_watch() in src/nuki_integration/services/monitoring.py implementiert & unit-getestet (13/13 passed).
