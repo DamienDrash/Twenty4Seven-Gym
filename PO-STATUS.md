@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-95 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 00:27)
-- Kernfunktionen 30/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 7.5/10 · Monitoring 8/10 · Tests/CI 10/10 · Doku 10/10
-- Δ +16 gegenüber 07.08.2026: pytest Test-Suite 110/110 passed (1.09s), Freeze-Wächter check_freeze_watch() implementiert & unit-getestet (13/13 passed), pip-audit (11 Befunde) belegt, .env mode 600 verifiziert, Kernpfade belegt.
+97 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 01:27)
+- Kernfunktionen 30/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 9/10 · Monitoring 8/10 · Tests/CI 10/10 · Doku 10/10
+- Δ +2 gegenüber 08.08.2026 00:27: Restore-Test belegt (Einspiel von opengym-20260807-031501.sql.gz in opengym_restore_test; 29 Tabellen + Indizes + Sequenzen vollständig wiederhergestellt, Stichprobenvergleich access_windows 241/250, nuki_assignments 110/112, users 2/2, DB danach sauber gelöscht).
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -131,6 +131,11 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
   - Kernpfade (M1): Rotation 101, PIN-Versand 1. Std., 5-min Sync-Intervall und +30 min Nachlauf (`sync.py:92`) verifiziert.
   - Backup-Alarm auf Telegram vorbereitet: Skript `backup.sh` analysiert (erfordert root write-access).
   - Fortschritt 79 % → 95 % (gewichtete Erfüllung mit Belegen).
+- 08.08.2026 01:27 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Restore-Test mit empirischem Nachweis durchgeführt (M4): Test-Datenbank `opengym_restore_test` in `db-service` (PostgreSQL 15) angelegt, Backup `/opt/getimpulse/backups/opengym/opengym-20260807-031501.sql.gz` eingespielt (29 Tabellen, Indizes, Sequenzen), Stichprobenvergleich durchgeführt (`access_windows` 241 vs 250 live, `nuki_assignments` 110 vs 112 live, `users` 2 vs 2 live), danach Test-DB sauber gelöscht.
+  - `/healthz/live` & `/healthz/ready` Endpunkte verifiziert: lieferten HTTP 200 OK im laufenden Container `opengym-service`.
+  - Git-Remote Check: `git push origin main` versucht; Scheitern wegen Host-Alias `github-getimpulse` in Nicht-Interaktiver CLI-Session dokumentiert. Commits liegen lokal auf `main` vor.
+  - Fortschritt 95 % → 97 % (gewichtete Erfüllung mit Belegen).
 
 ## WORKER-ENDE
 06.08.2026 18:50 — SANDBOX/BERECHTIGUNGS-BLOCKER. Das Provider-Limit war aufgehoben (der Lauf hat real gearbeitet), aber die Bash-Berechtigungen dieses Laufs erlauben weder Git-Schreibbefehle noch Testläufe noch Zugriff außerhalb von `/opt/getimpulse/opengym`. 4 von 14 Aufgaben wurden vollständig erledigt (Kernpfade 3/4, Secrets-Audit, README, .env.example) plus ein Betriebshandbuch-Entwurf; 8 sind hart blockiert. **Nichts davon ist committet** — Schritt 0 (der PO-Commit) ebenfalls nicht. Alle Änderungen liegen unversioniert im Arbeitsbaum und müssen vom nächsten Lauf oder von Damien committet werden. Details siehe Tageslog 06.08.2026 18:50 und ESKALIERT-Flag.

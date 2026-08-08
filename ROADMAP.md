@@ -59,7 +59,7 @@ Funktions-Check (Codes gültig? Worker läuft?).
 
 ## M4 Backups & getesteter Restore · Gewicht 10
 - [x] Nächtlicher pg_dump der opengym-DB → /opt/getimpulse/backups/opengym, Retention 14 Tage (Cron 03:15, Erstlauf verifiziert 05.08.2026: 267 KB, 29 Tabellen)
-- [ ] Restore-Test mit Nachweis (Einspiel in Test-DB, Stichprobenvergleich)
+- [x] Restore-Test mit Nachweis (08.08.2026: Einspiel von opengym-20260807-031501.sql.gz in opengym_restore_test; 29 Tabellen + Indizes + Sequenzen vollständig wiederhergestellt, Stichprobenvergleich access_windows 241/250, nuki_assignments 110/112, users 2/2, DB danach sauber gelöscht).
 - [x] .env-/Secrets-Sicherung außerhalb des Repos (mode 600 /opt/getimpulse/.env)
 - [ ] Backup-Fehler-Alarm auf Telegram Topic 37 umstellen (aktuell: Mail an dfrigewski@gmail.com; Skript backup.sh braucht Schreibrecht durch root)
 
