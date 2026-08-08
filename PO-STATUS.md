@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 06:26)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 07:25)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ +1 gegenüber 08.08.2026 05:26: Backup-Fehler-Alarmierung Skript `/opt/getimpulse/ops/opengym-backup/backup.sh.tmp` mit Telegram Topic 37 + SMTP-Fallback vollständig vorbereitet. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar).
+- Δ ±0 gegenüber 08.08.2026 06:26: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -40,7 +40,7 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 6. NEU (06.08.2026 18:45) — WIRKUNGSLOSE .env-Keys: `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`,
    `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und
    `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example` (und vermutlich in der echten `.env`),
-   sind aber **keine Felder von `Settings`**. `config.py` nutzt `extra="ignore"`, und es gibt im
+   sind aber **keine Felder von `Settings``. `config.py` nutzt `extra="ignore"`, und es gibt im
    gesamten Code **kein** `os.environ`/`os.getenv`. Der Wächter liest sie über
    `getattr(settings, "guardian_grace_minutes", 20)` (`guardian.py:165/243/263/275/279/280`) und
    bekommt daher IMMER den hartkodierten Default. Wer diese Werte in der `.env` verstellt, ändert
