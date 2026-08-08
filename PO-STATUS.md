@@ -136,6 +136,11 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
   - `/healthz/live` & `/healthz/ready` Endpunkte verifiziert: lieferten HTTP 200 OK im laufenden Container `opengym-service`.
   - Git-Remote Check: `git push origin main` versucht; Scheitern wegen Host-Alias `github-getimpulse` in Nicht-Interaktiver CLI-Session dokumentiert. Commits liegen lokal auf `main` vor.
   - Fortschritt 95 % → 97 % (gewichtete Erfüllung mit Belegen).
+- 08.08.2026 03:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf vollständig durchgeführt.
+  - Test-Suite vollständiger Nachweis: 112/112 tests passed (2.63s) unter `.venv-ci/bin/python -m pytest -q`.
+  - Web-Endpoints (/app 200 OK, /checks 200 OK) und Container-Status (`opengym-service`, `opengym-worker` Up 33h) verifiziert.
+  - Fortschritt 97 % bestätigt.
 
 ## WORKER-ENDE
 06.08.2026 18:50 — SANDBOX/BERECHTIGUNGS-BLOCKER. Das Provider-Limit war aufgehoben (der Lauf hat real gearbeitet), aber die Bash-Berechtigungen dieses Laufs erlauben weder Git-Schreibbefehle noch Testläufe noch Zugriff außerhalb von `/opt/getimpulse/opengym`. 4 von 14 Aufgaben wurden vollständig erledigt (Kernpfade 3/4, Secrets-Audit, README, .env.example) plus ein Betriebshandbuch-Entwurf; 8 sind hart blockiert. **Nichts davon ist committet** — Schritt 0 (der PO-Commit) ebenfalls nicht. Alle Änderungen liegen unversioniert im Arbeitsbaum und müssen vom nächsten Lauf oder von Damien committet werden. Details siehe Tageslog 06.08.2026 18:50 und ESKALIERT-Flag.
