@@ -434,10 +434,74 @@ def _correlate_keypad(db, ctx: dict) -> dict:
     return {"note": "slot recognised, no recent assignment"}
 
 
+# ── Freeze-Wächter (cat 6) ────────────────────────────────────────────────
+def check_freeze_watch(db, settings: Settings, nuki_client=None, *, now: datetime | None = None) -> dict:
+    """Alert after 24h of active NUKI_ROTATION_PAUSED and alert when lock becomes reachable again."""
+    now = now or now_utc()
+    paused = getattr(settings, "nuki_rotation_paused", False)
+    if not paused:
+        with db.connection() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM monitoring_cursor WHERE name='freeze_start_at'")
+        conn.commit()
+        resolve(db, key="nuki-rotation-paused-24h", now=now)
+        resolve(db, key="nuki-lock-reachable-unfreeze-ready", now=now)
+        return {"paused": False, "alerted_24h": False, "alerted_reachable": False}
+
+    # Track when freeze started
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT value, updated_at FROM monitoring_cursor WHERE name='freeze_start_at'")
+        row = cur.fetchone()
+        if not row:
+            cur.execute(
+                "INSERT INTO monitoring_cursor (name, value, updated_at) VALUES ('freeze_start_at', %s, %s) "
+                "ON CONFLICT (name) DO NOTHING",
+                (now.isoformat(), now),
+            )
+            conn.commit()
+            freeze_start = now
+        else:
+            try:
+                freeze_start = datetime.fromisoformat(row["value"])
+                if freeze_start.tzinfo is None:
+                    freeze_start = freeze_start.replace(tzinfo=timezone.utc)
+            except Exception:
+                freeze_start = row["updated_at"]
+
+    age_hours = (now - freeze_start).total_seconds() / 3600.0
+    alerted_24h = False
+    if age_hours >= 24.0:
+        alerted_24h = notify(
+            db, settings, key="nuki-rotation-paused-24h", severity=AlertSeverity.WARNING,
+            kind="nuki-rotation-paused-long",
+            title="NUKI_ROTATION_PAUSED is active for over 24 hours",
+            detail=f"Lock rotation has been frozen for {int(age_hours)} hours. Verify studio internet and lock status.",
+            payload={"freeze_start": freeze_start.isoformat(), "age_hours": int(age_hours)},
+            cooldown_secs=12 * 3600, now=now,
+        )
+
+    alerted_reachable = False
+    if nuki_client:
+        try:
+            status = nuki_client.get_lock_status()
+            if status:
+                alerted_reachable = notify(
+                    db, settings, key="nuki-lock-reachable-unfreeze-ready", severity=AlertSeverity.INFO,
+                    kind="nuki-unfreeze-ready",
+                    title="Nuki lock is reachable — NUKI_ROTATION_PAUSED can be reset",
+                    detail="Lock API responded successfully. If studio internet is restored, Damien can approve un-freezing NUKI_ROTATION_PAUSED.",
+                    payload={"lock_status": status},
+                    cooldown_secs=6 * 3600, now=now,
+                )
+        except Exception:
+            logger.debug("Freeze reachability check failed (lock offline)")
+
+    return {"paused": True, "age_hours": int(age_hours), "alerted_24h": alerted_24h, "alerted_reachable": alerted_reachable}
+
+
 # ── Orchestrators ─────────────────────────────────────────────────────────
 def run_worker_monitoring(db, settings: Settings) -> dict:
     """Called each worker tick: write heartbeat + run the periodic fallback
-    detectors (overdue dispatch + keypad-rejection poll) so a missed webhook can
+    detectors (overdue dispatch + keypad-rejection poll + freeze watch) so a missed webhook can
     never fail silently."""
     ensure_schema(db)
     interval = int(getattr(settings, "magicline_sync_interval_minutes", 5)) * 60
@@ -445,19 +509,24 @@ def run_worker_monitoring(db, settings: Settings) -> dict:
               meta={"at": now_utc().isoformat()})
     overdue = check_overdue_dispatch(db, settings)
     keypad = {"keypad": 0, "rejected": 0, "alerted": 0}
+    freeze = {"paused": False, "alerted_24h": False, "alerted_reachable": False}
     try:
         from ..nuki_client import NukiClient
         from .settings import get_effective_nuki_config
         cfg = get_effective_nuki_config(db, settings)
+        nuki_inst = None
         if not cfg["nuki_dry_run"] and cfg["nuki_smartlock_id"]:
-            nuki = NukiClient(settings.model_copy(update=cfg))
-            try:
-                keypad = poll_keypad_events(db, settings, nuki, smartlock_id=int(cfg["nuki_smartlock_id"]))
-            finally:
-                nuki.close()
+            nuki_inst = NukiClient(settings.model_copy(update=cfg))
+        try:
+            if nuki_inst:
+                keypad = poll_keypad_events(db, settings, nuki_inst, smartlock_id=int(cfg["nuki_smartlock_id"]))
+            freeze = check_freeze_watch(db, settings, nuki_client=nuki_inst)
+        finally:
+            if nuki_inst:
+                nuki_inst.close()
     except Exception:
-        logger.exception("run_worker_monitoring: keypad poll failed")
-    return {"overdue": overdue, "keypad": keypad}
+        logger.exception("run_worker_monitoring: nuki monitoring checks failed")
+    return {"overdue": overdue, "keypad": keypad, "freeze": freeze}
 
 
 def run_service_monitoring(db, settings: Settings) -> dict:

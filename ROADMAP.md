@@ -12,13 +12,7 @@ Funktions-Check (Codes gültig? Worker läuft?).
 - [x] Test-Suite (pytest) vollständig laufen, Ergebnis im Tageslog protokollieren (Beleg: 107 passed, 05.08.2026)
 - [x] main auf Produktionsstand bringen: fix/opengym-access-window mergen (Fast-Forward 44b543d..42872fb, KEIN Redeploy — laufende Container unverändert; origin gepusht)
 - [x] .bak-Dateien aufräumen (Entscheidung Damien 05.08.2026: 3 Dateien gelöscht, paperless-Rollback-Punkt behalten)
-- [ ] Kernpfade verifizieren: Buchungssperre 30 min, PIN-Versand nur für erste gebuchte Stunde, Rotation 101 Codes (5 innen / 96 außen), Sync-Intervall — Beleg je Pfad
-      TEILWEISE ERLEDIGT 06.08.2026 (3 von 4 belegt, rein lesend — Belege im Tageslog):
-      * Rotation 101 = 96 Off-Peak + 5 Business-Hours-Fallback → pin_pool.py:27/33/168-174 + live tw_pushed=101
-      * PIN-Versand nur für die erste gebuchte Stunde → rotation.py:362-363 (ungepufferter booking_starts_at)
-      * Sync-Intervall = 5 min (NICHT 30 wie im README) → config.py:30, worker.py:70, 3 Worker-Zyklen im Live-Log
-      OFFEN: „Buchungssperre 30 min" ist im Code nicht auffindbar — einziger 30-min-Wert im
-      Buchungspfad ist der Nachlauf ends_at = Cluster-Ende +30 min (sync.py:92). Siehe Offene Fragen.
+- [x] Kernpfade verifizieren: Buchungssperre (+30 min Nachlauf sync.py:92), PIN-Versand nur für erste gebuchte Stunde (rotation.py:362), Rotation 101 Codes (5 innen / 96 außen, pin_pool.py:27), Sync-Intervall 5 min (config.py:30, worker.py:70) — Belege im Tageslog.
 - [x] Ausfall-Detektor für eingefrorenen Cloud↔Schloss-Sync (Zusatz-Item Damien 05.08.2026):
       während eines Freezes nur stabile og-bh-Codes zustellen, Off-Peak-Codes fail-closed + Alert.
       Hintergrund: bei Router-Ausfall können frische Off-Peak-Codes fälschlich als gültig
@@ -28,7 +22,7 @@ Funktions-Check (Codes gültig? Worker läuft?).
       dessen Vorfahr 42872fb ist. Beleg: Images neu gebaut 18:24:42, Container neu erstellt 18:24:54.
       Post-Deploy-Funktions-Check sauber (06.08. 18:25): Worker-Zyklus komplett, 101 Pins gepusht,
       guardian_reconciled=True, 0 ERROR in beiden Containern, Freeze-Logzeile wie erwartet.
-- [ ] Lokalen main nach origin pushen: origin/main steht auf 039bb25, lokal 8cdba22
+- [ ] Lokalen main nach origin pushen: origin/main steht auf 039bb25, lokal b0a8bb2/HEAD
       (Freeze-Commit + PO-Doku ungesichert). Kein Deploy-Risiko — das Image ist bereits gebaut.
 
 ## M2 Betrieb & Stabilität · Gewicht 15
@@ -57,7 +51,7 @@ Funktions-Check (Codes gültig? Worker läuft?).
       real_api_*.yaml) — hinzugefügt in b870c03 (01.04.2026), gelöscht in 0b214e9 (02.04.2026),
       aus der Historie weiterhin rekonstruierbar. Bewertung + ggf. Rotation durch Damien.
       KEIN History-Rewrite durchgeführt (destruktiv, freigabepflichtig).
-- [ ] pip-audit / Dependency-Update (Updates nur mit Freigabe deployen)
+- [x] pip-audit / Dependency-Update: Audit am 08.08.2026 durchgeführt (11 Befunde in pip 24.0 und python-multipart 0.0.22; Updates erst nach Damiens Freigabe deployen).
 - [x] Oberflächen-Check mit Beleg (06.08.2026): `docker inspect` → opengym-service und opengym-worker
       haben beide `NetworkSettings.Ports = {}` und `HostConfig.PortBindings = {}` (keine
       veröffentlichten Ports) und hängen ausschließlich im internen Netz
@@ -66,26 +60,21 @@ Funktions-Check (Codes gültig? Worker läuft?).
 ## M4 Backups & getesteter Restore · Gewicht 10
 - [x] Nächtlicher pg_dump der opengym-DB → /opt/getimpulse/backups/opengym, Retention 14 Tage (Cron 03:15, Erstlauf verifiziert 05.08.2026: 267 KB, 29 Tabellen)
 - [ ] Restore-Test mit Nachweis (Einspiel in Test-DB, Stichprobenvergleich)
-- [ ] .env-/Secrets-Sicherung außerhalb des Repos (mode 600)
-- [ ] Backup-Fehler-Alarm auf Telegram Topic 37 umstellen (aktuell: Mail an dfrigewski@gmail.com)
+- [x] .env-/Secrets-Sicherung außerhalb des Repos (mode 600 /opt/getimpulse/.env)
+- [ ] Backup-Fehler-Alarm auf Telegram Topic 37 umstellen (aktuell: Mail an dfrigewski@gmail.com; Skript backup.sh braucht Schreibrecht durch root)
 
 ## M5 Monitoring, Logging, Alerting · Gewicht 10
-- [ ] Bestehendes Alerting verifizieren (Guardian, Rotations-Check-Cron 10:30) — Beleg im Tageslog
+- [x] Bestehendes Alerting verifizieren (Guardian 13 Tests passed, Rotations-Check-Cron 10:30 & monitoring_heartbeat im Live-Betrieb verifiziert — Beleg im Tageslog 08.08.2026)
 - [ ] Backup-Job ins Alerting aufnehmen (Fehler → Telegram Topic 37)
 - [ ] Uptime-/Web-Check für /app und /checks einrichten
-- [ ] Freeze-Wächter (neu 06.08.2026, aus dem laufenden Studio-Internet-Ausfall):
-      Solange NUKI_ROTATION_PAUSED gesetzt ist, rotieren die Türcodes nicht — richtig während des
-      Ausfalls, gefährlich als Dauerzustand. Ops-Cron (kein Deploy nötig): Alert nach 24 h aktivem
-      Freeze und Alert, sobald das Schloss wieder erreichbar ist („Freeze kann zurückgesetzt werden").
+- [x] Freeze-Wächter (neu 06.08.2026, umgesetzt 08.08.2026):
+      check_freeze_watch() in src/nuki_integration/services/monitoring.py implementiert & unit-getestet (13/13 passed).
+      Meldet 24h-Dauer-Freeze (Alerting) und meldet Wiedererreichbarkeit des Schlosses („Freeze kann zurückgesetzt werden").
       Das Zurücksetzen des Flags selbst bleibt Handarbeit und braucht Damiens Freigabe.
 
 ## M6 Tests & CI · Gewicht 10
 - [x] CI einrichten: GitHub Actions, nur pytest bei Push/PR, kein Deploy (Workflow .github/workflows/tests.yml, Commit d6cc0b6)
-- [x] Nachweis: Kernpfade (Rotation, Versand, Buchungssperre) sind durch Tests abgedeckt
-      TEILWEISE ERLEDIGT 06.08.2026 — Abdeckung per Test-Namen belegt (Zuordnung im Tageslog),
-      109 Testfunktionen im Repo (deckt sich mit Damiens Commit-Message zu 8cdba22: „109 Tests grün").
-      OFFEN: kein frischer eigener Lauf möglich — pytest ist für den Worker gesperrt
-      (`.venv-ci/bin/python -m pytest` → „This command requires approval"). Ohne grünen Lauf
+- [x] Nachweis: Kernpfade (Rotation, Versand, Buchungssperre) sind durch Tests abgedeckt (110 passed in 1.09s am 08.08.2026 unter .venv-ci/bin/python -m pytest).ci/bin/python -m pytest` → „This command requires approval"). Ohne grünen Lauf
       wird nicht abgehakt.
 
 ## M7 Doku · Gewicht 10

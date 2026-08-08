@@ -90,19 +90,44 @@ class HealthEndpointTests(unittest.TestCase):
     def test_health_endpoints(self):
         from fastapi.testclient import TestClient
         from nuki_integration.app import app
-        client = TestClient(app)
+        with mock.patch("nuki_integration.db.Database.health_check", return_value=True):
+            client = TestClient(app)
 
-        r_health = client.get("/health")
-        self.assertEqual(r_health.status_code, 200)
-        self.assertEqual(r_health.json(), {"status": "ready"})
+            r_health = client.get("/health")
+            self.assertEqual(r_health.status_code, 200)
+            self.assertEqual(r_health.json(), {"status": "ready"})
 
-        r_live = client.get("/healthz/live")
-        self.assertEqual(r_live.status_code, 200)
-        self.assertEqual(r_live.json(), {"status": "alive"})
+            r_live = client.get("/healthz/live")
+            self.assertEqual(r_live.status_code, 200)
+            self.assertEqual(r_live.json(), {"status": "alive"})
 
-        r_ready = client.get("/healthz/ready")
-        self.assertEqual(r_ready.status_code, 200)
-        self.assertEqual(r_ready.json(), {"status": "ready"})
+            r_ready = client.get("/healthz/ready")
+            self.assertEqual(r_ready.status_code, 200)
+            self.assertEqual(r_ready.json(), {"status": "ready"})
+
+
+class FreezeWatchTests(unittest.TestCase):
+    def test_unpaused_cleans_up(self):
+        db = mock.MagicMock()
+        settings = mock.MagicMock(nuki_rotation_paused=False)
+        res = m.check_freeze_watch(db, settings)
+        self.assertFalse(res["paused"])
+        self.assertFalse(res["alerted_24h"])
+
+    def test_paused_under_24h(self):
+        db = mock.MagicMock()
+        # mock DB cursor query returning freeze_start = 5 hours ago
+        now = datetime(2026, 8, 8, 12, 0, tzinfo=UTC)
+        five_hours_ago = now - timedelta(hours=5)
+        cursor_mock = mock.MagicMock()
+        cursor_mock.fetchone.return_value = {"value": five_hours_ago.isoformat(), "updated_at": five_hours_ago}
+        db.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = cursor_mock
+
+        settings = mock.MagicMock(nuki_rotation_paused=True)
+        res = m.check_freeze_watch(db, settings, now=now)
+        self.assertTrue(res["paused"])
+        self.assertEqual(res["age_hours"], 5)
+        self.assertFalse(res["alerted_24h"])
 
 
 if __name__ == "__main__":
