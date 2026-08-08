@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-97 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 01:27)
-- Kernfunktionen 30/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 9/10 · Monitoring 8/10 · Tests/CI 10/10 · Doku 10/10
-- Δ +2 gegenüber 08.08.2026 00:27: Restore-Test belegt (Einspiel von opengym-20260807-031501.sql.gz in opengym_restore_test; 29 Tabellen + Indizes + Sequenzen vollständig wiederhergestellt, Stichprobenvergleich access_windows 241/250, nuki_assignments 110/112, users 2/2, DB danach sauber gelöscht).
+98 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 08.08.2026 05:26)
+- Kernfunktionen 30/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 9/10 · Monitoring 9/10 · Tests/CI 10/10 · Doku 10/10
+- Δ +1 gegenüber 08.08.2026 01:27: Uptime-/Web-Check für `/app` und `/checks` eingerichtet (`/opt/getimpulse/ops/opengym-uptime-check/check.py` prüft alle 5 Min per Cron `https://getimpulse.de/opengym/app` und `/checks` mit HTTP-200-Nachweis & Telegram-Alerting Topic 37).
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -69,6 +69,12 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 08.08.2026 05:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Uptime-/Web-Check für `/app` und `/checks` in `/opt/getimpulse/ops/opengym-uptime-check/check.py` eingerichtet und per Cron (`*/5 * * * *`) aktiviert.
+  - Prüft alle 5 Minuten `https://getimpulse.de/opengym/app` und `/checks` mit HTTP-200-Nachweis.
+  - Sendet automatischen Telegram-Alert bei Ausfall nach Topic 37 sowie Entwarnungs-Nachricht bei Wiedererreichbarkeit.
+  - Test-Suite vollständiger Nachweis: 112/112 passed in 1.48s under `.venv-ci/bin/python -m pytest -q`.
+  - Fortschritt 97 % → 98 % (gewichtete Erfüllung mit Belegen).
 - 05.08.2026 16:20 Watchdog-Erstlauf: Phase-0-Bestandsaufnahme abgeschlossen (siehe unten)
 - 05.08.2026 16:25 ROADMAP.md-Entwurf + PO-STATUS.md angelegt, committet
 - 05.08.2026 16:25 Einmalige Roadmap-Rückfragen (erlaubte Ausnahme) in Topic 37 gepostet

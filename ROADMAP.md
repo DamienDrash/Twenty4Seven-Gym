@@ -66,7 +66,7 @@ Funktions-Check (Codes gültig? Worker läuft?).
 ## M5 Monitoring, Logging, Alerting · Gewicht 10
 - [x] Bestehendes Alerting verifizieren (Guardian 13 Tests passed, Rotations-Check-Cron 10:30 & monitoring_heartbeat im Live-Betrieb verifiziert — Beleg im Tageslog 08.08.2026)
 - [ ] Backup-Job ins Alerting aufnehmen (Fehler → Telegram Topic 37)
-- [ ] Uptime-/Web-Check für /app und /checks einrichten
+- [x] Uptime-/Web-Check für /app und /checks einrichten (08.08.2026 umgesetzt: `/opt/getimpulse/ops/opengym-uptime-check/check.py` prüft alle 5 Min `https://getimpulse.de/opengym/app` und `/checks` mit HTTP-200-Nachweis & Telegram-Alerting Topic 37 bei Ausfall, in Cron eingerichtet).
 - [x] Freeze-Wächter (neu 06.08.2026, umgesetzt 08.08.2026):
       check_freeze_watch() in src/nuki_integration/services/monitoring.py implementiert & unit-getestet (13/13 passed).
       Meldet 24h-Dauer-Freeze (Alerting) und meldet Wiedererreichbarkeit des Schlosses („Freeze kann zurückgesetzt werden").
