@@ -2,10 +2,11 @@
 
 ## Phase
 2 (Roadmap freigegeben, Umsetzung läuft)
+
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 09.08.2026 06:26)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 09.08.2026 07:26)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 09.08.2026 05:26: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
+- Δ ±0 gegenüber 09.08.2026 06:26: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -48,7 +49,7 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
    als wirkungslos markiert, keine Logikänderung.
 7. NEU (06.08.2026 18:45) — Secrets-Befund aus dem M3-Audit, Bewertung durch Damien nötig:
    In der Git-Historie liegt ein hochentropes Token-Fragment in **mitgelieferten Fremd-Testfixturen**
-   (VCR-Cassettes des vendorten notebooklm-Skills) unter
+   (VCR-Cassettes des vendorted notebooklm-Skills) unter
    `.agents/skills/notebooklm/tests/cassettes/` — 18 Diff-Zeilen in `artifacts_*.yaml`, 8 in
    `real_api_*.yaml`. Hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026),
    aus der Historie aber weiterhin rekonstruierbar. Der eigene Projektcode ist sauber.
@@ -68,6 +69,13 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 09.08.2026 07:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed in 1.48s unter `.venv-ci/bin/python -m pytest -q`.
+  - Container-Status & Healthchecks verifiziert (`opengym-service` & `opengym-worker` Up 2 days, `/healthz/live` 200, `/healthz/ready` 200 via Container-Port 8080).
+  - Public Web-Endpoints `/app` (200 OK) und `/checks` (200 OK) verifiziert.
+  - Git-Remote Check: `git push origin main` versucht; scheitert weiterhin wegen Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 09.08.2026 06:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed in 1.62s unter `.venv-ci/bin/python -m pytest -q`.
