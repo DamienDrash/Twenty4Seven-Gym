@@ -69,6 +69,14 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 11.08.2026 18:26 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed in 1.63s unter `.venv-ci/bin/python -m pytest -q`.
+  - Container-Status & Healthchecks verifiziert (`opengym-service` & `edea1f60f913_opengym-worker` Up 2 days, `db-service` healthy, `/healthz/live` & `/healthz/ready` 200 OK via internal Python urllib check on port 8080 in `opengym-service`).
+  - Public Web-Endpoints `/app` (200 OK via api-gateway) und `/checks` (200 OK via uptime-check) verifiziert.
+  - NAS-Erreichbarkeit verifiziert: `getimpulse-nas` via Tailscale (100.103.57.114) ONLINE (0% loss, ~39.5ms avg).
+  - Git-Remote Check: `git push origin main` versucht; scheitert weiterhin wegen Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 11.08.2026 17:25 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed in 1.75s unter `.venv-ci/bin/python -m pytest -q`.
