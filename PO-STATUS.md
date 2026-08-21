@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 21.08.2026 07:27)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 21.08.2026 08:31)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 21.08.2026 06:27: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
+- Δ ±0 gegenüber 21.08.2026 07:27: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -69,6 +69,16 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 21.08.2026 08:31 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed (1 warning) in 21.90s unter `.venv-ci/bin/python -m pytest tests/ --ignore=.venv-ci -v`.
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check) verifiziert.
+  - Container-Status `opengym-service`, `edea1f60f913_opengym-worker` (Up 12 days), `db-service` (healthy, Up 12 days) verifiziert.
+  - NAS-Erreichbarkeit verifiziert: `getimpulse-nas` via Tailscale (100.103.57.114) ONLINE (0% loss, ~96.2ms avg; Ports 22, 80, 443, 5000, 5001 open/responding).
+  - Backup-Prüfung: Frisches nächtliches Tages-Backup `opengym-20260821-031503.sql.gz` (334 KB / 333.872 Bytes) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 14+ Tage / 15 Backups, GZIP-Integrität OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 08:30:06 UTC im `cron.log` mit HTTP 200 OK verifiziert.
+  - Git-Remote Check: `git push origin main` scheitert weiterhin an Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 21.08.2026 07:27 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed (1 warning) in 16.20s unter `.venv-ci/bin/python -m pytest -q`.
