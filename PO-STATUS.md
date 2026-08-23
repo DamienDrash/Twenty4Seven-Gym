@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 23.08.2026 12:28)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 23.08.2026 13:28)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 23.08.2026 11:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
+- Δ ±0 gegenüber 23.08.2026 12:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -50,7 +50,7 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 7. NEU (06.08.2026 18:45) — Secrets-Befund aus dem M3-Audit, Bewertung durch Damien nötig:
    In der Git-Historie liegt ein hochentropes Token-Fragment in **mitgelieferten Fremd-Testfixturen**
    (VCR-Cassettes des vendorted notebooklm-Skills) unter
-   `.agents/skills/notebooklm/tests/cassettes/` — 18 Diff-Zeilen in `artifacts_*.yaml`, 8 in
+   `.agents/skills/notebooklm/tests/cassettes/` — 18 Diff-Zeiler in `artifacts_*.yaml`, 8 in
    `real_api_*.yaml`. Hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026),
    aus der Historie aber weiterhin rekonstruierbar. Der eigene Projektcode ist sauber.
    Werte wurden bewusst NICHT ausgegeben. FRAGE: echtes Google-/NotebookLM-Sitzungsmaterial
@@ -69,6 +69,16 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 23.08.2026 13:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed (1 warning) in 18.10s unter `.venv-ci/bin/python -m pytest tests/ --ignore=.venv-ci -q`.
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check) verifiziert.
+  - Interne Endpoints (`/healthz/live`, `/healthz/ready`, `/health` 200 OK auf Port 8080/172.18.0.9) und Container-Status verifiziert (`uvicorn` & `studio-access-worker` aktiv).
+  - NAS-Erreichbarkeit: `getimpulse-nas` via Tailscale (100.103.57.114) offline (100% packet loss, non-blocking).
+  - Backup-Prüfung: Frisches nächtliches Tages-Backup `opengym-20260823-031503.sql.gz` (343 KB / 343.694 Bytes) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 15 Backups, GZIP-Integrität OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 13:25:05 UTC im `cron.log` mit HTTP 200 OK verifiziert.
+  - Git-Remote Check: `git push origin main` scheitert an Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 23.08.2026 12:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed (1 warning) in 20.80s unter `.venv-ci/bin/python -m pytest tests/ --ignore=.venv-ci -q`.
