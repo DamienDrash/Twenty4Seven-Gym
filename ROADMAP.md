@@ -106,4 +106,4 @@ Funktions-Check (Codes gültig? Worker läuft?).
       markiert, siehe Offene Fragen.
 
 ## Zurückgestellt
-- Teilbereich Studio-Automations (getimpulse-nas, aktuell OFFLINE): ruht bis zur Rückkehr des NAS (Entscheidung Damien 05.08.2026: ruhen lassen, nur Erreichbarkeit prüfen).
+- Teilbereich Studio-Automations (getimpulse-nas): NAS am 23.08.2026 22:28 wieder online erreichbar (100.103.57.114). Ruht bis zur Abstimmung/Reaktivierung mit Damien.
