@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 25.08.2026 04:28)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 25.08.2026 05:28)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 25.08.2026 03:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien. NAS getimpulse-nas (100.103.57.114) Status verifiziert (active via Tailscale, Ping 91.1-93.7ms OK, 0% Packet Loss). Frisches Tages-Backup 25.08.2026 03:15 (350.327 Bytes, GZIP-Integrität OK) erfolgreich verifiziert. Test-Suite 112/112 passed in 31.10s. Public Endpoints /app und /checks (HTTP 200) sowie interne Health-Endpoints /health (ready), /healthz/live (alive), /healthz/ready (ready) verifiziert. Uptime-Cron bis 04:25:06 UTC (HTTP 200 OK) aktiv.
+- Δ ±0 gegenüber 25.08.2026 04:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien. NAS getimpulse-nas (100.103.57.114) Status verifiziert (active via Tailscale, Ping 91.2-105.1ms OK, 0% Packet Loss). Frisches Tages-Backup 25.08.2026 03:15 (350.327 Bytes, GZIP-Integrität OK) erfolgreich verifiziert. Test-Suite 112/112 passed in 23.36s. Public Endpoints /app und /checks (HTTP 200) sowie interne Health-Endpoints /health (ready), /healthz/live (alive), /healthz/ready (ready) und Worker-Zyklus (101 Pins, 0 Error) verifiziert. Uptime-Cron bis 05:25:06 UTC (HTTP 200 OK) aktiv.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -69,6 +69,16 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 25.08.2026 05:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed (1 warning) in 23.36s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests -q`.
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9) und Worker-Logs verifiziert (101 Pins kept/reconciled, 0 errors, next cycle 300s).
+  - Backup-Prüfung: Frisches nächtliches Tages-Backup `opengym-20260825-031502.sql.gz` (350.327 Bytes) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 15 Backups, GZIP-Integrität OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 05:25:06 UTC im `cron.log` mit HTTP 200 OK verifiziert.
+  - NAS-Erreichbarkeit: `getimpulse-nas` via Tailscale (100.103.57.114) aktiv/erreichbar (Ping 91.2-105.1ms OK, 0% Packet Loss).
+  - Git-Remote Check: `git push origin main` scheitert weiterhin an Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 25.08.2026 04:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed (1 warning) in 31.10s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests -q`.
