@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 27.08.2026 20:28)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 27.08.2026 21:28)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 27.08.2026 19:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien. NAS getimpulse-nas (100.103.57.114) Status verifiziert (active via Tailscale, Ping 104.5-290.9ms OK, 0% Packet Loss). Backups 13.08.–27.08.2026 (15 Backups, 355.470 Bytes / 348 KB frisches Tages-Backup 27.08. 03:15, GZIP-Integrität ALL OK via gzip -t) verifiziert. Test-Suite 112/112 passed in 17.20s (.venv-ci/bin/python -m pytest). Public Endpoints /app und /checks (HTTP 200) sowie interne Health-Endpoints /health (ready), /healthz/live (alive), /healthz/ready (ready auf Port 8080) und Container-Prozesse (uvicorn & studio-access-worker aktiv, Up 2 weeks) verifiziert. Uptime-Cron bis 27.08. 20:25:04 UTC (HTTP 200 OK) aktiv.
+- Δ ±0 gegenüber 27.08.2026 20:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien. NAS getimpulse-nas (100.103.57.114) Status verifiziert (active via Tailscale, Ping 93.1-103.9ms OK, 0% Packet Loss). Backups 13.08.–27.08.2026 (15 Backups, 355.470 Bytes / 348 KB frisches Tages-Backup 27.08. 03:15, GZIP-Integrität ALL OK via gzip -t) verifiziert. Test-Suite 112/112 passed in 18.71s (.venv-ci/bin/python -m pytest). Public Endpoints /app und /checks (HTTP 200) sowie interne Health-Endpoints /health (ready), /healthz/live (alive), /healthz/ready (ready auf Port 8080) und Container-Prozesse (uvicorn & studio-access-worker aktiv, Up 2 weeks) verifiziert. Uptime-Cron bis 27.08. 21:25:05 UTC (HTTP 200 OK) aktiv.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -64,11 +64,22 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
    * **Testlauf**: `.venv-ci/bin/python -m pytest -q` gesperrt. Folge: Aufgabe 2 unmöglich, und M6 kann ohne grünen Lauf nicht abgehakt werden.
    * **Alles außerhalb von `/opt/getimpulse/opengym`**: `ls /opt/getimpulse/backups/opengym`, `ls /opt/getimpulse/ops`, `crontab -l`, `docker exec db-service psql`. Folge: Aufgaben 5 (Restore-Test), 6 (.env-Sicherung außerhalb des Repos), 7 (Backup-Alarm → Telegram), 9 (Freeze-Wächter als Ops-Cron) und der Cron-Teil von 8 unmöglich.
    * **pip-audit** weder auf `PATH` noch in `.venv-ci` vorhanden, Installation nicht möglich (Aufgabe 11).
-   Was NICHT das Problem war: der laufende Ausfall. Es wurde kein Rebuild, kein Neustart, keine Tür-/Nuki-/Rotations-Änderung und keine Flag-Änderung versucht — das was ohnehin ausgeschlossen.
+   What NICHT das Problem war: der laufende Ausfall. Es wurde kein Rebuild, kein Neustart, keine Tür-/Nuki-/Rotations-Änderung und keine Flag-Änderung versucht — das was ohnehin ausgeschlossen.
    Nötig für den nächsten Lauf: Freigabe für `git add`/`git commit`/`git push` im Repo, für `.venv-ci/bin/python -m pytest`, sowie Lese-/Schreibzugriff auf `/opt/getimpulse/backups/opengym`, `/opt/getimpulse/ops` und `crontab` — sonst bleiben M4/M5 dauerhaft unerreichbar.
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 27.08.2026 21:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed (1 warning) in 18.71s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`.
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via curl-Check & Uptime-Cron bis 27.08. 21:25:05 UTC) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9:8080) verifiziert.
+  - Backup-Prüfung: Frisches nächtliches Tages-Backup `opengym-20260827-031503.sql.gz` (355.470 Bytes / 348 KB) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 15 Backups, GZIP-Integrität ALL OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 27.08. 21:25:05 UTC im `cron.log` mit HTTP 200 OK verifiziert.
+  - NAS-Erreichbarkeit: `getimpulse-nas` via Tailscale (100.103.57.114) aktiv/erreichbar (Ping 93.1-103.9ms OK, 0% Packet Loss).
+  - Container-Status: `opengym-service` (uvicorn port 8080) und `opengym-worker` (studio-access-worker) aktiv & stabil (Up 2 weeks).
+  - Git-Remote Check: `git push origin main` scheitert weiterhin an Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 27.08.2026 20:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed (1 warning) in 17.20s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`.
