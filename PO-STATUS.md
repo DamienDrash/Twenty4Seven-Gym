@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 31.08.2026 21:28)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 31.08.2026 22:28)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 31.08.2026 20:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien. NAS getimpulse-nas (100.103.57.114) Status geprüft (online/active via Tailscale, Ping OK avg 92.5ms; Studio-Automations ruht bis zur Abstimmung mit Damien). Backups 17.08.–31.08.2026 (15 Backups, 363 KB frisches Tages-Backup 31.08. 03:15, GZIP-Integrität ALL OK via gzip -t) verifiziert. Test-Suite 112/112 passed in 17.60s (.venv-ci/bin/python -m pytest). Public Endpoints /app und /checks (HTTP 200) sowie interne Endpoints (/health ready, /healthz/live alive, /healthz/ready ready via 172.18.0.9:8080) und Container-Prozesse (uvicorn & studio-access-worker aktiv, Up 3 weeks) verifiziert. Uptime-Cron bis 31.08. 21:25:04 UTC (HTTP 200 OK) aktiv.
+- Δ ±0 gegenüber 31.08.2026 21:28: Alle Meilensteine M1–M7 verifiziert & belegt. Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien. NAS getimpulse-nas (100.103.57.114) Status geprüft (online/active via Tailscale, Ping OK avg 96.8ms; Studio-Automations ruht bis zur Abstimmung mit Damien). Backups 17.08.–31.08.2026 (15 Backups, 363 KB frisches Tages-Backup 31.08. 03:15, GZIP-Integrität ALL OK via gzip -t) verifiziert. Test-Suite 112/112 passed in 19.49s (.venv-ci/bin/python -m pytest). Public Endpoints /app und /checks (HTTP 200) sowie interne Endpoints (/health ready, /healthz/live alive, /healthz/ready ready via 172.18.0.9:8080) und Container-Prozesse (uvicorn & studio-access-worker aktiv, Up 3 weeks) verifiziert. Uptime-Cron bis 31.08. 22:25:04 UTC (HTTP 200 OK) aktiv.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -21,7 +21,7 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 
 ## Offene Fragen
 1. ERLEDIGT (06.08.2026 18:24) — Deploy-Freigabe für den Ausfall-Detektor (42872fb) hat sich durch Damiens eigenen Deploy erübrigt: er hat den Freeze-Commit 8cdba22 gebaut und ausgerollt, 42872fb ist dessen Vorfahr und damit mit live. Post-Deploy-Funktions-Check durch den PO: sauber (siehe Tageslog 06.08. 18:30). Frage geschlossen.
-2. OFFEN, aber entschärft — Monatliches Ausgabenlimit des Claude-Accounts: der Worker-Lauf um 14:35 starb daran. Indiz für Entsperrung: Damien hat um 18:13 selbst eine Claude-Code-Session auf dem Server gefahren (Commit 8cdba22, Co-Author Claude), und der Watchdog-Lauf um 18:30 läuft unter demselben User `claude` ohne Limit-Fehler. Vorgehen: EIN Retry — Arbeitspaket erneut ausgelegt. Stirbt der Worker wieder am Limit, wird er endgültig pausiert und die Frage geht als Entscheidung an Damien (Limit anheben vs. Umsetzung bis Monatsreset ruhen lassen).
+2. OFFEN, aber entschärft — Monatliches Ausgabenlimit des Claude-Accounts: der Worker-Lauf um 14:35 starb daran. Indiz für Entsperrung: Damien hat um 18:13 selbst eine Claude-Code-Session auf dem Server gefahren (Commit 8cdba22, Co-Author Claude), und the Watchdog-Lauf um 18:30 läuft unter demselben User `claude` ohne Limit-Fehler. Vorgehen: EIN Retry — Arbeitspaket erneut ausgelegt. Stirbt der Worker wieder am Limit, wird er endgültig pausiert und die Frage geht als Entscheidung an Damien (Limit anheben vs. Umsetzung bis Monatsreset ruhen lassen).
 3. NEU — Freeze-Ende: `NUKI_ROTATION_PAUSED` ist seit 06.08.2026 ~18:24 aktiv (Studio-Internet-Ausfall). Solange der Freeze steht, rotieren die Türcodes NICHT — die 101 Codes auf dem Schloss bleiben unverändert gültig. Das ist während des Ausfalls korrekt, aber ein Dauerzustand wäre ein Sicherheitsrisiko. Wer setzt das Flag zurück, wenn die Leitung wieder steht? Default-Vorschlag des PO: automatischer Wächter (Alert nach 24 h Freeze + Alert sobald das Schloss wieder erreichbar ist), Zurücksetzen bleibt manuell bei Damien. Als M5-Item eingeplant; Umsetzung ist nicht deploy-pflichtig (Ops-Cron), das Zurücksetzen selbst schon. STAND 18:45: noch NICHT umgesetzt — der Wächter gehört nach `/opt/getimpulse/ops/` + Cron, und beides liegt außerhalb der Sandbox dieses Worker-Laufs (siehe ESKALIERT-Flag).
 4. NEU (06.08.2026 18:45) — „Buchungssperre 30 min" ist im Code NICHT auffindbar. Gesucht wurde
    repo-weit nach `sperr`, `30 min`, `cooldown`, `lead_time`, `min_advance`, `too_late`. Der einzige
@@ -69,6 +69,17 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 31.08.2026 22:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 112/112 passed (1 warning) in 19.49s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`.
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check & Uptime-Cron bis 31.08. 22:25:04 UTC) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9:8080) verifiziert.
+  - Backup-Prüfung: Frisches nächtliches Tages-Backup `opengym-20260831-031502.sql.gz` (371.378 Bytes / 363 KB) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 15 Backups 17.08.–31.08.2026, GZIP-Integrität ALL OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 31.08. 22:25:04 UTC im `cron.log` mit HTTP 200 OK verifiziert.
+  - NAS-Erreichbarkeit: `getimpulse-nas` via Tailscale (100.103.57.114) geprüft (Ping OK avg 96.8ms; Studio-Automations ruht weiter bis zur Abstimmung mit Damien).
+  - Container-Status: `opengym-service` (uvicorn port 8080) und `opengym-worker` (studio-access-worker) aktiv & stabil (Up 3 weeks).
+  - Git-Remote Check: `git push origin main` scheitert weiterhin an Host-Alias `github-getimpulse` in CLI-Session. Commits auf local `main` gesichert.
+  - Fortschritt 99 % bestätigt.
 - 31.08.2026 21:28 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 112/112 passed (1 warning) in 17.60s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`.
