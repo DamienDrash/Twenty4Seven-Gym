@@ -15,6 +15,32 @@ instead of a day later. Detectors (acceptance scope):
   5. Rejected/invalid keypad attempt -> primary: Nuki webhook -> guardian;
      fallback: ``poll_keypad_events`` polls the Nuki activity log. See the
      LIMITATION note on that function.
+  6. Broken link in the chain server → studio internet → NAS/HA → hub → lock
+                                     -> ``check_studio_link`` / ``check_nuki_link``
+  7. DB pins and the codes physically on the keypad drifting apart
+                                     -> ``check_code_sync``
+  8. An already delivered code that no longer matches its slot
+                                     -> ``check_delivered_codes``
+
+Alert kinds (all pushed to ntfy when configured):
+
+  ``studio-internet-down``    Internet/Router im Studio weg (oder NAS stromlos)
+  ``nas-offline``             NAS nicht erreichbar, Leitung steht
+  ``home-assistant-offline``  NAS da, HA antwortet nicht
+  ``nuki-hub-offline``        Hub antwortet nicht auf einen Round-Trip
+  ``nuki-lock-unreachable``   Hub lebt, Schloss nicht am BLE
+  ``nuki-battery-low``        Schloss-Akku ≤20 % oder kritisch
+  ``codes-out-of-sync``       DB-Pin ≠ Keypad-Code
+  ``wrong-code-delivered``    verschickter Code passt nicht mehr zum Slot
+  ``booking-no-access-code``  fällige Buchung ohne Code (Zustellung ausgeblieben)
+  ``code-not-materialised``   Zustellung fail-closed blockiert
+  ``keypad-code-rejected``    Fehlversuch an der Tür (falscher Code/Zeitfenster)
+  ``worker-heartbeat-stale``  Worker steht (vom Service unabhängig erkannt)
+  ``guardian-reconcile-failed``/``delivery-unconfirmed``/``nuki-rotation-paused-long``
+
+Bekannte Grenze: Stirbt der ganze Server, kann von hier niemand mehr alarmieren —
+dafür bräuchte es einen externen Dead-Man's-Switch (z. B. healthchecks.io), der
+das Ausbleiben des Heartbeats von außen bemerkt.
 
 All alerts are **deduplicated/idempotent** (cooldown per key), **severity-tagged**,
 carry member/booking/appointment context, and **never** the full keypad code or
@@ -187,9 +213,23 @@ def _push_ntfy(settings: Settings, *, severity: str, kind: str, title: str, deta
         return
     try:
         import httpx
-        prio = {"error": "urgent", "warning": "high"}.get(str(severity).lower(), "default")
+        sev = str(severity).lower()
+        prio = {"error": "urgent", "warning": "high"}.get(sev, "default")
+        # Emoji tag = what the alert is about, readable on a lock screen without
+        # opening the notification.
+        tag = {"error": "rotating_light", "warning": "warning"}.get(sev, "information_source")
+        by_kind = {
+            "nuki-hub-offline": "electric_plug", "nuki-lock-unreachable": "lock",
+            "nuki-battery-low": "battery", "studio-internet-down": "satellite",
+            "nas-offline": "floppy_disk", "home-assistant-offline": "house",
+            "codes-out-of-sync": "twisted_rightwards_arrows",
+            "wrong-code-delivered": "no_entry", "keypad-code-rejected": "no_entry_sign",
+            "booking-no-access-code": "email", "worker-heartbeat-stale": "heartbeat",
+        }
+        tags = ",".join(t for t in (tag, by_kind.get(kind)) if t)
         httpx.post(f"{url.rstrip('/')}/{topic}", content=(f"{title}\n{detail}").encode("utf-8"),
-                   headers={"Title": f"OpenGym {severity.upper()} {kind}"[:120], "Priority": prio},
+                   headers={"Title": f"OpenGym {severity.upper()} {kind}"[:120],
+                            "Priority": prio, "Tags": tags},
                    timeout=10)
     except Exception:
         logger.warning("ntfy push failed (kind=%s)", kind)
@@ -325,22 +365,47 @@ def check_overdue_dispatch(db, settings: Settings, *, now: datetime | None = Non
 # carry an explicit non-OK/error state, correlates by auth name + time, and never
 # alerts on ambiguous entries (no false positives). Successful keypad events are
 # logged for observability + future signature tuning.
-KEYPAD_TRIGGER = 255            # Nuki: keypad-sourced entries (best-known)
-KEYPAD_REJECT_STATES = frozenset()  # populate once a real rejection is observed
+KEYPAD_TRIGGER = 255            # Nuki Web API: keypad-sourced entries (best-known)
+KEYPAD_REJECT_STATES = frozenset()  # Web API: reject values never observed live
+# Nuki Hub log (MQTT): what a *successful* keypad action reports. Anything else in
+# ``completionStatus`` is a failed attempt — wrong code, code outside its time
+# window, motor blocked, timeout. Verified against the live log on 2026-09-05.
+KEYPAD_TRIGGERS = frozenset({"code", "fingerprint", "keypad"})
+KEYPAD_OK_STATES = frozenset({"success"})
 
 
 def classify_keypad_event(entry: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
     """Pure. Returns (category|None, context). category in
     {'keypad-accepted','keypad-rejected'} or None if not a keypad event.
-    Conservative: only flags 'keypad-rejected' on an explicit known reject state.
+
+    Speaks both log dialects. The Nuki **Hub** log is the one that actually
+    carries rejections: ``type='KeypadAction'``, ``trigger='code'|'fingerprint'``
+    and a ``completionStatus`` that is anything but ``success`` when the attempt
+    failed — a wrong code, or a right code outside its time window ("falscher
+    Slot"), both land here. The Web API log (legacy) only exposed ``state``,
+    whose reject values were never observed, which is why the old detector could
+    not fire at all.
     """
-    name = str(entry.get("name") or "")
+    name = str(entry.get("name") or entry.get("authorizationName") or "")
     trigger = entry.get("trigger")
-    is_keypad = name.startswith("og-") or trigger == KEYPAD_TRIGGER
+    entry_type = str(entry.get("type") or "")
+    is_keypad = (
+        entry_type == "KeypadAction"
+        or trigger in KEYPAD_TRIGGERS
+        or trigger == KEYPAD_TRIGGER
+        or name.startswith("og-")
+    )
     if not is_keypad:
         return None, {}
-    ctx = {"auth_name": name[:24], "date": entry.get("date"), "action": entry.get("action"),
-           "state": entry.get("state"), "log_id": entry.get("id")}
+    status = entry.get("completionStatus")
+    ctx = {"auth_name": name[:24] or "unbekannt", "date": entry.get("date"),
+           "action": entry.get("action"), "state": entry.get("state"),
+           "completion_status": status, "trigger": trigger,
+           "code_id": entry.get("codeId"),
+           "log_id": entry.get("id", entry.get("index"))}
+    if status is not None:
+        return ("keypad-accepted" if str(status) in KEYPAD_OK_STATES
+                else "keypad-rejected"), ctx
     if entry.get("state") in KEYPAD_REJECT_STATES:
         return "keypad-rejected", ctx
     return "keypad-accepted", ctx
@@ -503,6 +568,299 @@ def check_freeze_watch(db, settings: Settings, nuki_client=None, *, now: datetim
     return {"paused": True, "age_hours": int(age_hours), "alerted_24h": alerted_24h, "alerted_reachable": alerted_reachable}
 
 
+# ── Konnektivität: Nuki-Hub/Schloss, NAS/Home Assistant, Studio-Internet ──
+# Warum eigene Checks statt "der Worker meldet sich schon": Der Ausfall vom
+# 02.–05.09.2026 blieb fünf Tage still, weil jede Ebene für sich "gesund" aussah.
+# Diese Wächter prüfen die Kette Server → Studio-Internet → NAS/HA → Hub → Schloss
+# Glied für Glied und melden das ERSTE gerissene, nicht die Folgefehler.
+
+
+def _tcp_open(host: str, port: int, timeout: float = 5.0) -> bool:
+    """Reine TCP-Erreichbarkeit (kein Protokoll) — bewusst ohne Abhängigkeiten."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _http_ok(url: str, *, headers: dict[str, str] | None = None, timeout: float = 8.0) -> bool:
+    try:
+        import httpx
+        resp = httpx.get(url, headers=headers or {}, timeout=timeout, verify=False)
+        return resp.status_code < 500
+    except Exception:
+        return False
+
+
+def classify_studio_link(*, nas_tailscale: bool, public_endpoint: bool, home_assistant: bool) -> tuple[str | None, str]:
+    """Pure: welches Kettenglied ist gerissen? → (kind|None, Begründung).
+
+    Tailscale läuft über dieselbe WAN-Leitung wie alles andere: ist die NAS über
+    Tailscale erreichbar, steht das Studio-Internet zwangsläufig. Antwortet
+    zusätzlich der öffentliche Endpunkt (Router-Portfreigabe) nicht, während
+    Tailscale tot ist, dann ist die Leitung/der Router weg — nicht nur die NAS.
+    """
+    if nas_tailscale and home_assistant:
+        return None, "Studio-Kette vollständig erreichbar."
+    if nas_tailscale and not home_assistant:
+        return "home-assistant-offline", ("NAS erreichbar (Tailscale), aber Home Assistant "
+                                          "antwortet nicht — HA-Container prüfen.")
+    if not nas_tailscale and public_endpoint:
+        return "nas-offline", ("Studio-Internet steht (öffentlicher Endpunkt antwortet), aber die "
+                               "NAS ist über Tailscale nicht erreichbar — NAS aus oder "
+                               "Tailscale-Daemon tot.")
+    return "studio-internet-down", ("Weder Tailscale-NAS noch öffentlicher Endpunkt erreichbar — "
+                                    "Internet/Router im Studio ausgefallen oder NAS stromlos.")
+
+
+def check_studio_link(db, settings: Settings, *, now: datetime | None = None) -> dict:
+    """Studio-Internet, NAS und Home Assistant."""
+    now = now or now_utc()
+    host = (getattr(settings, "nuki_mqtt_host", "") or "").strip()
+    ha_url = (getattr(settings, "ha_url", "") or "").strip()
+    ha_token = (getattr(settings, "ha_token", "") or "").strip()
+    if not host:
+        return {"checked": False}
+    nas_tailscale = _tcp_open(host, int(getattr(settings, "nuki_mqtt_port", 1883) or 1883))
+    public_endpoint = _http_ok(ha_url) if ha_url else False
+    home_assistant = False
+    if ha_url and ha_token:
+        home_assistant = _http_ok(f"{ha_url.rstrip('/')}/api/",
+                                  headers={"Authorization": f"Bearer {ha_token}"})
+    elif nas_tailscale:
+        home_assistant = True  # ohne Token nicht prüfbar → nicht fälschlich alarmieren
+    kind, reason = classify_studio_link(nas_tailscale=nas_tailscale, public_endpoint=public_endpoint,
+                                        home_assistant=home_assistant)
+    state = {"nas_tailscale": nas_tailscale, "public_endpoint": public_endpoint,
+             "home_assistant": home_assistant, "kind": kind}
+    for k in ("studio-internet-down", "nas-offline", "home-assistant-offline"):
+        if k != kind:
+            resolve(db, key=k, now=now)
+    if kind is None:
+        return {**state, "alerted": False}
+    severity = AlertSeverity.ERROR if kind == "studio-internet-down" else AlertSeverity.WARNING
+    alerted = notify(
+        db, settings, key=kind, severity=severity, kind=kind,
+        title={"studio-internet-down": "Studio offline — Internet/Router oder NAS ausgefallen",
+               "nas-offline": "NAS nicht erreichbar",
+               "home-assistant-offline": "Home Assistant antwortet nicht"}[kind],
+        detail=reason, payload=state, cooldown_secs=30 * 60, now=now,
+    )
+    return {**state, "alerted": alerted}
+
+
+def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None = None) -> dict:
+    """Hub erreichbar? Schloss am Hub? Akku? Meldet `nuki-hub-offline` /
+    `nuki-lock-unreachable`.
+
+    Wichtig: ``hub_health`` erzwingt einen Round-Trip. Alle Hub-Topics sind
+    retained — ein toter Hub „antwortet" sonst stundenlang mit Altdaten
+    (genau so blieb sein Ausfall am 05.09. unbemerkt).
+    """
+    now = now or now_utc()
+    if nuki is None or not hasattr(nuki, "hub_health"):
+        return {"checked": False}
+    health = nuki.hub_health()
+    alerted = 0
+    if not health.get("responsive"):
+        if notify(
+            db, settings, key="nuki-hub-offline", severity=AlertSeverity.ERROR,
+            kind="nuki-hub-offline",
+            title="Nuki Hub offline — keine Antwort über MQTT",
+            detail=("Der Hub (ESP32) reagiert nicht auf eine Statusabfrage. Türcodes am Keypad "
+                    "funktionieren weiter, aber Rotation und Code-Verifikation sind blind. "
+                    f"Letzter bekannter Zustand: MQTT={health.get('mqtt_connected')}, "
+                    f"Schloss={health.get('lock_available')}, Uptime={health.get('uptime')}s."),
+            payload=health, cooldown_secs=30 * 60, now=now,
+        ):
+            alerted += 1
+        return {**health, "alerted": alerted}
+    resolve(db, key="nuki-hub-offline", now=now)
+
+    if health.get("lock_available") is False or health.get("hybrid_connected") is False:
+        if notify(
+            db, settings, key="nuki-lock-unreachable", severity=AlertSeverity.ERROR,
+            kind="nuki-lock-unreachable",
+            title="Nuki Schloss für den Hub nicht erreichbar",
+            detail=(f"Hub lebt, aber das Schloss antwortet nicht (availability="
+                    f"{health.get('lock_available')}, hybrid={health.get('hybrid_connected')}, "
+                    f"BLE-RSSI={health.get('ble_rssi')}). BLE-Reichweite/Akku prüfen."),
+            payload=health, cooldown_secs=30 * 60, now=now,
+        ):
+            alerted += 1
+    else:
+        resolve(db, key="nuki-lock-unreachable", now=now)
+
+    level = health.get("battery_level")
+    if health.get("battery_critical") or (isinstance(level, int) and level <= 20):
+        if notify(
+            db, settings, key="nuki-battery-low", severity=AlertSeverity.WARNING,
+            kind="nuki-battery-low", title="Nuki Schloss-Akku schwach",
+            detail=f"Akkustand {level}% (kritisch={health.get('battery_critical')}).",
+            payload=health, cooldown_secs=12 * 3600, now=now,
+        ):
+            alerted += 1
+    return {**health, "alerted": alerted}
+
+
+# ── Konsistenz: DB-Pins ↔ tatsächliche Keypad-Codes ───────────────────────
+def diff_db_vs_device(db_pins: dict[str, str], device_codes: dict[str, str]) -> dict[str, Any]:
+    """Pure: vergleicht Slot→PIN (DB) mit Slot→Code (Gerät).
+
+    ``mismatched`` = Slot existiert auf beiden Seiten mit UNTERSCHIEDLICHEM Code
+    (der gefährliche Fall: die DB verschickt einen Code, den die Tür nicht kennt).
+    ``invisible`` = Slot, den das Gerät gerade nicht meldet — kein Fehler, nur
+    ungeprüft (die Hub-Firmware deckelt ihre Code-Liste).
+    """
+    mismatched, matched, invisible = [], [], []
+    for name, pin in sorted(db_pins.items()):
+        code = device_codes.get(name)
+        if code is None:
+            invisible.append(name)
+        elif str(code) == str(pin):
+            matched.append(name)
+        else:
+            mismatched.append(name)
+    return {"mismatched": mismatched, "matched": matched, "invisible": invisible,
+            "total": len(db_pins)}
+
+
+def check_code_sync(db, settings: Settings, nuki=None, *, smartlock_id: int = 0,
+                    now: datetime | None = None) -> dict:
+    """Meldet `codes-out-of-sync`, wenn DB-Pins und Keypad-Codes auseinanderlaufen."""
+    now = now or now_utc()
+    if nuki is None:
+        return {"checked": False}
+    try:
+        device = {}
+        # Kein BLE-Refresh: der Drift-Check darf mit dem letzten Gerätestand arbeiten.
+        # Ein erzwungener Keypad-Read alle 5 Minuten belastet den Schloss-Akku ohne
+        # Mehrwert — die Zustellung selbst liest ohnehin frisch.
+        read = getattr(nuki, "list_keypad_codes", None)
+        try:
+            codes = read(refresh=False, cache_seconds=120.0)
+        except TypeError:      # Web-API-Client kennt die Parameter nicht
+            codes = read()
+        for auth in codes:
+            name = str(auth.get("name") or "")
+            if name.startswith("og-") and auth.get("code") is not None:
+                device.setdefault(name, str(auth["code"]))
+        if not device:
+            return {"checked": False, "reason": "keine Gerätecodes lesbar"}
+        with db.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (s.name) s.name, h.pin
+                FROM nuki_pin_history h JOIN nuki_slots s ON s.id = h.slot_id
+                WHERE h.rotation_date <= CURRENT_DATE
+                ORDER BY s.name, h.rotation_date DESC
+                """
+            )
+            db_pins = {r["name"]: str(r["pin"]) for r in cur.fetchall()}
+    except Exception as exc:
+        logger.warning("check_code_sync: Vergleich fehlgeschlagen: %s", exc)
+        return {"checked": False, "error": str(exc)}
+
+    result = diff_db_vs_device(db_pins, device)
+    if result["mismatched"]:
+        result["alerted"] = notify(
+            db, settings, key="codes-out-of-sync", severity=AlertSeverity.ERROR,
+            kind="codes-out-of-sync",
+            title="Codes zwischen Datenbank und Nuki asynchron",
+            detail=(f"{len(result['mismatched'])} Slot(s) haben in der DB einen anderen Code als am "
+                    f"Keypad — verschickte Codes öffnen dort nicht. Betroffen: "
+                    f"{', '.join(result['mismatched'][:12])}"
+                    f"{' …' if len(result['mismatched']) > 12 else ''}. "
+                    f"Übereinstimmend: {len(result['matched'])}, ungeprüft: {len(result['invisible'])}."),
+            payload={"mismatched": result["mismatched"][:30], "matched": len(result["matched"]),
+                     "invisible": len(result["invisible"])},
+            cooldown_secs=6 * 3600, now=now,
+        )
+    else:
+        resolve(db, key="codes-out-of-sync", now=now)
+        result["alerted"] = False
+    return result
+
+
+def check_delivered_codes(db, settings: Settings, nuki=None, *, smartlock_id: int = 0,
+                          now: datetime | None = None) -> dict:
+    """Meldet `wrong-code-delivered`: ein bereits verschickter Code passt nicht
+    mehr zu dem, was für diesen Slot am Schloss hängt.
+
+    Der Fall aus der Praxis: das Mitglied hat die Mail, aber zwischen Versand und
+    Termin wurde rotiert/desynchronisiert — der Code öffnet nicht mehr. Bisher fiel
+    das erst an der Tür auf. Die Klartext-Codes stehen nirgends in der DB (nur
+    Hashes), also wird der heutige Slot-Pin gegen den gespeicherten Hash geprüft.
+    """
+    now = now or now_utc()
+    if nuki is None:
+        return {"checked": False}
+    from ..auth import verify_password  # lokal: vermeidet Import-Zyklus
+    from ..timewindow import store
+
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT aw.id, aw.member_id, aw.starts_at, ac.code_hash, ac.code_last4,
+                   na.hour AS slot_hour, na.pool_index
+            FROM access_windows aw
+            JOIN access_codes ac ON ac.access_window_id = aw.id AND ac.status = 'emailed'
+            JOIN bookings b ON b.id = aw.booking_id
+            -- Der Slot muss zu GENAU dieser Buchung passen: gleicher Wochentag und
+            -- gebuchte Uhrstunde (bzw. 24 = Business-Hours-Fallback). Die zuletzt
+            -- irgendwann vergebene Zuweisung des Mitglieds wäre der falsche Vergleich
+            -- und würde Fehlalarme erzeugen.
+            LEFT JOIN LATERAL (
+                SELECT hour, pool_index FROM nuki_assignments
+                WHERE member_ref = aw.member_id::text
+                  AND weekday = EXTRACT(ISODOW FROM (b.start_at AT TIME ZONE 'Europe/Berlin'))::int - 1
+                  AND hour IN (EXTRACT(HOUR FROM (b.start_at AT TIME ZONE 'Europe/Berlin'))::int, 24)
+                ORDER BY created_at DESC LIMIT 1
+            ) na ON TRUE
+            WHERE aw.status IN ('scheduled','active')
+              AND aw.ends_at > %s
+              AND aw.starts_at < %s + interval '24 hours'
+            """,
+            (now, now),
+        )
+        rows = cur.fetchall()
+
+    stale, checked = [], 0
+    for row in rows:
+        if row.get("slot_hour") is None:
+            continue
+        pin = store.get_todays_slot_pin(
+            db, smartlock_id=smartlock_id, hour=int(row["slot_hour"]),
+            pool_index=int(row["pool_index"]), rotation_date=now.date(),
+        )
+        if not pin:
+            continue
+        checked += 1
+        try:
+            if not verify_password(pin, row["code_hash"]):
+                stale.append({"window_id": row["id"], "member_id": row["member_id"],
+                              "starts_at": row["starts_at"].isoformat(),
+                              "code_last4": row.get("code_last4")})
+        except Exception:
+            continue
+
+    alerted = 0
+    for item in stale:
+        if notify(
+            db, settings, key=f"wrong-code:{item['window_id']}", severity=AlertSeverity.ERROR,
+            kind="wrong-code-delivered",
+            title="Verschickter Zugangscode passt nicht mehr zum Schloss",
+            detail=(f"Mitglied #{item['member_id']} hat für den Termin {item['starts_at']} einen "
+                    f"Code erhalten (endet auf {item['code_last4']}), der nicht mehr dem aktuellen "
+                    f"Slot-Pin entspricht. Das Mitglied kommt damit nicht rein — neu zustellen."),
+            payload=item, cooldown_secs=60 * 60, now=now,
+        ):
+            alerted += 1
+    return {"checked": checked, "stale": len(stale), "alerted": alerted}
+
+
 # ── Orchestrators ─────────────────────────────────────────────────────────
 def run_worker_monitoring(db, settings: Settings) -> dict:
     """Called each worker tick: write heartbeat + run the periodic fallback
@@ -515,6 +873,11 @@ def run_worker_monitoring(db, settings: Settings) -> dict:
     overdue = check_overdue_dispatch(db, settings)
     keypad = {"keypad": 0, "rejected": 0, "alerted": 0}
     freeze = {"paused": False, "alerted_24h": False, "alerted_reachable": False}
+    link = sync = delivered = studio = {"checked": False}
+    try:
+        studio = check_studio_link(db, settings)
+    except Exception:
+        logger.exception("run_worker_monitoring: studio link check failed")
     try:
         from ..nuki_client import build_nuki_client
         from .settings import get_effective_nuki_config
@@ -524,14 +887,23 @@ def run_worker_monitoring(db, settings: Settings) -> dict:
             nuki_inst = build_nuki_client(settings.model_copy(update=cfg))
         try:
             if nuki_inst:
-                keypad = poll_keypad_events(db, settings, nuki_inst, smartlock_id=int(cfg["nuki_smartlock_id"]))
+                smartlock_id = int(cfg["nuki_smartlock_id"])
+                # Order matters: establish whether the hub is even alive before
+                # reading anything from it — otherwise a dead link shows up as a
+                # dozen downstream "code missing" alerts instead of one cause.
+                link = check_nuki_link(db, settings, nuki_inst)
+                if link.get("responsive", True):
+                    keypad = poll_keypad_events(db, settings, nuki_inst, smartlock_id=smartlock_id)
+                    sync = check_code_sync(db, settings, nuki_inst, smartlock_id=smartlock_id)
+                    delivered = check_delivered_codes(db, settings, nuki_inst, smartlock_id=smartlock_id)
             freeze = check_freeze_watch(db, settings, nuki_client=nuki_inst)
         finally:
             if nuki_inst:
                 nuki_inst.close()
     except Exception:
         logger.exception("run_worker_monitoring: nuki monitoring checks failed")
-    return {"overdue": overdue, "keypad": keypad, "freeze": freeze}
+    return {"overdue": overdue, "keypad": keypad, "freeze": freeze,
+            "studio": studio, "nuki_link": link, "code_sync": sync, "delivered": delivered}
 
 
 def run_service_monitoring(db, settings: Settings) -> dict:

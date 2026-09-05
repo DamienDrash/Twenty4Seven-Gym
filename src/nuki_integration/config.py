@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     # Optional ntfy push for monitoring alerts (dormant unless both are set).
     ntfy_url: str = Field(default="", alias="NTFY_URL")
     ntfy_topic: str = Field(default="", alias="NTFY_TOPIC")
+    # Home Assistant on the studio NAS — used purely as a liveness probe to tell
+    # "studio internet down" apart from "NAS down" apart from "HA down".
+    ha_url: str = Field(default="", alias="HA_URL")
+    ha_token: str = Field(default="", alias="HA_TOKEN")
     app_public_base_url: str = Field(default="https://services.frigew.ski/opengym", alias="APP_PUBLIC_BASE_URL")
     media_storage_path: str = Field(default="./media/uploads", alias="MEDIA_STORAGE_PATH")
     media_url_base: str = Field(default="/media", alias="MEDIA_URL_BASE")

@@ -270,6 +270,11 @@ class NukiHubMqttClient:
             "lock/doorSensorState",
             "lock/state",
             "lock/log",
+            "lock/rssi",
+            "lock/hybridConnected",
+            "maintenance/mqttConnectionState",
+            "maintenance/uptime",
+            "maintenance/wifiRssi",
         ):
             client.subscribe(self._t(suffix), qos=0)
         self._client = client
@@ -332,7 +337,7 @@ class NukiHubMqttClient:
 
     # ── keypad reads ──────────────────────────────────────────────
 
-    def list_keypad_codes(self, *, refresh: bool = True, cache_seconds: float = 10.0) -> list[dict]:
+    def list_keypad_codes(self, *, refresh: bool = True, cache_seconds: float = 60.0) -> list[dict]:
         """All keypad codes as Web-API-shaped type-13 auths (device truth)."""
         if self._settings.nuki_dry_run:
             logger.info("DRY_RUN: skip list_keypad_codes")
@@ -745,6 +750,51 @@ class NukiHubMqttClient:
         except Exception as exc:
             logger.error("NukiHub get_log failed: %s", exc)
             return []
+
+    def hub_health(self) -> dict[str, Any]:
+        """Live health of hub *and* lock — with a round trip, not just retains.
+
+        Every ``nukihub/…`` topic is retained, so a dead hub keeps "answering"
+        with whatever it last published: on 2026-09-05 the hub had been off the
+        broker for hours while ``lock/availability`` still read ``online``. So
+        ask it something and wait for a *fresh* reply; only that proves it is
+        alive. ``responsive`` is the field to alert on.
+        """
+        out: dict[str, Any] = {
+            "responsive": False, "mqtt_connected": None, "lock_available": None,
+            "hybrid_connected": None, "lock_state": None, "battery_level": None,
+            "battery_critical": None, "ble_rssi": None, "wifi_rssi": None,
+            "uptime": None, "error": None,
+        }
+        try:
+            self._connect()
+            started = time.time()
+            self._publish("lock/query/lockstate", "1")
+            fresh = self._await_message("lock/json", timeout=self._timeout, since=started)
+            out["responsive"] = fresh is not None
+            out["mqtt_connected"] = (self._last("maintenance/mqttConnectionState") or "").strip() == "online"
+            out["lock_available"] = (self._last("lock/availability") or "").strip() == "online"
+            out["hybrid_connected"] = (self._last("lock/hybridConnected") or "").strip() == "1"
+            out["lock_state"] = (self._last("lock/state") or "").strip() or None
+            for key, suffix in (("ble_rssi", "lock/rssi"), ("wifi_rssi", "maintenance/wifiRssi"),
+                                ("uptime", "maintenance/uptime")):
+                raw = self._last(suffix)
+                if raw is not None:
+                    try:
+                        out[key] = int(raw)
+                    except ValueError:
+                        pass
+            raw_battery = self._last("lock/battery/basicJson")
+            if raw_battery:
+                try:
+                    battery = json.loads(raw_battery)
+                    out["battery_level"] = battery.get("level")
+                    out["battery_critical"] = str(battery.get("critical", "0")) not in ("0", "false", "False")
+                except json.JSONDecodeError:
+                    pass
+        except Exception as exc:
+            out["error"] = str(exc)
+        return out
 
     def force_sync(self) -> None:
         """Ask the hub to re-read lock state + keypad from the device (BLE)."""
