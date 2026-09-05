@@ -414,12 +414,12 @@ def _run_reconcile(db, settings, nuki_cfg: dict[str, Any], *, now) -> dict[str, 
     Gemeinsame Innenschleife von Webhook-Trigger und Worker-Fallback; nutzt das
     Berlin-Lokaldatum für den Tages-PIN-Lookup.
     """
-    from ..nuki_client import NukiClient
+    from ..nuki_client import build_nuki_client
 
     effective = settings.model_copy(update=nuki_cfg)
     smartlock_id = int(nuki_cfg.get("nuki_smartlock_id") or 0)
     tz_name = getattr(settings, "timezone", "Europe/Berlin")
-    nuki = NukiClient(effective)
+    nuki = build_nuki_client(effective)
     try:
         return reconcile_relevant_bookings(
             db, nuki=nuki, smartlock_id=smartlock_id, now=now, tz_name=tz_name,

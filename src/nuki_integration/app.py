@@ -34,7 +34,7 @@ from .models import (
     MagiclineWebhookEnvelope, EmailTestRequest,
 )
 from .notifications import EmailService, TelegramService
-from .nuki_client import NukiClient
+from .nuki_client import build_nuki_client
 from .services import (
     build_access_code_email_html, build_password_reset_email_html, build_test_email_html,
     complete_password_reset, deactivate_access_window, delete_funnel_step,
@@ -232,7 +232,7 @@ def admin_aw_emergency(aw_id: int, u: UserRecord = Depends(get_current_user), db
 
 @app.get("/admin/lock/status")
 def admin_lock_status(u: UserRecord = Depends(get_current_user), db: Database = Depends(get_database), rs: Settings = Depends(get_runtime_settings)) -> dict[str, object]:
-    nuki = NukiClient(rs.model_copy(update=get_effective_nuki_config(db, rs)))
+    nuki = build_nuki_client(rs.model_copy(update=get_effective_nuki_config(db, rs)))
     try:
         return nuki.get_lock_status()
     finally:
@@ -241,7 +241,7 @@ def admin_lock_status(u: UserRecord = Depends(get_current_user), db: Database = 
 
 @app.post("/admin/lock/sync")
 def admin_lock_sync(admin: UserRecord = Depends(require_admin), db: Database = Depends(get_database), rs: Settings = Depends(get_runtime_settings)) -> dict[str, object]:
-    nuki = NukiClient(rs.model_copy(update=get_effective_nuki_config(db, rs)))
+    nuki = build_nuki_client(rs.model_copy(update=get_effective_nuki_config(db, rs)))
     try:
         nuki.force_sync()
         return {"success": True}

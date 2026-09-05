@@ -628,3 +628,23 @@ class NukiClient:
             "POST",
             f"/smartlock/{self._settings.nuki_smartlock_id}/sync",
         )
+
+
+def build_nuki_client(settings: Settings):
+    """Return the lock client for the configured transport (``NUKI_TRANSPORT``).
+
+    ``webapi`` (default) → :class:`NukiClient` (Nuki cloud).
+    ``nukihub``          → :class:`~.nuki_hub_client.NukiHubMqttClient`, which reads
+    and writes the keypad through the local Nuki Hub over MQTT/BLE. Both expose the
+    same surface, so callers never branch on the transport. An unknown value falls
+    back to the Web API with a warning rather than leaving the worker without a
+    client — a wrong transport must not take access control down.
+    """
+    transport = str(getattr(settings, "nuki_transport", "webapi") or "webapi").strip().lower()
+    if transport in ("nukihub", "hub", "mqtt"):
+        from .nuki_hub_client import NukiHubMqttClient
+
+        return NukiHubMqttClient(settings)
+    if transport not in ("webapi", "web", "cloud", ""):
+        logger.warning("Unknown NUKI_TRANSPORT=%r — falling back to the Web API", transport)
+    return NukiClient(settings)

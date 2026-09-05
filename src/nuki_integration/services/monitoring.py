@@ -370,7 +370,12 @@ def poll_keypad_events(db, settings: Settings, nuki, *, smartlock_id: int, now: 
     now = now or now_utc()
     cursor = _get_cursor(db, "nuki_log_last_date")
     try:
-        entries = nuki._request("GET", f"/smartlock/{smartlock_id}/log?limit={limit}")
+        # Transport-agnostic: the hub client serves the log from MQTT and has no
+        # ``_request``. Prefer the public accessor, fall back to the Web API call.
+        if hasattr(nuki, "get_log"):
+            entries = nuki.get_log(limit=limit)
+        else:
+            entries = nuki._request("GET", f"/smartlock/{smartlock_id}/log?limit={limit}")
     except Exception as exc:
         logger.warning("poll_keypad_events: log GET failed: %s", exc)
         return {"polled": 0, "keypad": 0, "rejected": 0, "alerted": 0}
@@ -511,12 +516,12 @@ def run_worker_monitoring(db, settings: Settings) -> dict:
     keypad = {"keypad": 0, "rejected": 0, "alerted": 0}
     freeze = {"paused": False, "alerted_24h": False, "alerted_reachable": False}
     try:
-        from ..nuki_client import NukiClient
+        from ..nuki_client import build_nuki_client
         from .settings import get_effective_nuki_config
         cfg = get_effective_nuki_config(db, settings)
         nuki_inst = None
         if not cfg["nuki_dry_run"] and cfg["nuki_smartlock_id"]:
-            nuki_inst = NukiClient(settings.model_copy(update=cfg))
+            nuki_inst = build_nuki_client(settings.model_copy(update=cfg))
         try:
             if nuki_inst:
                 keypad = poll_keypad_events(db, settings, nuki_inst, smartlock_id=int(cfg["nuki_smartlock_id"]))

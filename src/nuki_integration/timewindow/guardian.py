@@ -262,7 +262,7 @@ def guardian_tick(db, settings) -> dict:
     Stunde) gegen das Schloss, heile Fehlende, alarmiere. Für den Worker-Loop."""
     if not bool(getattr(settings, "guardian_enabled", True)):
         return {"skipped": "disabled"}
-    from ..nuki_client import NukiClient
+    from ..nuki_client import build_nuki_client
     from ..services.settings import get_effective_nuki_config
 
     nuki_cfg = get_effective_nuki_config(db, settings)
@@ -270,7 +270,7 @@ def guardian_tick(db, settings) -> dict:
     if effective.nuki_dry_run:
         return {"skipped": "dry_run"}
     smartlock_id = int(nuki_cfg["nuki_smartlock_id"] or 0)
-    nuki = NukiClient(effective)
+    nuki = build_nuki_client(effective)
     checked = healed = failed = 0
     autofix = bool(getattr(settings, "guardian_autofix", True))
     try:

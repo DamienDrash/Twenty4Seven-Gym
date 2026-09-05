@@ -11,7 +11,7 @@ from ..config import Settings
 from ..db import Database
 from ..enums import AccessCodeStatus, AccessWindowStatus, AlertSeverity
 from ..notifications import EmailService
-from ..nuki_client import NukiClient
+from ..nuki_client import build_nuki_client
 from .alerts import create_operational_alert, notify_telegram
 from .auth_tokens import build_check_in_link, build_checks_link
 from .email_builder import build_access_code_email_html
@@ -55,7 +55,7 @@ def _issue_window_code(
     """Create a Nuki keypad code, store it, and email the member."""
     nuki_cfg = get_effective_nuki_config(db, settings)
     effective_settings = settings.model_copy(update=nuki_cfg)
-    nuki = NukiClient(effective_settings)
+    nuki = build_nuki_client(effective_settings)
     smtp = get_effective_smtp_config(db, settings)
     email_service = EmailService(settings, smtp)
     check_in_cfg = get_effective_check_in_settings(db, settings)
@@ -168,7 +168,7 @@ def provision_due_codes(db: Database, settings: Settings) -> int:
     """Provision codes for all due access windows. Called by the worker."""
     nuki_cfg = get_effective_nuki_config(db, settings)
     effective_settings = settings.model_copy(update=nuki_cfg)
-    nuki = NukiClient(effective_settings)
+    nuki = build_nuki_client(effective_settings)
     smtp = get_effective_smtp_config(db, settings)
     email_service = EmailService(settings, smtp)
     check_in_cfg = get_effective_check_in_settings(db, settings)
@@ -220,7 +220,7 @@ def deprovision_expired_codes(db: Database, settings: Settings) -> int:
     """Remove expired codes from the Nuki Smartlock."""
     nuki_cfg = get_effective_nuki_config(db, settings)
     effective_settings = settings.model_copy(update=nuki_cfg)
-    nuki = NukiClient(effective_settings)
+    nuki = build_nuki_client(effective_settings)
 
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
@@ -267,7 +267,7 @@ def cleanup_orphaned_nuki_codes(db: Database, settings: Settings) -> int:
     """
     nuki_cfg = get_effective_nuki_config(db, settings)
     effective_settings = settings.model_copy(update=nuki_cfg)
-    nuki = NukiClient(effective_settings)
+    nuki = build_nuki_client(effective_settings)
 
     try:
         # Auth IDs that should be kept: all codes whose access window is still
@@ -488,7 +488,7 @@ def lock_if_no_active_sessions(db: Database, settings: Settings) -> bool:
 
     nuki_cfg = get_effective_nuki_config(db, settings)
     effective_settings = settings.model_copy(update=nuki_cfg)
-    nuki = NukiClient(effective_settings)
+    nuki = build_nuki_client(effective_settings)
     try:
         nuki.remote_lock()
         logger.info("lock_if_no_active_sessions: lock triggered — no active sessions remaining")

@@ -16,7 +16,7 @@ from ..magicline import (
     derive_entitlements,
     is_access_booking,
 )
-from ..nuki_client import NukiClient
+from ..nuki_client import NukiClient, build_nuki_client
 from .alerts import create_operational_alert
 from .settings import get_effective_nuki_config
 
@@ -83,7 +83,7 @@ def _sync_customer_payload(
     representative_ids: list[int] = []
 
     nuki_cfg = get_effective_nuki_config(db, settings)
-    nuki = NukiClient(settings.model_copy(update=nuki_cfg))
+    nuki = build_nuki_client(settings.model_copy(update=nuki_cfg))
     try:
         for cluster in clusters:
             rep = cluster[0]

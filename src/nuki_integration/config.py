@@ -45,6 +45,17 @@ class Settings(BaseSettings):
     nuki_api_token: str = Field(default="", alias="NUKI_API_TOKEN")
     nuki_smartlock_id: int = Field(default=0, alias="NUKI_SMARTLOCK_ID")
     nuki_dry_run: bool = Field(default=True, alias="NUKI_DRY_RUN")
+    # Which transport talks to the lock. "webapi" = Nuki Web API (cloud); "nukihub" =
+    # the local Nuki Hub (ESP32) over MQTT, which reads the device directly over BLE.
+    # The cloud's keypad/auth view for this lock has been stale since 2026-06 (queued
+    # changes never flush), so "nukihub" is the only source that reflects the device.
+    nuki_transport: str = Field(default="webapi", alias="NUKI_TRANSPORT")
+    nuki_mqtt_host: str = Field(default="", alias="NUKI_MQTT_HOST")
+    nuki_mqtt_port: int = Field(default=1883, alias="NUKI_MQTT_PORT")
+    nuki_mqtt_username: str = Field(default="", alias="NUKI_MQTT_USERNAME")
+    nuki_mqtt_password: str = Field(default="", alias="NUKI_MQTT_PASSWORD")
+    nuki_mqtt_prefix: str = Field(default="nukihub", alias="NUKI_MQTT_PREFIX")
+    nuki_mqtt_timeout_seconds: int = Field(default=20, alias="NUKI_MQTT_TIMEOUT_SECONDS")
     # Outage detector (fail-closed against a frozen Cloud↔Lock link). When True, a code
     # that is present in the cloud auth list but NOT device-confirmed (no updateDate) is
     # treated as NOT deliverable: during a Cloud↔Lock sync freeze such a code has never

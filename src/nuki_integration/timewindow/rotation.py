@@ -363,7 +363,8 @@ def assign_and_deliver(
     weekday, hour = berlin_weekday_hour(booking_start, tz_name)  # erste Stunde, ungepuffert
     member_ref = str(window["member_id"])
 
-    if pin_pool.needs_keypad_code(weekday, hour):
+    is_fallback = not pin_pool.needs_keypad_code(weekday, hour)
+    if not is_fallback:
         # Off-Peak: stundengenauer Slot (og-hHH-pX)
         slot_hour = hour
         recent = store.recent_pool_indices(
@@ -386,9 +387,42 @@ def assign_and_deliver(
         # Business-Hours-Fallback-Code: 08:00–21:00-Fenster (og-bh-Slot).
         door_from_min, door_until_min = pin_pool.FALLBACK_FROM_MIN, pin_pool.FALLBACK_UNTIL_MIN
 
-    pin = store.get_todays_slot_pin(
-        db, smartlock_id=smartlock_id, hour=slot_hour, pool_index=pool_index, rotation_date=day
-    )
+    # Pool candidates: the anti-repeat pick first, then this hour's other indices. A
+    # single slot can be missing from the keypad — a rotation whose create never landed
+    # left 18 of 101 slots without a code (found 05.09.2026, e.g. og-h20-p0) — and
+    # failing closed on that alone locks the member out even though equivalent codes for
+    # the very same hour sit on the lock. Only a slot-specific defect (code absent /
+    # wrong window) moves on; a transport-wide problem stops the loop immediately.
+    pool_count = pin_pool.FALLBACK_POOL if is_fallback else pin_pool.POOL_PER_HOUR
+    candidates = [pool_index] + [p for p in range(pool_count) if p != pool_index]
+    pin = verify = None
+    for candidate in candidates:
+        candidate_pin = store.get_todays_slot_pin(
+            db, smartlock_id=smartlock_id, hour=slot_hour, pool_index=candidate, rotation_date=day
+        )
+        if candidate_pin is None:
+            continue
+        candidate_name = (f"og-bh-p{candidate}" if is_fallback
+                          else f"og-h{hour:02d}-p{candidate}")
+        if nuki is None:  # pure unit path — no device check
+            pool_index, slot_name, pin = candidate, candidate_name, candidate_pin
+            break
+        require_conf = getattr(settings, "nuki_require_device_confirmation", True) if settings else True
+        candidate_verify = verify_slot_code(
+            db, nuki=nuki, smartlock_id=smartlock_id, slot_name=candidate_name,
+            slot_hour=slot_hour, pool_index=candidate, code=candidate_pin,
+            weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
+            require_device_confirmation=require_conf,
+        )
+        pool_index, slot_name, pin, verify = candidate, candidate_name, candidate_pin, candidate_verify
+        if candidate_verify.get("deliverable"):
+            break
+        if candidate_verify.get("unreachable") or candidate_verify.get("unconfirmed"):
+            break  # not this slot's fault — the next index would fail the same way
+        logger.warning(
+            "assign_and_deliver: slot %s not usable (exists=%s covers=%s) — trying next pool index",
+            candidate_name, candidate_verify.get("exists"), candidate_verify.get("covers_window"),
+        )
     if pin is None:
         logger.warning("assign_and_deliver: no rotated PIN for %s on %s — skipping", slot_name, day)
         return {"window_id": window.get("id"), "no_code": False, "assigned": False,
@@ -400,14 +434,7 @@ def assign_and_deliver(
     # dem Mitglied zugestellte gelten (sonst würde der Wächter den falschen Code
     # re-materialisieren). Ohne injizierten ``nuki`` (reiner Unit-Pfad) entfällt die
     # Geräteprüfung und die Zuweisung wird wie gehabt geschrieben.
-    if nuki is not None:
-        require_conf = getattr(settings, "nuki_require_device_confirmation", True) if settings else True
-        verify = verify_slot_code(
-            db, nuki=nuki, smartlock_id=smartlock_id, slot_name=slot_name,
-            slot_hour=slot_hour, pool_index=pool_index, code=pin,
-            weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
-            require_device_confirmation=require_conf,
-        )
+    if nuki is not None and verify is not None:
         if not verify.get("deliverable"):
             # Fail-closed ONLY when the code is genuinely not usable: not present on the
             # lock (create/push failed), wrong window after a repair, the device/API was
@@ -722,14 +749,14 @@ def run_timewindow_cycle(db, settings) -> dict:
     """
     from ..enums import AccessCodeStatus
     from ..notifications import EmailService
-    from ..nuki_client import NukiClient
+    from ..nuki_client import build_nuki_client
     from ..services.settings import get_effective_nuki_config, get_effective_smtp_config
 
     nuki_cfg = get_effective_nuki_config(db, settings)
     effective = settings.model_copy(update=nuki_cfg)
     dry_run = bool(nuki_cfg["nuki_dry_run"])
     smartlock_id = int(nuki_cfg["nuki_smartlock_id"] or 0)
-    nuki = NukiClient(effective)
+    nuki = build_nuki_client(effective)
     email_service = EmailService(settings, get_effective_smtp_config(db, settings))
 
     day = to_berlin_tz(now_utc(), settings.timezone).date()  # Berlin-Lokaldatum, nicht UTC
