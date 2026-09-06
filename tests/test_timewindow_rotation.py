@@ -18,6 +18,7 @@ class InMemoryStore:
         self.pins = {}           # (hour,pool_index,date) -> pin
         self.assignments = []    # dicts
         self._seq = 0
+        self.verified = {}   # (hour,pool,date) -> Zeitpunkt des Geraetebeweises
 
     def ensure_schema(self, db):  # noqa: ARG002
         pass
@@ -53,6 +54,33 @@ class InMemoryStore:
 
     def rotation_status(self, db, day):  # noqa: ARG002
         return {"slots": len(self.slots), "rotated_today": self.rotation_count_for_day(db, day)}
+
+    # -- Geraetebeweis (device attestation) --
+    def get_todays_slot_pin_row(self, db, *, smartlock_id, hour, pool_index, rotation_date):  # noqa: ARG002
+        pin = self.pins.get((hour, pool_index, rotation_date))
+        if pin is None:
+            return None
+        key = (hour, pool_index, rotation_date)
+        return {"id": key, "pin": pin, "rotation_date": rotation_date,
+                "device_verified_at": self.verified.get(key)}
+
+    def mark_pin_device_verified(self, db, *, pin_history_id, pin):  # noqa: ARG002
+        # Wie in der echten Query: nur stempeln, wenn der PIN noch derselbe ist.
+        if self.pins.get(pin_history_id) == pin:
+            self.verified[pin_history_id] = "2026-09-06T12:00:00Z"
+
+    def pins_needing_attestation(self, db, *, smartlock_id, rotation_date,  # noqa: ARG002
+                                 limit=5, stale_after_hours=12):
+        out = []
+        for (hour, pidx, d), pin in self.pins.items():
+            if d != rotation_date or self.verified.get((hour, pidx, d)) is not None:
+                continue
+            sid = self.slots.get((hour, pidx))
+            meta = getattr(self, "slot_meta", {}).get(sid) or {}
+            out.append({"id": (hour, pidx, d), "pin": pin, "device_verified_at": None,
+                        "hour": hour, "pool_index": pidx,
+                        "name": meta.get("name") or f"og-h{hour:02d}-p{pidx}"})
+        return out[:limit]
 
 
 class FakeNuki:
@@ -586,3 +614,139 @@ class DeviceAcknowledgedRotationTests(unittest.TestCase):
         """Der Web-API-Client kennt keinen Quittungskanal — sein Verhalten bleibt exakt."""
         self.assertFalse(rotation._device_confirmed(FakeLiveNuki([])))
         self.assertFalse(rotation._device_confirmed(object()))
+
+
+_DB = object()   # Platzhalter-Handle: der Fake-Store benutzt es nicht
+
+
+class UnreachableNuki(MatNuki):
+    """Transport tot: wir koennen NICHT pruefen. Das ist kein Urteil ueber den Code —
+    ``ensure_code_materialised`` macht daraus ``unreachable``."""
+    def verify_code_for_window(self, code, *, weekday, hour, slot_name=None):  # noqa: ARG002
+        self.verify_calls += 1
+        return {"exists": False, "materialised": False, "covers_window": False,
+                "valid": False, "simulated": False, "auth_id": None,
+                "update_date": None, "link_last_confirmed": None, "error": True}
+
+
+class AttestedFallbackTests(unittest.TestCase):
+    """Ein toter Hub darf niemanden vor der verschlossenen Tuer stehen lassen, wenn das
+    SCHLOSS den Code vorher selbst bestaetigt hat — und muss es sehr wohl, wenn nicht."""
+    def setUp(self):
+        self.store = MatStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        for p in range(pin_pool.POOL_PER_HOUR):
+            self.store.pins[(3, p, DAY)] = f"65432{p}"
+
+    def _window(self):
+        return {"id": 1, "member_id": 42, "email": "m@x.de",
+                "first_name": "A", "last_name": "B",
+                "starts_at": datetime(2026, 7, 6, 1, 0, tzinfo=UTC),   # 03:00 Berlin
+                "ends_at": datetime(2026, 7, 6, 2, 0, tzinfo=UTC)}
+
+    def _deliver(self, nuki):
+        email = FakeEmail()
+        r = rotation.assign_and_deliver(
+            db=_DB, window=self._window(), email_service=email, smartlock_id=0,
+            day=DAY, nuki=nuki, settings=None,
+        )
+        return r, email
+
+    def test_unreachable_without_attestation_stays_fail_closed(self):
+        """Ohne Beweis bleibt es beim alten Verhalten: lieber kein Code als ein toter."""
+        r, email = self._deliver(UnreachableNuki())
+        self.assertFalse(r["assigned"])
+        self.assertEqual(r.get("reason"), "unreachable")
+        self.assertEqual(email.sends, 0)
+
+    def test_unreachable_with_attestation_still_delivers(self):
+        """Der eigentliche Zweck: Hub tot, Code aber am Geraet bewiesen -> Versand."""
+        for p in range(pin_pool.POOL_PER_HOUR):
+            self.store.verified[(3, p, DAY)] = "2026-09-06T10:00:00Z"
+        r, email = self._deliver(UnreachableNuki())
+        self.assertTrue(r["assigned"])
+        self.assertEqual(email.sends, 1)
+
+    def test_successful_verification_records_the_attestation(self):
+        """Der Beweis muss im Normalbetrieb kostenlos entstehen — sonst ist spaeter keiner da."""
+        r, _ = self._deliver(MatNuki(materialised=True, covers=True))
+        self.assertTrue(r["assigned"])
+        self.assertTrue(any(self.store.verified.values()), "erfolgreiche Pruefung muss stempeln")
+
+    def test_simulated_verification_never_counts_as_proof(self):
+        """DRY-RUN bestaetigt am Geraet gar nichts — daraus darf nie ein Beweis werden."""
+        self._deliver(MatNuki(materialised=True, covers=True, simulated=True))
+        self.assertEqual(self.store.verified, {})
+
+    def test_attestation_does_not_rescue_a_genuinely_bad_code(self):
+        """Wichtige Abgrenzung: der Beweis gilt NUR bei ``unreachable``. Sagt das Geraet
+        'Code fehlt', bleibt es fail-closed — sonst schickten wir einen toten Code."""
+        for p in range(pin_pool.POOL_PER_HOUR):
+            self.store.verified[(3, p, DAY)] = "2026-09-06T10:00:00Z"
+        r, email = self._deliver(MatNuki(materialised=False, covers=False,
+                                         exists=False, repair_succeeds=False))
+        self.assertFalse(r["assigned"])
+        self.assertEqual(email.sends, 0)
+
+
+class AttestNuki:
+    """Nuki-Double fuer die Beweisfuehrung: kennt Namen->codeId und beantwortet ``check``."""
+    def __init__(self, valid_codes, *, raise_on_check=False):
+        self.valid_codes = set(valid_codes)
+        self.raise_on_check = raise_on_check
+        self.checks = []
+
+    def list_keypad_codes(self):
+        return [{"name": f"og-h03-p{p}", "id": 800 + p} for p in range(pin_pool.POOL_PER_HOUR)]
+
+    def check_keypad_code(self, *, code_id, code):
+        if self.raise_on_check:
+            raise RuntimeError("MQTT weg")
+        self.checks.append((code_id, code))
+        return code in self.valid_codes
+
+    def close(self):
+        pass
+
+
+class AttestSlotPinsTests(unittest.TestCase):
+    """Die Vorsorge selbst: bestaetigen, solange der Hub lebt — haeppchenweise."""
+    def setUp(self):
+        self.store = MatStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        for p in range(pin_pool.POOL_PER_HOUR):
+            self.store.pins[(3, p, DAY)] = f"65432{p}"
+
+    def test_only_codes_the_lock_confirms_are_recorded(self):
+        nuki = AttestNuki(valid_codes={"654320"})
+        res = rotation.attest_slot_pins(db=_DB, nuki=nuki, smartlock_id=0, day=DAY)
+        self.assertEqual(res["attested"], 1)
+        self.assertEqual(res["mismatched"], pin_pool.POOL_PER_HOUR - 1)
+        self.assertEqual(self.store.verified.get((3, 0, DAY)) is not None, True)
+        self.assertIsNone(self.store.verified.get((3, 1, DAY)))
+
+    def test_already_attested_slots_are_not_rechecked(self):
+        """Sonst laeuft die Vorsorge jeden Zyklus ueber denselben Satz."""
+        self.store.verified[(3, 0, DAY)] = "2026-09-06T12:00:00Z"
+        nuki = AttestNuki(valid_codes={"654320", "654321"})
+        rotation.attest_slot_pins(db=_DB, nuki=nuki, smartlock_id=0, day=DAY)
+        self.assertNotIn(800, [c[0] for c in nuki.checks])
+
+    def test_transport_failure_stops_instead_of_hammering_the_hub(self):
+        """Genau dieses Draufhalten hat die MQTT-Task des Hubs am 06.09. lahmgelegt."""
+        nuki = AttestNuki(valid_codes=set(), raise_on_check=True)
+        res = rotation.attest_slot_pins(db=_DB, nuki=nuki, smartlock_id=0, day=DAY)
+        self.assertEqual(res["attested"], 0)
+        self.assertEqual(len(nuki.checks), 0)
+
+    def test_limit_bounds_the_work_per_cycle(self):
+        nuki = AttestNuki(valid_codes={f"65432{p}" for p in range(pin_pool.POOL_PER_HOUR)})
+        res = rotation.attest_slot_pins(db=_DB, nuki=nuki, smartlock_id=0, day=DAY, limit=1)
+        self.assertEqual(res["checked"], 1)
+
+    def test_a_transport_without_check_is_skipped_cleanly(self):
+        """Der Web-API-Client kennt ``check_keypad_code`` nicht — kein Absturz."""
+        res = rotation.attest_slot_pins(db=_DB, nuki=object(), smartlock_id=0, day=DAY)
+        self.assertEqual(res["attested"], 0)

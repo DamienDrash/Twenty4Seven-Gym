@@ -431,17 +431,19 @@ def assign_and_deliver(
     # wrong window) moves on; a transport-wide problem stops the loop immediately.
     pool_count = pin_pool.FALLBACK_POOL if is_fallback else pin_pool.POOL_PER_HOUR
     candidates = [pool_index] + [p for p in range(pool_count) if p != pool_index]
-    pin = verify = None
+    pin = verify = pin_row = None
     for candidate in candidates:
-        candidate_pin = store.get_todays_slot_pin(
+        candidate_row = store.get_todays_slot_pin_row(
             db, smartlock_id=smartlock_id, hour=slot_hour, pool_index=candidate, rotation_date=day
         )
-        if candidate_pin is None:
+        if candidate_row is None:
             continue
+        candidate_pin = candidate_row["pin"]
         candidate_name = (f"og-bh-p{candidate}" if is_fallback
                           else f"og-h{hour:02d}-p{candidate}")
         if nuki is None:  # pure unit path — no device check
-            pool_index, slot_name, pin = candidate, candidate_name, candidate_pin
+            pool_index, slot_name, pin, pin_row = (candidate, candidate_name,
+                                                   candidate_pin, candidate_row)
             break
         require_conf = getattr(settings, "nuki_require_device_confirmation", True) if settings else True
         candidate_verify = verify_slot_code(
@@ -450,7 +452,8 @@ def assign_and_deliver(
             weekday=weekday, hour=hour, day=day, buffer_days=buffer_days,
             require_device_confirmation=require_conf,
         )
-        pool_index, slot_name, pin, verify = candidate, candidate_name, candidate_pin, candidate_verify
+        pool_index, slot_name, pin, verify, pin_row = (candidate, candidate_name, candidate_pin,
+                                                       candidate_verify, candidate_row)
         if candidate_verify.get("deliverable"):
             break
         if candidate_verify.get("unreachable") or candidate_verify.get("unconfirmed"):
@@ -471,7 +474,24 @@ def assign_and_deliver(
     # re-materialisieren). Ohne injizierten ``nuki`` (reiner Unit-Pfad) entfällt die
     # Geräteprüfung und die Zuweisung wird wie gehabt geschrieben.
     if nuki is not None and verify is not None:
-        if not verify.get("deliverable"):
+        if verify.get("deliverable") and not verify.get("simulated"):
+            # Kostenloser Geraetebeweis: das Schloss hat GENAU diesen PIN gerade
+            # bestaetigt. Ihn festzuhalten ist das, was einen spaeteren Versand
+            # ueberleben laesst, wenn der Hub in dem Moment tot ist.
+            _record_device_attestation(db, pin_row, pin)
+        attested_at = (pin_row or {}).get("device_verified_at")
+        if not verify.get("deliverable") and verify.get("unreachable") and attested_at:
+            # Der Hub antwortet gerade nicht — aber das SCHLOSS SELBST hat genau diesen
+            # PIN frueher bestaetigt, und seitdem hat ihn nichts veraendert: der Beweis
+            # haengt an dieser PIN-Zeile, eine Rotation schriebe eine neue (unbewiesene),
+            # ein ueberschriebener PIN loescht ihn. Hier zu blockieren stellt ein Mitglied
+            # wegen eines Transportausfalls vor die verschlossene Tuer, der ueber den Code
+            # gar nichts aussagt. Also: bewiesenen Code zustellen — und laut darueber sein.
+            _alert_attested_fallback(db, settings, window, slot_name, attested_at)
+            logger.warning(
+                "assign_and_deliver: hub unreachable — dispatching slot %s on a device "
+                "attestation from %s (window=%s)", slot_name, attested_at, window.get("id"))
+        elif not verify.get("deliverable"):
             # Fail-closed ONLY when the code is genuinely not usable: not present on the
             # lock (create/push failed), wrong window after a repair, the device/API was
             # unreachable, or — the outage detector — the code is in the cloud but NOT
@@ -609,6 +629,96 @@ def verify_slot_code(
         allowed_from=allowed_from, allowed_until=allowed_until, auth_id=auth_id,
         require_device_confirmation=require_device_confirmation,
     )
+
+
+def _record_device_attestation(db, pin_row, pin) -> None:
+    """Halte fest, dass das Schloss genau diesen PIN bestaetigt hat (best effort)."""
+    if db is None or not pin_row or not pin_row.get("id") or pin is None:
+        return
+    try:
+        store.mark_pin_device_verified(db, pin_history_id=pin_row["id"], pin=str(pin))
+    except Exception:
+        logger.exception("could not record device attestation for pin row %s", pin_row.get("id"))
+
+
+def _alert_attested_fallback(db, settings, window: dict, slot_name: str, attested_at) -> None:
+    """Sichtbar machen, dass gerade auf einen frueheren Geraetebeweis zugestellt wurde.
+
+    Bewusst WARNING, nicht ERROR: der Code ist bewiesen, das Mitglied kommt rein — aber
+    wir fliegen ohne Live-Verifikation, und das darf nicht unbemerkt zum Normalzustand
+    werden. Der Alarm ist der Anlass, den Hub anzusehen.
+    """
+    if db is None or settings is None:
+        return
+    try:
+        from ..enums import AlertSeverity
+        from ..services import monitoring
+        monitoring.notify(
+            db, settings, key="dispatch-on-attestation",
+            severity=AlertSeverity.WARNING, kind="dispatch-on-attestation",
+            title="Code auf Geraetebeweis zugestellt — Hub war beim Versand nicht erreichbar",
+            detail=(f"Slot {slot_name} fuer Fenster {window.get('id')} wurde ohne Live-Pruefung "
+                    f"verschickt. Das Schloss hatte diesen Code am {attested_at} bestaetigt, "
+                    f"seitdem hat ihn keine Rotation ersetzt. Hub pruefen."),
+            payload={"access_window_id": window.get("id"), "slot_name": slot_name,
+                     "attested_at": str(attested_at)},
+            cooldown_secs=3600,
+        )
+    except Exception:
+        logger.exception("_alert_attested_fallback: failed to record alert")
+
+
+def attest_slot_pins(db, *, nuki, smartlock_id: int, day=None, limit: int = 5,
+                     stale_after_hours: int = 12) -> dict:
+    """Ein paar Slot-PINs am Schloss bestaetigen und den Beweis festhalten.
+
+    Das ist die Vorsorge, die eine Zustellung einen Hub-Ausfall ueberstehen laesst: die
+    Pruefung muss stattgefunden haben, SOLANGE der Hub lebte. Bewusst nur ``limit`` Slots
+    je Aufruf — jede Pruefung ist ein BLE-Roundtrip, und den ganzen Satz auf einmal
+    durchzugehen ist genau die Last, die die MQTT-Task des Hubs am 06.09.2026 mehrfach
+    lahmgelegt hat. Ueber die Worker-Zyklen ist der komplette Satz in ~1 h abgedeckt.
+    """
+    day = day or now_utc().date()
+    if nuki is None or not hasattr(nuki, "check_keypad_code"):
+        return {"checked": 0, "attested": 0, "skipped": "no-device-check"}
+    try:
+        due = store.pins_needing_attestation(
+            db, smartlock_id=smartlock_id, rotation_date=day,
+            limit=limit, stale_after_hours=stale_after_hours)
+    except Exception:
+        logger.exception("attest_slot_pins: could not read due slots")
+        return {"checked": 0, "attested": 0, "error": True}
+    if not due:
+        return {"checked": 0, "attested": 0, "due": 0}
+    try:
+        auth_ids = {a.get("name"): a.get("id") for a in nuki.list_keypad_codes() if a.get("name")}
+    except Exception as exc:
+        logger.warning("attest_slot_pins: no device list (%s) — nothing to attest", exc)
+        return {"checked": 0, "attested": 0, "due": len(due), "unreachable": True}
+    if not auth_ids:
+        return {"checked": 0, "attested": 0, "due": len(due), "unreachable": True}
+
+    checked = attested = mismatched = 0
+    for row in due:
+        auth_id = auth_ids.get(row["name"])
+        if auth_id is None:
+            continue  # Slot nicht publiziert — ``check`` braucht die codeId
+        checked += 1
+        try:
+            ok = nuki.check_keypad_code(code_id=auth_id, code=str(row["pin"]))
+        except Exception as exc:
+            # Transportproblem: abbrechen statt weiter auf den Hub einzuschlagen.
+            logger.warning("attest_slot_pins: check failed for %s (%s) — stopping", row["name"], exc)
+            break
+        if ok:
+            _record_device_attestation(db, row, row["pin"])
+            attested += 1
+        elif ok is False:
+            mismatched += 1
+            logger.error("[ALERT] attest_slot_pins: %s — DB-PIN weicht vom Schloss ab", row["name"])
+    logger.info("attest_slot_pins: due=%d checked=%d attested=%d mismatched=%d",
+                len(due), checked, attested, mismatched)
+    return {"checked": checked, "attested": attested, "mismatched": mismatched, "due": len(due)}
 
 
 def _alert_dispatch_blocked(db, settings, window: dict, slot_name: str, verify: dict) -> None:
@@ -838,6 +948,17 @@ def run_timewindow_cycle(db, settings) -> dict:
                 _reconcile_db_from_lock(db, nuki, smartlock_id, day)
             except Exception:
                 logger.exception("run_timewindow_cycle: reconcile_db_from_lock failed")
+        # Vorsorge fuer den naechsten Hub-Ausfall: solange der Hub ANTWORTET, ein paar
+        # Slot-PINs am Schloss bestaetigen lassen. Nur dieser Beweis erlaubt es einer
+        # spaeteren Zustellung, einen toten Hub zu ueberleben, statt ein Mitglied vor die
+        # verschlossene Tuer zu stellen. Haeppchenweise, damit die Pruefungen den Hub
+        # nicht selbst umbringen (siehe attest_slot_pins).
+        attestation = {"checked": 0, "attested": 0}
+        if not dry_run:
+            try:
+                attestation = attest_slot_pins(db, nuki=nuki, smartlock_id=smartlock_id, day=day)
+            except Exception:
+                logger.exception("run_timewindow_cycle: attest_slot_pins failed")
         due = db.due_access_windows(now_utc())
         assigned = no_code = delivered = blocked = 0
         for window in due:
@@ -864,11 +985,14 @@ def run_timewindow_cycle(db, settings) -> dict:
         "delivered": delivered,
         "blocked": blocked,
         "pushed": rotation.get("pushed", 0),
+        "attested": attestation.get("attested", 0),
         "dry_run": dry_run,
     }
     logger.info(
-        "timewindow cycle: slots=%s due=%s assigned=%s no_code=%s delivered=%s blocked=%s pushed=%s (dry_run=%s)",
+        "timewindow cycle: slots=%s due=%s assigned=%s no_code=%s delivered=%s blocked=%s "
+        "pushed=%s attested=%s/%s (dry_run=%s)",
         rotation.get("slots"), len(due), assigned, no_code, delivered, blocked,
-        rotation.get("pushed", 0), dry_run,
+        rotation.get("pushed", 0), attestation.get("attested", 0),
+        attestation.get("due", 0), dry_run,
     )
     return result

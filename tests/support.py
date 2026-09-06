@@ -14,6 +14,7 @@ class InMemoryStore:
         self.assignments = []  # list of dicts
         self._relevant = []    # windows returned by relevant_windows()
         self._seq = 0
+        self.verified = {}   # (hour,pool,date) -> Zeitpunkt des Geraetebeweises
 
     # -- rotation surface --
     def ensure_schema(self, db):  # noqa: ARG002
@@ -62,6 +63,33 @@ class InMemoryStore:
 
     def rotation_status(self, db, day):  # noqa: ARG002
         return {"slots": len(self.slots), "rotated_today": self.rotation_count_for_day(db, day)}
+
+    # -- Geraetebeweis (device attestation) --
+    def get_todays_slot_pin_row(self, db, *, smartlock_id, hour, pool_index, rotation_date):  # noqa: ARG002
+        pin = self.pins.get((hour, pool_index, rotation_date))
+        if pin is None:
+            return None
+        key = (hour, pool_index, rotation_date)
+        return {"id": key, "pin": pin, "rotation_date": rotation_date,
+                "device_verified_at": self.verified.get(key)}
+
+    def mark_pin_device_verified(self, db, *, pin_history_id, pin):  # noqa: ARG002
+        # Wie in der echten Query: nur stempeln, wenn der PIN noch derselbe ist.
+        if self.pins.get(pin_history_id) == pin:
+            self.verified[pin_history_id] = "2026-09-06T12:00:00Z"
+
+    def pins_needing_attestation(self, db, *, smartlock_id, rotation_date,  # noqa: ARG002
+                                 limit=5, stale_after_hours=12):
+        out = []
+        for (hour, pidx, d), pin in self.pins.items():
+            if d != rotation_date or self.verified.get((hour, pidx, d)) is not None:
+                continue
+            sid = self.slots.get((hour, pidx))
+            meta = getattr(self, "slot_meta", {}).get(sid) or {}
+            out.append({"id": (hour, pidx, d), "pin": pin, "device_verified_at": None,
+                        "hour": hour, "pool_index": pidx,
+                        "name": meta.get("name") or f"og-h{hour:02d}-p{pidx}"})
+        return out[:limit]
 
     # -- guardian surface --
     def set_relevant_windows(self, windows):

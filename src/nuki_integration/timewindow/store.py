@@ -57,6 +57,13 @@ CREATE TABLE IF NOT EXISTS nuki_assignments (
     created_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Geraetebeweis: WANN hat das Schloss selbst bestaetigt, dass genau DIESE PIN
+-- unter diesem Slot am Keypad liegt (``check_keypad_code``). Haengt bewusst an der
+-- PIN-Zeile, nicht am Slot: eine neue Rotation legt eine neue Zeile ohne Beweis an,
+-- ein ueberschriebener PIN loescht ihn (siehe record_rotation). Damit kann ein
+-- Beweis nie fuer einen anderen Code als den geprueften gelten.
+ALTER TABLE nuki_pin_history ADD COLUMN IF NOT EXISTS device_verified_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_nuki_pin_history_slot ON nuki_pin_history(slot_id, rotation_date);
 CREATE INDEX IF NOT EXISTS idx_nuki_assignments_member ON nuki_assignments(member_ref, weekday, hour, created_at);
 """
@@ -167,7 +174,11 @@ def record_rotation(db, *, slot_id: int, rotation_date, pin: str,
                     SET pin = EXCLUDED.pin,
                         pushed = EXCLUDED.pushed,
                         materialised = EXCLUDED.materialised,
-                        dry_run = EXCLUDED.dry_run
+                        dry_run = EXCLUDED.dry_run,
+                        -- Neuer PIN => alter Geraetebeweis ist wertlos. Ihn stehen zu
+                        -- lassen hiesse, einen nie geprueften Code als geprueft
+                        -- auszuliefern, sobald der Hub mal nicht antwortet.
+                        device_verified_at = NULL
                 """,
                 (slot_id, rotation_date, pin, pushed, materialised, dry_run),
             )
@@ -180,11 +191,18 @@ def rotation_count_for_day(db, rotation_date) -> int:
         return int(cur.fetchone()["n"])
 
 
-def get_todays_slot_pin(db, *, smartlock_id: int, hour: int, pool_index: int, rotation_date) -> str | None:
+def get_todays_slot_pin_row(db, *, smartlock_id: int, hour: int, pool_index: int,
+                            rotation_date) -> dict[str, Any] | None:
+    """Die aktuell gueltige PIN-Zeile eines Slots — inklusive Geraetebeweis.
+
+    Gleiche Auswahl wie :func:`get_todays_slot_pin` (juengste Rotation <= Stichtag),
+    liefert aber die ganze Zeile, damit der Aufrufer ``device_verified_at`` sehen und
+    ``id`` fuer eine spaetere Bestaetigung festhalten kann.
+    """
     with db.connection() as conn, conn.cursor() as cur:
         cur.execute(
             """
-            SELECT h.pin
+            SELECT h.id, h.pin, h.rotation_date, h.device_verified_at
             FROM nuki_pin_history h
             JOIN nuki_slots s ON s.id = h.slot_id
             WHERE s.smartlock_id=%s AND s.hour=%s AND s.pool_index=%s AND h.rotation_date <= %s
@@ -193,8 +211,64 @@ def get_todays_slot_pin(db, *, smartlock_id: int, hour: int, pool_index: int, ro
             """,
             (smartlock_id, hour, pool_index, rotation_date),
         )
-        row = cur.fetchone()
-        return row["pin"] if row else None
+        return cur.fetchone()
+
+
+def get_todays_slot_pin(db, *, smartlock_id: int, hour: int, pool_index: int, rotation_date) -> str | None:
+    row = get_todays_slot_pin_row(db, smartlock_id=smartlock_id, hour=hour,
+                                  pool_index=pool_index, rotation_date=rotation_date)
+    return row["pin"] if row else None
+
+
+def mark_pin_device_verified(db, *, pin_history_id: int, pin: str) -> None:
+    """Halte fest, dass das Schloss genau diese PIN bestaetigt hat.
+
+    Der PIN-Vergleich in der WHERE-Klausel ist Absicht: zwischen Pruefung und
+    Schreiben koennte eine Rotation die Zeile neu belegt haben — dann darf der
+    Beweis nicht auf den neuen Code umspringen.
+    """
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE nuki_pin_history SET device_verified_at = NOW() "
+                "WHERE id = %s AND pin = %s",
+                (pin_history_id, pin),
+            )
+        conn.commit()
+
+
+def pins_needing_attestation(db, *, smartlock_id: int, rotation_date, limit: int = 5,
+                             stale_after_hours: int = 12) -> list[dict[str, Any]]:
+    """Aktuelle PIN-Zeilen, deren Geraetebeweis fehlt oder alt ist — aelteste zuerst.
+
+    Bewusst haeppchenweise (``limit``): eine ``check``-Anfrage ist ein BLE-Roundtrip
+    zum Schloss, und den ganzen Satz auf einmal durchzupruefen ist genau die Last,
+    die die MQTT-Task des Hubs am 06.09.2026 mehrfach lahmgelegt hat.
+    """
+    from datetime import datetime, timezone as _tz
+
+    with db.connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT ON (s.id)
+                   h.id, h.pin, h.device_verified_at, s.hour, s.pool_index, s.name
+            FROM nuki_pin_history h
+            JOIN nuki_slots s ON s.id = h.slot_id
+            WHERE s.smartlock_id=%s AND h.rotation_date <= %s
+            ORDER BY s.id, h.rotation_date DESC
+            """,
+            (smartlock_id, rotation_date),
+        )
+        rows = cur.fetchall()
+    now = datetime.now(_tz.utc)
+
+    def _age(r):
+        ts = r.get("device_verified_at")
+        return float("inf") if ts is None else (now - ts).total_seconds()
+
+    due = [r for r in rows if _age(r) >= stale_after_hours * 3600]
+    due.sort(key=lambda r: -_age(r))
+    return due[:limit]
 
 
 def rotation_status(db, rotation_date) -> dict[str, Any]:
