@@ -436,3 +436,59 @@ class WriteConfirmationTests(unittest.TestCase):
         c._keypad_action({"action": "add", "codeId": 1})
         self.assertFalse(c.last_write_confirmed())
         c.close()
+
+
+class MissingKeypadJsonTests(unittest.TestCase):
+    """Seit 06.09.2026 publiziert der Hub ``keypad/json`` gar nicht mehr (Heap-Grenze).
+    Die Einzel-Topics sind dann die einzige Sicht aufs Keypad — verwendbar, aber
+    ausschliesslich mit Lebendnachweis, weil Retains einen toten Hub ueberdauern."""
+
+    def _client(self):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+        c._connect = lambda: None
+        c._publish = lambda *a, **k: None
+        c._await_message = lambda *a, **k: None
+        c._last = lambda suffix: None          # keypad/json fehlt vollstaendig
+        return c
+
+    def test_live_hub_falls_back_to_the_per_entry_topics(self):
+        c = self._client()
+        c._per_entry_auths = lambda seen_at: [hub_entry_to_auth(_entry(), seen_at=SEEN)]
+        c._hub_is_live = lambda: True
+        self.assertEqual([a["name"] for a in c.list_keypad_codes(cache_seconds=0.0)],
+                         ["og-bh-p4"])
+        c.close()
+
+    def test_dead_hub_stays_fail_closed(self):
+        """Ohne Lebendnachweis sind dieselben Retains wertlos — dann lieber
+        „kann nicht pruefen" als ein selbstbewusst falsches Urteil."""
+        c = self._client()
+        c._per_entry_auths = lambda seen_at: [hub_entry_to_auth(_entry(), seen_at=SEEN)]
+        c._hub_is_live = lambda: False
+        self.assertEqual(c.list_keypad_codes(cache_seconds=0.0), [])
+        _auths, unreachable = c._auths_or_error()
+        self.assertTrue(unreachable)
+        c.close()
+
+    def test_liveness_is_a_real_round_trip_and_is_cached(self):
+        """Ein Retain darf den Nachweis nicht erbringen — es muss eine frische Antwort
+        auf eine gerade gestellte Frage sein. Und einmal pro Minute reicht."""
+        c = self._client()
+        published = []
+        c._publish = lambda suffix, payload: published.append(suffix)
+        c._await_message = lambda suffix, **k: "{}" if suffix == "lock/json" else None
+        self.assertTrue(c._hub_is_live())
+        self.assertIn("lock/query/lockstate", published)
+        self.assertTrue(c._hub_is_live())
+        self.assertEqual(published.count("lock/query/lockstate"), 1,
+                         "zweiter Aufruf muss aus dem Cache kommen")
+        c.close()
+
+    def test_a_silent_hub_is_not_alive(self):
+        c = self._client()
+        self.assertFalse(c._hub_is_live())
+        c.close()

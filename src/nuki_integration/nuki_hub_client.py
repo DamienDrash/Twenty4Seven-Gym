@@ -359,6 +359,31 @@ class NukiHubMqttClient:
     _MIN_REQUERY_SECONDS = 900.0
     _last_query_at = 0.0
     _last_command_result: str | None = None
+    # Ein Liveness-Round-Trip je Minute reicht: er dient nur dazu, retained Daten von
+    # einem toten Hub zu unterscheiden, und soll nicht selbst zur Last werden.
+    _LIVENESS_TTL = 60.0
+    _liveness: tuple[float, bool] | None = None
+
+    def _hub_is_live(self) -> bool:
+        """Antwortet der Hub JETZT? (kurz gecachter Round-Trip)
+
+        Same reasoning as :meth:`hub_health`: every ``nukihub/…`` topic is retained, so a
+        dead hub keeps "answering" with old data for hours. Only a fresh reply to a
+        question we just asked proves it is alive.
+        """
+        now = time.time()
+        cached = self._liveness
+        if cached is not None and now - cached[0] < self._LIVENESS_TTL:
+            return cached[1]
+        started = time.time()
+        try:
+            self._publish("lock/query/lockstate", "1")
+            alive = self._await_message("lock/json", timeout=self._timeout, since=started) is not None
+        except Exception as exc:
+            logger.debug("NukiHub liveness probe failed: %s", exc)
+            alive = False
+        self._liveness = (now, alive)
+        return alive
 
     def list_keypad_codes(self, *, refresh: bool = True, cache_seconds: float = 60.0) -> list[dict]:
         """All keypad codes as Web-API-shaped type-13 auths (device truth)."""
@@ -383,10 +408,25 @@ class NukiHubMqttClient:
                 )
             if payload is None:  # fall back to the retained snapshot
                 payload = self._last("lock/keypad/json")
+            seen_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
             if payload is None:
+                # ``keypad/json`` is built into a heap buffer, and on this ESP32-S3
+                # (no PSRAM, ~109 codes) the hub cannot build it at all any more — it
+                # publishes a bare ``null``, or since 2026-09-06 nothing. The per-entry
+                # topics are then the ONLY view of the keypad, and they carry the full
+                # window fields. Using them is right, but ONLY once we know the hub is
+                # actually there: retains outlive a dead hub, and reading them as device
+                # truth is how "cannot verify" turns into a confident wrong answer. So
+                # prove liveness with a round trip first, and stay fail-closed without it.
+                entries = self._per_entry_auths(seen_at) if self._hub_is_live() else []
+                if entries:
+                    logger.warning(
+                        "NukiHub: no keypad/json — using %d per-entry topics "
+                        "(hub answered a live probe)", len(entries))
+                    self._cache = (now, entries)
+                    return list(entries)
                 logger.error("NukiHub: no keypad/json received (hub offline?)")
                 return []
-            seen_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
             auths, truncated = parse_keypad_json(payload, seen_at=seen_at)
             if truncated:
                 logger.warning(
