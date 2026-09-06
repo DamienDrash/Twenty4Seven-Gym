@@ -177,6 +177,7 @@ und werden zur Freigabe gemeldet.
 | Telegram Topic 37 (Gruppe `-1004316584883`) | Wächter-/Betriebsalarme; Credentials in `/opt/getimpulse/.credentials/opengym_telegram.env` |
 | Rotations-Check-Cron 10:30 | `/opt/getimpulse/ops/opengym-rotation-check/check.py` |
 | Worker-Log | ein `worker cycle:`-Eintrag alle ~5 min; `guardian_reconciled=True` erwartet |
+| Externer Dead-Man's-Switch (healthchecks.io) | `HEALTHCHECK_PING_URL` im Worker; meldet nach jedem erfolgreichen Zyklus `/start`, Payload-Zusammenfassung und `/fail` bei Exceptions |
 
 Alarme sind dedupliziert/mit Cooldown (2 h für blockierte Zustellungen, 6 h für
 Degradations-Warnungen), damit ein dauerhaft blockiertes Fenster nicht bei jedem Tick

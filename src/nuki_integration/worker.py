@@ -7,7 +7,7 @@ from .logging_setup import configure_logging
 from .datetime_utils import now_utc
 from .services import cleanup_orphaned_nuki_codes, deprovision_expired_codes, lock_if_no_active_sessions, sync_magicline_bookings
 from .services.nuki_guardian import run_guardian_cycle
-from .services import monitoring
+from .services import deadman, monitoring
 from .timewindow.rotation import run_timewindow_cycle
 
 def run_cycle(db, settings, logger) -> dict:
@@ -51,6 +51,15 @@ def run_cycle(db, settings, logger) -> dict:
             "tw": tw, "guardian": guardian}
 
 
+def _deadman_summary(result: dict) -> str:
+    """Kurzfassung des Zyklus für die healthchecks.io-Historie (dort einsehbar,
+    wenn man nach einem Alarm wissen will, was der letzte gute Lauf getan hat)."""
+    tw = result.get("tw", {}) or {}
+    return (f"windows={result.get('sync', {}).get('windows')} "
+            f"assigned={tw.get('assigned')} delivered={tw.get('delivered')} "
+            f"blocked={tw.get('blocked')}")
+
+
 def run_forever() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -64,9 +73,17 @@ def run_forever() -> None:
             # cloud link) must NEVER crash the worker into a restart loop — it just skips
             # this cycle and retries on the next. Only truly fatal signals propagate.
             try:
-                run_cycle(db, settings, logger)
+                deadman.ping(settings, suffix="start")
+                result = run_cycle(db, settings, logger)
+                # Erst NACH einem sauber beendeten Zyklus melden. Ein Ping am
+                # Schleifenanfang würde auch dann grün melden, wenn jeder Zyklus
+                # in der Mitte abbricht — und damit genau den Fall verschleiern,
+                # für den der Schalter da ist.
+                deadman.ping(settings, payload=_deadman_summary(result))
             except Exception:
                 logger.exception("worker cycle failed — continuing to next cycle")
+                deadman.ping(settings, suffix="fail",
+                             payload="worker cycle raised — siehe Container-Log")
             time.sleep(settings.magicline_sync_interval_minutes * 60)
     finally:
         db.close()

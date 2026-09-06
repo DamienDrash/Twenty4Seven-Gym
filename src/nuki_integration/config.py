@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     # Optional ntfy push for monitoring alerts (dormant unless both are set).
     ntfy_url: str = Field(default="", alias="NTFY_URL")
     ntfy_topic: str = Field(default="", alias="NTFY_TOPIC")
+    # Externer Dead-Man's-Switch (healthchecks.io): Der Worker meldet sich nach
+    # jedem erfolgreichen Zyklus. Bleibt die Meldung aus — Server tot, Container
+    # weg, Internet weg —, alarmiert der fremde Dienst. Leer = deaktiviert.
+    healthcheck_ping_url: str = Field(default="", alias="HEALTHCHECK_PING_URL")
     # Home Assistant on the studio NAS — used purely as a liveness probe to tell
     # "studio internet down" apart from "NAS down" apart from "HA down".
     ha_url: str = Field(default="", alias="HA_URL")
