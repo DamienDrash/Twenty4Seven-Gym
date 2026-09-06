@@ -227,5 +227,8 @@ Was aus dem Code belegt ist und als Software-Fallback zählt:
 
 ## 9. Teilbereich Studio-Automations
 
-Liegt auf `getimpulse-nas` und ist derzeit **OFFLINE**. Regel: nur Erreichbarkeit
-prüfen, bei Rückkehr melden — nie darauf blockieren.
+Liegt auf `getimpulse-nas`. Das NAS ist seit 23.08.2026 wieder online über
+Tailscale erreichbar (100.103.57.114, Ping OK ~98 ms). Die Studio-Automations
+ruhen bis zur Abstimmung und Freigabe durch Damien.
+Regel: Erreichbarkeit stündlich prüfen, bei Statusänderungen melden — nie darauf blockieren.
+

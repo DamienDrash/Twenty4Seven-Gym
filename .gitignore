@@ -18,3 +18,6 @@ venv/
 *.log
 data/
 .DS_Store
+.venv-ci/
+.po-start-worker
+*.bak*
