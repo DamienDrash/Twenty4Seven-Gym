@@ -48,6 +48,7 @@ from typing import Any
 from .config import Settings
 from .nuki_client import (
     NukiApiError,
+    _auth_covers_hour,
     evaluate_materialization,
     evaluate_window_materialization,
     validate_keypad_code,
@@ -261,7 +262,7 @@ class NukiHubMqttClient:
         client.loop_start()
         for suffix in (
             "lock/keypad/json",
-            "lock/keypad/#",  # per-entry topics: name/code/id, no size cap
+            "lock/keypad/#",  # per-entry topics (codes/<n> JSON + legacy code_N/*)
             "lock/keypad/commandResultJson",
             "lock/keypad/commandResult",
             "lock/commandResult",
@@ -410,6 +411,26 @@ class NukiHubMqttClient:
         ``windowUnknown`` so the caller confirms them against the device
         (``check_keypad_code``) instead of trusting a possibly stale retain.
         """
+        # Bevorzugt die JSON-Topics ``keypad/codes/<index>``: ein Eintrag pro
+        # Nachricht, MIT Zeitfenster-Feldern, und ohne die Speichergrenze der
+        # Gesamtliste (die auf diesem ESP32-S3 ohne PSRAM bei 34 Einträgen endet).
+        # Die alten Feld-Topics ``keypad/code_N/*`` liefern keine Fenster und
+        # werden nicht mehr aktualisiert, sobald am Hub "Disable extraneous
+        # non-JSON topics" aktiv ist — sie bleiben dann als Retain-Leichen liegen.
+        json_prefix = self._t("lock/keypad/codes/")
+        with self._lock:
+            json_items = [(k, v) for k, v in self._messages.items() if k.startswith(json_prefix)]
+        out_json: list[dict[str, Any]] = []
+        for _topic, payload in json_items:
+            try:
+                entry = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(entry, dict) and entry.get("name"):
+                out_json.append(hub_entry_to_auth(entry, seen_at=seen_at))
+        if out_json:
+            return out_json
+
         prefix = self._t("lock/keypad/")
         grouped: dict[str, dict[str, str]] = {}
         with self._lock:
@@ -466,7 +487,46 @@ class NukiHubMqttClient:
             return {"materialised": False, "simulated": False, "auth_id": None, "update_date": None}
         return evaluate_materialization(auths, code)
 
-    def verify_code_for_window(self, code: str, *, weekday: int, hour: int) -> dict[str, Any]:
+    def verify_code_for_window(self, code: str, *, weekday: int, hour: int,
+                               slot_name: str | None = None) -> dict[str, Any]:
+        """Pre-dispatch gate. With ``slot_name`` the lookup goes by NAME first.
+
+        Matching purely on the code value trusts whatever the hub last published,
+        and those retained per-entry topics can be stale: on 2026-09-06 ten slots
+        still carried the values of the 2026-08-06 rotation, a month out of date.
+        Looking the slot up by name yields its ``codeId``, and the lock itself then
+        confirms the value (``check``) — device truth instead of a retained echo.
+        """
+        if slot_name:
+            named = self._verify_by_slot_name(slot_name, code, weekday=weekday, hour=hour)
+            if named is not None:
+                return named
+        return self._verify_by_code(code, weekday=weekday, hour=hour)
+
+    def _verify_by_slot_name(self, slot_name: str, code: str, *, weekday: int,
+                             hour: int) -> dict[str, Any] | None:
+        """Name → codeId → ask the lock. None when the slot is not published."""
+        if self._settings.nuki_dry_run:
+            return None
+        auths, unreachable = self._auths_or_error()
+        if unreachable:
+            return None
+        entry = next((a for a in auths if a.get("name") == slot_name and a.get("id")), None)
+        if entry is None:
+            return None
+        live = self.check_keypad_code(code_id=entry["id"], code=code)
+        if live is None:
+            return None      # kein Urteil → normaler Pfad entscheidet
+        covers = _auth_covers_hour(entry, weekday, hour)
+        return {
+            "exists": bool(live), "materialised": bool(live), "covers_window": covers,
+            "valid": bool(live) and covers, "deliverable": bool(live) and covers,
+            "simulated": False, "auth_id": entry["id"], "update_date": entry.get("updateDate"),
+            "link_last_confirmed": entry.get("updateDate"),
+            "window_source": "slot-name+device-check",
+        }
+
+    def _verify_by_code(self, code: str, *, weekday: int, hour: int) -> dict[str, Any]:
         if self._settings.nuki_dry_run:
             logger.info("DRY_RUN: skip window verification for code ****** (wd=%s h=%s)", weekday, hour)
             return {

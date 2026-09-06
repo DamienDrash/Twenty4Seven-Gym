@@ -22,6 +22,20 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+
+def _verify(nuki, code: str, *, weekday: int, hour: int, slot_name: str) -> dict[str, Any]:
+    """``verify_code_for_window`` mit Slot-Namen, wo der Transport ihn unterstützt.
+
+    Der Web-API-Client kennt den Parameter nicht — dort bleibt es beim Abgleich
+    über den Code-Wert.
+    """
+    try:
+        return nuki.verify_code_for_window(code, weekday=weekday, hour=hour,
+                                           slot_name=slot_name)
+    except TypeError:
+        return nuki.verify_code_for_window(code, weekday=weekday, hour=hour)
+
+
 def ensure_code_materialised(
     nuki: Any,
     *,
@@ -54,7 +68,12 @@ def ensure_code_materialised(
         "link_last_confirmed": None,
     }
 
-    check = nuki.verify_code_for_window(code, weekday=weekday, hour=hour)
+    # Den Slot-NAMEN mitgeben, wenn der Transport ihn nutzen kann: Der Hub
+    # veröffentlicht Codes unter Index-Topics, deren Inhalt veralten kann (10 von
+    # 101 Slots trugen am 06.09. noch die Werte der Rotation vom 06.08.). Über den
+    # Namen findet der Client den richtigen Eintrag und lässt den Code-WERT vom
+    # Gerät bestätigen, statt einem alten Retain zu glauben.
+    check = _verify(nuki, code, weekday=weekday, hour=hour, slot_name=slot_name)
     outcome["attempts"] = 1
     outcome["simulated"] = bool(check.get("simulated"))
     outcome["exists"] = bool(check.get("exists"))
@@ -129,7 +148,7 @@ def ensure_code_materialised(
 
     outcome["repaired"] = True
 
-    recheck = nuki.verify_code_for_window(code, weekday=weekday, hour=hour)
+    recheck = _verify(nuki, code, weekday=weekday, hour=hour, slot_name=slot_name)
     outcome["attempts"] = 2
     outcome["exists"] = bool(recheck.get("exists"))
     outcome["materialised"] = bool(recheck.get("materialised"))

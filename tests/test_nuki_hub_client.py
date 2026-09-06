@@ -196,6 +196,104 @@ class UnpublishedSlotTests(unittest.TestCase):
         c.close()
 
 
+class SlotNameVerificationTests(unittest.TestCase):
+    """Nach Slot-NAME suchen und den Code-Wert vom Gerät bestätigen lassen.
+
+    Grund: Die per-Eintrag-Topics sind retained und können veralten — am
+    06.09.2026 trugen zehn Slots noch die Codes der Rotation vom 06.08.
+    """
+
+    def _client(self, entry_code, live):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+            nuki_hub_trust_unpublished=False,
+        ))
+        entry = hub_entry_to_auth(_entry(name="og-h20-p0", code=entry_code,
+                                         allowedWeekdays=["sat", "sun"],
+                                         allowedFromTime="20:00", allowedUntilTime="21:00"),
+                                  seen_at=SEEN)
+        c._auths_or_error = lambda: ([entry], False)
+        c.check_keypad_code = lambda *, code_id, code: live
+        return c
+
+    def test_stale_topic_value_does_not_block_the_real_code(self):
+        """Topic zeigt den alten Code, das Gerät bestätigt den neuen → zustellen."""
+        c = self._client(entry_code=542228, live=True)      # Topic veraltet
+        r = c.verify_code_for_window("227892", weekday=5, hour=20, slot_name="og-h20-p0")
+        self.assertTrue(r["deliverable"])
+        self.assertEqual(r["window_source"], "slot-name+device-check")
+        c.close()
+
+    def test_device_rejects_code_then_fail_closed(self):
+        c = self._client(entry_code=227892, live=False)
+        r = c.verify_code_for_window("227892", weekday=5, hour=20, slot_name="og-h20-p0")
+        self.assertFalse(r["deliverable"])
+        c.close()
+
+    def test_window_of_the_named_entry_is_still_enforced(self):
+        c = self._client(entry_code=227892, live=True)
+        r = c.verify_code_for_window("227892", weekday=5, hour=11, slot_name="og-h20-p0")
+        self.assertFalse(r["covers_window"], "11 Uhr liegt nicht im 20-Uhr-Fenster")
+        self.assertFalse(r["deliverable"])
+        c.close()
+
+    def test_unknown_slot_name_falls_back_to_code_matching(self):
+        c = self._client(entry_code=227892, live=True)
+        r = c.verify_code_for_window("227892", weekday=5, hour=20, slot_name="og-h99-p9")
+        self.assertNotEqual(r.get("window_source"), "slot-name+device-check")
+        c.close()
+
+
+class PerEntrySourceTests(unittest.TestCase):
+    """codes/<n>-JSON schlägt die alten Feld-Topics: mit Fenster, ohne Größenlimit."""
+
+    def _client(self, messages):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+        c._messages = dict(messages)
+        return c
+
+    def test_json_topics_carry_the_time_window(self):
+        c = self._client({
+            "nukihub/lock/keypad/codes/7": _json(_entry(
+                name="og-h20-p0", code=227892, allowedWeekdays=["sat", "sun"],
+                allowedFromTime="20:00", allowedUntilTime="21:00")),
+        })
+        auths = c._per_entry_auths("2026-09-06T12:00:00.000Z")
+        self.assertEqual(len(auths), 1)
+        self.assertEqual(auths[0]["allowedFromTime"], 1200)
+        self.assertEqual(auths[0]["allowedWeekDays"], 3)
+        self.assertNotIn("windowUnknown", auths[0])
+        c.close()
+
+    def test_legacy_field_topics_are_only_a_fallback(self):
+        c = self._client({
+            "nukihub/lock/keypad/code_3/name": "og-h07-p0",
+            "nukihub/lock/keypad/code_3/code": "434681",
+            "nukihub/lock/keypad/code_3/id": "8250",
+        })
+        auths = c._per_entry_auths("2026-09-06T12:00:00.000Z")
+        self.assertEqual(len(auths), 1)
+        self.assertTrue(auths[0]["windowUnknown"])
+        c.close()
+
+    def test_json_topics_win_over_stale_field_topics(self):
+        c = self._client({
+            "nukihub/lock/keypad/codes/7": _json(_entry(name="og-h20-p0", code=227892)),
+            "nukihub/lock/keypad/code_99/name": "og-h20-p0",
+            "nukihub/lock/keypad/code_99/code": "542228",   # Leiche vom 06.08.
+            "nukihub/lock/keypad/code_99/id": "8306",
+        })
+        auths = c._per_entry_auths("2026-09-06T12:00:00.000Z")
+        self.assertEqual([a["code"] for a in auths], [227892])
+        c.close()
+
+
 if __name__ == "__main__":
     unittest.main()
 
