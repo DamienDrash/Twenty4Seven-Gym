@@ -366,6 +366,18 @@ class NullKeypadJsonTests(unittest.TestCase):
         self.assertTrue(unreachable)
         c.close()
 
+    def test_silent_hub_is_unreachable_even_with_per_entry_retains_lying_around(self):
+        """Der gefaehrliche Fall: der Hub schweigt, aber 109 alte Einzel-Topic-Retains
+        liegen noch im Broker. ``list_keypad_codes`` fasst die dann bewusst nicht an —
+        also duerfen sie auch hier nicht als Schnappschuss zaehlen, sonst laese sich
+        ein volles Keypad als leer."""
+        c = self._client()
+        self._offline_transport(c, retained=None, per_entry=[hub_entry_to_auth(_entry(), seen_at=SEEN)])
+        auths, unreachable = c._auths_or_error()
+        self.assertEqual(auths, [])
+        self.assertTrue(unreachable)
+        c.close()
+
     def test_a_genuinely_empty_keypad_stays_a_real_answer(self):
         """Gegenprobe: ``[]`` von einem lebenden Hub ist eine Aussage, kein Ausfall."""
         c = self._client()

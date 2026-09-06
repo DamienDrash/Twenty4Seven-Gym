@@ -495,24 +495,23 @@ class NukiHubMqttClient:
         return auths, False
 
     def _has_keypad_snapshot(self) -> bool:
-        """Has the hub ever given us something we could actually read?
+        """Did the hub hand us a keypad snapshot we could actually read?
 
-        ``keypad/json`` being present is not enough: a bare ``null`` is an answer
-        but not a snapshot, and treating it as one would report "the lock holds no
-        codes" for a keypad that is in fact full — fail-open, exactly the wrong
-        direction. A truncated payload still counts (it carries real entries), and
-        so do the per-entry topics, which are not subject to the size cap.
+        Mirrors exactly what ``list_keypad_codes`` is able to return, because this
+        decides whether an empty result means "the lock holds no codes" or "we could
+        not look". Getting that backwards is fail-open: a full keypad would read as
+        empty. A bare ``null`` is an answer but not a snapshot; no payload at all is
+        not one either — and ``list_keypad_codes`` deliberately does NOT reach the
+        per-entry topics in that case, so they must not count here. A truncated
+        payload does count: it carries real entries up to the cut.
         """
         raw = self._last("lock/keypad/json")
-        if raw is not None:
-            try:
-                if isinstance(json.loads(raw), list):
-                    return True
-            except json.JSONDecodeError:
-                return True  # cut off mid-entry, but real data up to that point
-        prefix = self._t("lock/keypad/codes/")
-        with self._lock:
-            return any(k.startswith(prefix) for k in self._messages)
+        if raw is None:
+            return False
+        try:
+            return isinstance(json.loads(raw), list)
+        except json.JSONDecodeError:
+            return True
 
     def verify_materialization(self, code: str) -> dict[str, Any]:
         if self._settings.nuki_dry_run:
