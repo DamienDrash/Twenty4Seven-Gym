@@ -24,9 +24,20 @@ from dataclasses import dataclass, field
 
 from ..datetime_utils import BUSINESS_HOURS, is_open
 
-POOL_PER_HOUR = 4          # Codes je Off-Peak-Stunde (Betreiber-Entscheid)
+# Codes je Off-Peak-Stunde. Von 4 auf 2 gesenkt (06.09.2026, Betreiber-Entscheid):
+# 4 ergaben 96+5 = 101 og-Codes, mit den persönlichen zusammen 109 Einträge am
+# Keypad. Der Nuki Hub (ESP32-S3 OHNE PSRAM, ~104 KB freier Heap) kann so viele
+# nicht mehr vollständig über MQTT spiegeln — seine Gesamtliste brach bei 34
+# Einträgen ab, einzelne Slots blieben unsichtbar, und eine Zustellung wurde
+# dadurch faelschlich blockiert (Vorfall 05.09.2026). Mit 2 sind es 48+5 = 53
+# og-Codes und rund 61 Eintraege insgesamt: passt mit Reserve in Puffer und
+# Publikation, halbiert ausserdem BLE-Lesezeit und Akkulast des Schlosses.
+POOL_PER_HOUR = 2
 KEYPAD_CODE_LIMIT = 200    # Hardware-Grenze Nuki Keypad
-ANTI_REPEAT_DEPTH = POOL_PER_HOUR  # Wochen bis erzwungene Wiederholung
+# Anti-Repeat: strikt abwechseln. Waere die Tiefe gleich der Poolgroesse, bliebe
+# kein Kandidat uebrig und choose_pool_index muesste den zuletzt vergebenen Index
+# wiederholen — genau das, was die Rotation vermeiden soll.
+ANTI_REPEAT_DEPTH = POOL_PER_HOUR - 1
 
 # Business-Hours-Fallback: 5 Codes, 08:00–21:00, Mo–Sa (NICHT Sonntag), täglich
 # rotierend. Werden an Buchungen INNERHALB der Geschäftszeiten zugestellt.
@@ -166,7 +177,7 @@ def build_fallback_slots() -> list[Slot]:
 
 
 def expected_slot_count() -> int:
-    """Anzahl aller täglich rotierten Slots: 96 Off-Peak + 5 Business-Hours-Fallback.
+    """Anzahl aller täglich rotierten Slots: 48 Off-Peak + 5 Business-Hours-Fallback.
 
     Zentrale Quelle für die Rotations-Idempotenz (``rotate_daily``) und den
     Admin-Status (``app.timewindow_status``), damit beide alle 101 Slots erwarten.

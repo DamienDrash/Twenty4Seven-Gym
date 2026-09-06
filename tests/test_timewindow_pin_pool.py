@@ -5,11 +5,11 @@ from nuki_integration.timewindow import pin_pool as p
 
 
 class BucketTests(unittest.TestCase):
-    def test_24_offpeak_buckets_96_slots(self):
+    def test_24_offpeak_buckets_48_slots(self):
         buckets = p.compute_offpeak_buckets()
         self.assertEqual(len(buckets), 24)
         slots = p.build_slots(buckets)
-        self.assertEqual(len(slots), 96)
+        self.assertEqual(len(slots), 48)
         self.assertLessEqual(len(slots), p.KEYPAD_CODE_LIMIT)
         p.assert_within_budget(slots)
 
@@ -55,8 +55,8 @@ class FallbackSlotTests(unittest.TestCase):
         self.assertEqual(b.from_time, 8 * 60)    # 08:00
         self.assertEqual(b.until_time, 21 * 60)  # 21:00
 
-    def test_expected_slot_count_is_101(self):
-        self.assertEqual(p.expected_slot_count(), 96 + 5)
+    def test_expected_slot_count_is_53(self):
+        self.assertEqual(p.expected_slot_count(), 48 + 5)
         total = p.build_slots(p.compute_offpeak_buckets()) + p.build_fallback_slots()
         self.assertEqual(len(total), p.expected_slot_count())
         p.assert_within_budget(total)
@@ -76,7 +76,7 @@ class PinTests(unittest.TestCase):
         slots = p.build_slots(p.compute_offpeak_buckets())
         p.rotate_pins(slots)
         codes = [s.code for s in slots]
-        self.assertEqual(len(set(codes)), 96)
+        self.assertEqual(len(set(codes)), 48)
         for c in codes:
             p.validate_keypad_code(c)
 
@@ -95,8 +95,11 @@ class AntiRepeatTests(unittest.TestCase):
     def test_choose_pool_index_stateless(self):
         self.assertEqual(p.choose_pool_index([]), 0)
         self.assertEqual(p.choose_pool_index([0]), 1)
-        self.assertEqual(p.choose_pool_index([0, 1, 2]), 3)
-        self.assertEqual(p.choose_pool_index([0, 1, 2, 3]), 3)  # exhausted → reuse
+        # Zwei Codes je Stunde ⇒ strikte Abwechslung; die Anti-Repeat-Tiefe ist
+        # bewusst kleiner als der Pool, damit immer ein Kandidat übrig bleibt.
+        self.assertEqual(p.choose_pool_index([1]), 0)
+        self.assertEqual(p.choose_pool_index([0, 1]), 0)
+        self.assertEqual(p.choose_pool_index([1, 0]), 1)
 
 
 if __name__ == "__main__":

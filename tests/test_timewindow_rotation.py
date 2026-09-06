@@ -92,19 +92,19 @@ class RotateDailyTests(unittest.TestCase):
         self.addCleanup(self.patch.stop)
 
     def test_rotate_daily_dry_run(self):
-        # Dry-Run-Vertrag: alle 101 Slots (96 Off-Peak + 5 Business-Hours-Fallback)
+        # Dry-Run-Vertrag: alle 53 Slots (48 Off-Peak + 5 Business-Hours-Fallback)
         # werden simuliert/materialisiert-geprüft, aber NICHTS wird gepusht/erzeugt.
         nuki = FakeNuki()
         res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY, dry_run=True)
-        self.assertEqual(res["slots"], 101)
+        self.assertEqual(res["slots"], 53)
         self.assertEqual(res["pushed"], 0)           # DRY-RUN: nichts gepusht
         self.assertEqual(res["created"], 0)          # DRY-RUN: keine create-Calls
-        self.assertEqual(res["materialised"], 101)   # simulated OK
+        self.assertEqual(res["materialised"], 53)   # simulated OK
         self.assertEqual(res["alerts"], 0)
         self.assertTrue(res["dry_run"])
         self.assertFalse(res["skipped"])
         self.assertEqual(nuki.creates, 0)            # DRY-RUN ruft create_keypad_code NICHT
-        self.assertEqual(nuki.verifies, 101)         # aber prüft jede Materialisierung
+        self.assertEqual(nuki.verifies, 53)         # aber prüft jede Materialisierung
         # Die 5 Fallback-Slots sind Teil der Rotation (og-bh-*).
         fb = sum(1 for (h, _p, _d) in self.store.pins if h == pin_pool.FALLBACK_HOUR)
         self.assertEqual(fb, 5)
@@ -198,10 +198,10 @@ class UnconfirmedRotationTests(unittest.TestCase):
         nuki = FakeLiveNukiUnconfirmed([])
         res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=0, day=DAY,
                                     dry_run=False, force=True)
-        self.assertEqual(res["pushed"], 101)       # all codes created/pushed to the lock
+        self.assertEqual(res["pushed"], 53)       # all codes created/pushed to the lock
         self.assertEqual(res["materialised"], 0)   # none device-confirmed (health signal only)
         self.assertEqual(res["alerts"], 0)         # NO per-slot alert — the codes are present
-        self.assertEqual(len(nuki.created), 101)
+        self.assertEqual(len(nuki.created), 53)
 
 
 class FakeLiveNukiCreateFails(FakeLiveNuki):
@@ -233,7 +233,7 @@ class SafeDeleteWhenCreateFailsTests(unittest.TestCase):
         res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=7, day=DAY,
                                     dry_run=False, force=True)
         self.assertEqual(nuki.deleted, [])            # NOTHING deleted → no lockout
-        self.assertEqual(res["alerts"], 101)          # every slot flagged as create miss
+        self.assertEqual(res["alerts"], 53)           # every slot flagged as create miss
         remaining = {a["id"] for a in nuki.list_keypad_codes()}
         self.assertTrue({501, 600}.issubset(remaining))  # working predecessors still present
 
@@ -267,7 +267,7 @@ class LiveRotationDeletesPredecessorsTests(unittest.TestCase):
         )
 
         self.assertFalse(res["dry_run"])
-        self.assertEqual(res["created"], 101)  # all 101 slots freshly created
+        self.assertEqual(res["created"], 53)   # all 53 slots freshly created
 
         # Core regression: every predecessor — off-peak AND fallback — was deleted.
         expected_deleted = {501} | {600 + p for p in range(pin_pool.FALLBACK_POOL)}
