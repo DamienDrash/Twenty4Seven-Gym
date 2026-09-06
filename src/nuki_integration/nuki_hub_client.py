@@ -337,6 +337,15 @@ class NukiHubMqttClient:
 
     # ── keypad reads ──────────────────────────────────────────────
 
+    # A keypad re-query is EXPENSIVE for the hub: it reads every entry from the lock
+    # over BLE and then republishes ~11 retained topics per code (≈1000 messages on
+    # this keypad). Doing that on every verification wedged the hub's MQTT task while
+    # its web server kept running (observed repeatedly on 2026-09-06). The hub already
+    # refreshes on its own schedule, so ask at most this often — the retained snapshot
+    # in between is device truth from the hub's last read, not a guess.
+    _MIN_REQUERY_SECONDS = 900.0
+    _last_query_at = 0.0
+
     def list_keypad_codes(self, *, refresh: bool = True, cache_seconds: float = 60.0) -> list[dict]:
         """All keypad codes as Web-API-shaped type-13 auths (device truth)."""
         if self._settings.nuki_dry_run:
@@ -345,12 +354,15 @@ class NukiHubMqttClient:
         now = time.time()
         if self._cache and now - self._cache[0] < cache_seconds:
             return list(self._cache[1])
+        if refresh and now - self._last_query_at < self._MIN_REQUERY_SECONDS:
+            refresh = False
         try:
             self._connect()
             payload = None
             if refresh:
                 started = time.time()
                 # Ask the hub to re-read the keypad from the lock over BLE.
+                self._last_query_at = started
                 self._publish("lock/query/keypad", "1")
                 payload = self._await_message(
                     "lock/keypad/json", timeout=self._timeout, since=started
@@ -488,11 +500,25 @@ class NukiHubMqttClient:
             return {**outcome, "exists": False, "materialised": False,
                     "covers_window": False, "valid": False}
         if live is None:
-            # The hub could not answer (offline / BLE busy). Two independent sources
-            # still agree that this code is on the keypad: our own rotation history
-            # and the hub's last device read (the retained topic we matched). Refusing
-            # here would lock the member out for the whole booking — the failure mode
-            # that kept 7 members out for five days — so deliver and flag it loudly.
+            # "No verdict" means two opposite things, and the difference decides
+            # whether a member gets in:
+            #   hub alive   → the codeId does not exist any more. The hub never
+            #                 clears a per-entry topic on delete, so the retain we
+            #                 matched is a ghost (verified 2026-09-06 with a test
+            #                 code: deleted at the lock, topic still present).
+            #                 Fail closed — that code opens nothing.
+            #   hub silent  → we simply cannot ask. Our rotation history and the
+            #                 hub's last device read still agree, and refusing here
+            #                 would lock the member out for the whole booking (the
+            #                 failure mode that kept 7 members out for five days).
+            #                 Deliver, and flag it loudly.
+            if self.hub_health().get("responsive"):
+                logger.warning(
+                    "NukiHub: %s is a ghost retain — hub is alive but does not know "
+                    "codeId %s", match.get("name"), match.get("id"),
+                )
+                return {**outcome, "exists": False, "materialised": False,
+                        "covers_window": False, "valid": False}
             logger.warning(
                 "NukiHub: device check inconclusive for %s — delivering on retained "
                 "device read (hub unreachable)", match.get("name"),
