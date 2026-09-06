@@ -679,7 +679,14 @@ def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None =
         return {**health, "alerted": alerted}
     resolve(db, key="nuki-hub-offline", now=now)
 
-    if health.get("lock_available") is False or health.get("hybrid_connected") is False:
+    # ``hybrid_connected`` ist hier BEWUSST kein Alarmkriterium mehr. Der Hybrid-Modus
+    # (zweite MQTT-Verbindung zur Nuki-Cloud) wurde am 06.09.2026 abgeschaltet, weil er
+    # die lokale MQTT-Task des ESP32 verhungern liess — seitdem ist ``hybridConnected``
+    # dauerhaft False, und zwar ABSICHTLICH. Als Alarmkriterium erzeugte das im
+    # 30-Minuten-Takt Fehlalarme („Schloss nicht erreichbar", obwohl availability=True).
+    # Ob der Hub das Schloss erreicht, sagt allein ``lock/availability``; der Hybrid-Wert
+    # bleibt nur als Kontext in Text und Payload stehen.
+    if health.get("lock_available") is False:
         if notify(
             db, settings, key="nuki-lock-unreachable", severity=AlertSeverity.ERROR,
             kind="nuki-lock-unreachable",

@@ -93,3 +93,38 @@ class KeypadEventTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NukiLinkAlertTests(unittest.TestCase):
+    """``hybrid_connected=False`` ist seit dem Abschalten des Hybrid-Modus (06.09.2026)
+    der ABSICHTLICHE Normalzustand. Als Alarmkriterium meldete es alle 30 Minuten ein
+    Schloss als unerreichbar, das laut ``availability`` erreichbar war."""
+
+    def _alarme(self, **health):
+        from types import SimpleNamespace
+        from unittest import mock
+        from nuki_integration.services import monitoring
+
+        zustand = {"responsive": True, "mqtt_connected": True, "lock_available": True,
+                   "hybrid_connected": False, "lock_state": "locked", "battery_level": 65,
+                   "battery_critical": False, "ble_rssi": -65, "wifi_rssi": -42,
+                   "uptime": 100, "error": None}
+        zustand.update(health)
+        nuki = SimpleNamespace(hub_health=lambda: zustand)
+        raus = []
+        with mock.patch.object(monitoring, "notify",
+                               side_effect=lambda *a, **k: (raus.append(k.get("key")), True)[1]), \
+             mock.patch.object(monitoring, "resolve", lambda *a, **k: None):
+            monitoring.check_nuki_link(None, object(), nuki=nuki)
+        return raus
+
+    def test_disabled_hybrid_is_not_an_unreachable_lock(self):
+        self.assertNotIn("nuki-lock-unreachable", self._alarme())
+
+    def test_a_genuinely_unreachable_lock_still_alerts(self):
+        self.assertIn("nuki-lock-unreachable", self._alarme(lock_available=False))
+
+    def test_a_silent_hub_still_alerts(self):
+        raus = self._alarme(responsive=False)
+        self.assertIn("nuki-hub-offline", raus)
+        self.assertNotIn("nuki-lock-unreachable", raus)  # frueher Ausstieg, keine Doppelmeldung
