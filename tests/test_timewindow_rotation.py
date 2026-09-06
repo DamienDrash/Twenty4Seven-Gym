@@ -506,3 +506,83 @@ class BrandedAutoDeliveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeLiveNukiDeviceAck(FakeLiveNuki):
+    """Hub-Transport: das Schloss quittiert jeden Write auf ``commandResultJson``.
+
+    Die publizierte Liste zeigt eingefroren den Stand VOR dem Lauf: ein frisch
+    angelegter Code taucht dort erst auf, wenn der Hub das Keypad das naechste Mal
+    ausliest (Intervall 1800 s), und ein geloeschter verschwindet gar nicht — sein
+    Einzel-Topic bleibt als Retain liegen. Die Quittung dagegen ist Sekunden nach dem
+    Write da. Am 06.09.2026 war die Liste sogar dauerhaft leer (``keypad/json: null``).
+    """
+    def __init__(self, existing):
+        super().__init__(existing)
+        self._confirmed = False
+        self._snapshot = [dict(a) for a in self._auths]
+
+    def list_keypad_codes(self):
+        return [dict(a) for a in self._snapshot]
+
+    def create_keypad_code(self, **kw):
+        new_id = super().create_keypad_code(**kw)
+        self._confirmed = True
+        return new_id
+
+    def delete_keypad_code(self, *, auth_id):
+        super().delete_keypad_code(auth_id=auth_id)
+        self._confirmed = True
+
+    def last_write_confirmed(self):
+        return self._confirmed
+
+
+class FakeLiveNukiNoAck(FakeLiveNukiCreateFails):
+    """Transport MIT Quittungskanal, aber der Write wurde nie quittiert."""
+    def last_write_confirmed(self):
+        return False
+
+
+class DeviceAcknowledgedRotationTests(unittest.TestCase):
+    """Die Geräteantwort schlägt die Liste: der Hub quittiert einen Write Sekunden bevor
+    die publizierte Liste nachzieht — und am 06.09.2026 zog sie überhaupt nicht nach."""
+    def setUp(self):
+        self.store = InMemoryStore()
+        self.patch = mock.patch.object(rotation, "store", self.store)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        self.pause = mock.patch.object(rotation, "WRITE_PAUSE_SECS", 0)
+        self.pause.start(); self.addCleanup(self.pause.stop)
+        # Beide Poll-Pfade auf "sieht nichts" festnageln: was der Test bestätigt, trägt
+        # damit ausschließlich die Quittung — und ein Rückfall aufs Pollen fällt auf.
+        self.wp = mock.patch.object(rotation, "_wait_present", lambda *a, **k: None)
+        self.wp.start(); self.addCleanup(self.wp.stop)
+        self.wg = mock.patch.object(rotation, "_wait_gone", lambda *a, **k: False)
+        self.wg.start(); self.addCleanup(self.wg.stop)
+
+    def _preds(self):
+        return [("og-h03-p0", 501, "650000")] + [
+            (f"og-bh-p{p}", 600 + p, f"70000{p}") for p in range(pin_pool.FALLBACK_POOL)]
+
+    def test_acknowledged_writes_rotate_without_a_visible_list(self):
+        nuki = FakeLiveNukiDeviceAck(self._preds())
+        res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=7, day=DAY,
+                                    dry_run=False, force=True)
+        self.assertEqual(res["alerts"], 0, "quittierte Creates sind keine Fehlschlaege")
+        self.assertEqual(res["tombstones"], 0, "quittierte Deletes brauchen kein _wait_gone")
+        self.assertIn(501, nuki.deleted, "Vorgaenger muss rotiert worden sein")
+        self.assertIn(600, nuki.deleted)
+
+    def test_unacknowledged_write_still_keeps_the_predecessor(self):
+        """Gegenprobe: ohne Quittung bleibt es beim alten, sicheren Verhalten —
+        niemals einen funktionierenden Code ohne lebenden Nachfolger loeschen."""
+        nuki = FakeLiveNukiNoAck(self._preds())
+        res = rotation.rotate_daily(db=None, nuki=nuki, smartlock_id=7, day=DAY,
+                                    dry_run=False, force=True)
+        self.assertEqual(nuki.deleted, [], "kein Delete ohne bestaetigten Nachfolger")
+        self.assertEqual(res["alerts"], res["slots"], "jeder Slot bleibt ein Create-Miss")
+
+    def test_web_api_transport_is_untouched(self):
+        """Der Web-API-Client kennt keinen Quittungskanal — sein Verhalten bleibt exakt."""
+        self.assertFalse(rotation._device_confirmed(FakeLiveNuki([])))
+        self.assertFalse(rotation._device_confirmed(object()))

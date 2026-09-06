@@ -132,6 +132,27 @@ def _wait_gone(nuki, auth_id, timeout: float = 8.0, step: float = 4.0) -> bool:
     return False
 
 
+def _device_confirmed(nuki) -> bool:
+    """True when the transport got an explicit device-level OK for the last write.
+
+    The hub relays keypad writes to the lock over BLE and answers on
+    ``commandResultJson`` with the lock's own ``success``. That is a device
+    confirmation — unlike polling the published list, which only catches up on the
+    hub's next keypad read. On 2026-09-06 a single write made the hub publish
+    ``keypad/json: null``, so every poll came back empty while the new code was
+    demonstrably on the lock; gating on the acknowledgement instead is both more
+    truthful and free. The Web API client has no such channel and returns False,
+    which keeps its polling behaviour exactly as it was.
+    """
+    fn = getattr(nuki, "last_write_confirmed", None)
+    if not callable(fn):
+        return False
+    try:
+        return bool(fn())
+    except Exception:
+        return False
+
+
 def rotate_daily(
     db,
     *,
@@ -260,11 +281,18 @@ def rotate_daily(
         # on a degraded link) stop burning ~15 s/slot — a single quick check instead — so the
         # whole rotation finishes in minutes, not ~25 min (which stalled the worker heartbeat).
         # Full wait resumes as soon as a create lands again.
-        if create_misses >= 3:
+        if _device_confirmed(nuki):
+            # The lock acknowledged the write — no reason to wait for the list to
+            # agree. Still resolve the auth id from it for the DB, but never gate on
+            # it (see _device_confirmed).
             new_auth = _present_now(nuki, slot.name, slot.code)
+            present = True
+        elif create_misses >= 3:
+            new_auth = _present_now(nuki, slot.name, slot.code)
+            present = new_auth is not None
         else:
             new_auth = _wait_present(nuki, slot.name, slot.code)
-        present = new_auth is not None
+            present = new_auth is not None
         create_misses = 0 if present else create_misses + 1
         m = bool(new_auth.get("updateDate")) if new_auth else False
         if m:
@@ -285,10 +313,18 @@ def rotate_daily(
                 "no delete without a live successor", slot.name)
         else:
             for aid in pre.get(slot.name, []):
+                deleted = False
                 try:
                     _nuki_write_with_retry(nuki.delete_keypad_code, auth_id=aid)
+                    deleted = True
                 except Exception as exc:
                     logger.warning("rotate_daily: delete old %s failed: %s", slot.name, exc)
+                # An acknowledged delete needs no poll either — and skipping it avoids
+                # a tombstone on every single one: the hub leaves the per-entry topic
+                # of a removed code behind as a retain, so ``_wait_gone`` never sees
+                # it disappear over that transport.
+                if deleted and _device_confirmed(nuki):
+                    continue
                 if not _wait_gone(nuki, aid):
                     tombstones += 1
                     logger.warning("rotate_daily: old auth %s (%s) still visible — tombstoned", slot.name, aid)

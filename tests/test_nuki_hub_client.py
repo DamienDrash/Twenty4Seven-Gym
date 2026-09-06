@@ -321,3 +321,106 @@ class RequeryThrottleTests(unittest.TestCase):
         c.list_keypad_codes(cache_seconds=0.0)
         self.assertEqual(published.count("lock/query/keypad"), 2)
         c.close()
+
+
+class NullKeypadJsonTests(unittest.TestCase):
+    """06.09.2026: nach jedem Keypad-Schreibvorgang publizierte der Hub ``keypad/json``
+    als blankes ``null``. Das Iterieren riss die gesamte Auflistung mit
+    (``'NoneType' object is not iterable``) — und damit auch die 108 Einzel-Topics,
+    in denen die Codes tatsächlich standen."""
+
+    def _client(self):
+        return NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+
+    def _offline_transport(self, c, *, retained, per_entry):
+        c._connect = lambda: None
+        c._publish = lambda *a, **k: None
+        c._await_message = lambda *a, **k: None
+        c._last = lambda suffix: retained
+        c._per_entry_auths = lambda seen_at: list(per_entry)
+
+    def test_null_is_neither_a_crash_nor_a_truncation(self):
+        self.assertEqual(parse_keypad_json("null", seen_at=SEEN), ([], False))
+
+    def test_valid_json_that_is_not_an_array_is_ignored(self):
+        self.assertEqual(parse_keypad_json('{"codeId":8195}', seen_at=SEEN), ([], False))
+
+    def test_null_json_falls_back_to_the_per_entry_topics(self):
+        c = self._client()
+        entry = hub_entry_to_auth(_entry(), seen_at=SEEN)
+        self._offline_transport(c, retained="null", per_entry=[entry])
+        self.assertEqual([a["name"] for a in c.list_keypad_codes(cache_seconds=0.0)],
+                         ["og-bh-p4"])
+        c.close()
+
+    def test_null_json_without_per_entry_topics_is_unreachable_not_empty(self):
+        """Sonst läse sich ein volles Keypad als „das Schloss hat keine Code" — fail-open."""
+        c = self._client()
+        self._offline_transport(c, retained="null", per_entry=[])
+        auths, unreachable = c._auths_or_error()
+        self.assertEqual(auths, [])
+        self.assertTrue(unreachable)
+        c.close()
+
+    def test_a_genuinely_empty_keypad_stays_a_real_answer(self):
+        """Gegenprobe: ``[]`` von einem lebenden Hub ist eine Aussage, kein Ausfall."""
+        c = self._client()
+        self._offline_transport(c, retained="[]", per_entry=[])
+        auths, unreachable = c._auths_or_error()
+        self.assertEqual(auths, [])
+        self.assertFalse(unreachable)
+        c.close()
+
+
+class WriteConfirmationTests(unittest.TestCase):
+    """``last_write_confirmed()`` ist die Geräteantwort des Schlosses — sie darf nur für
+    genau den Schreibvorgang bürgen, der sie ausgelöst hat."""
+
+    def _client(self):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+        c._connect = lambda: None
+        c._publish = lambda *a, **k: None
+        return c
+
+    def test_fresh_success_confirms(self):
+        c = self._client()
+        c._await_message = lambda *a, **k: "success"
+        self.assertEqual(c._keypad_action({"action": "delete", "codeId": 1}), "success")
+        self.assertTrue(c.last_write_confirmed())
+        c.close()
+
+    def test_retained_success_does_not_confirm(self):
+        """Ein liegengebliebenes ``success`` darf nicht für den nächsten Write bürgen —
+        sonst löscht die Rotation einen Vorgänger auf Basis einer alten Quittung."""
+        c = self._client()
+        c._await_message = lambda *a, **k: None      # keine frische Antwort
+        c._last = lambda suffix: "success"           # aber ein Retain liegt herum
+        self.assertEqual(c._keypad_action({"action": "delete", "codeId": 1}), "success")
+        self.assertFalse(c.last_write_confirmed())
+        c.close()
+
+    def test_confirmation_is_cleared_before_each_write(self):
+        c = self._client()
+        c._await_message = lambda *a, **k: "success"
+        c._keypad_action({"action": "add", "codeId": 1})
+        self.assertTrue(c.last_write_confirmed())
+        c._await_message = lambda *a, **k: None
+        c._last = lambda suffix: None
+        c._keypad_action({"action": "add", "codeId": 2})
+        self.assertFalse(c.last_write_confirmed(), "alte Quittung darf nicht nachwirken")
+        c.close()
+
+    def test_a_rejection_is_not_a_confirmation(self):
+        c = self._client()
+        c._await_message = lambda *a, **k: "noValidPinSet"
+        c._keypad_action({"action": "add", "codeId": 1})
+        self.assertFalse(c.last_write_confirmed())
+        c.close()

@@ -169,9 +169,19 @@ def parse_keypad_json(payload: str, *, seen_at: str) -> tuple[list[dict[str, Any
         return [], False
     try:
         raw = json.loads(payload)
-        return [hub_entry_to_auth(e, seen_at=seen_at) for e in raw], False
     except json.JSONDecodeError:
         pass
+    else:
+        if isinstance(raw, list):
+            return [hub_entry_to_auth(e, seen_at=seen_at)
+                    for e in raw if isinstance(e, dict)], False
+        # Valid JSON that is not an array — in practice a bare ``null``. The hub
+        # publishes that when it cannot build the document at all, and it did so
+        # after every keypad write on 2026-09-06: iterating it raised
+        # ``'NoneType' object is not iterable``, which took the whole listing down
+        # and hid the 108 per-entry topics that did hold the codes. Nothing to
+        # salvage, and it is NOT a truncation — let the caller fall back to those.
+        return [], False
 
     entries: list[dict[str, Any]] = []
     decoder = json.JSONDecoder()
@@ -348,6 +358,7 @@ class NukiHubMqttClient:
     # in between is device truth from the hub's last read, not a guess.
     _MIN_REQUERY_SECONDS = 900.0
     _last_query_at = 0.0
+    _last_command_result: str | None = None
 
     def list_keypad_codes(self, *, refresh: bool = True, cache_seconds: float = 60.0) -> list[dict]:
         """All keypad codes as Web-API-shaped type-13 auths (device truth)."""
@@ -381,6 +392,11 @@ class NukiHubMqttClient:
                 logger.warning(
                     "NukiHub: keypad/json cut off at %d entries (%d bytes)",
                     len(auths), len(payload),
+                )
+            elif not auths and payload.strip() not in ("[]", ""):
+                logger.warning(
+                    "NukiHub: keypad/json unusable (%s) — falling back to the "
+                    "per-entry topics", payload.strip()[:40],
                 )
             # The JSON is size-capped by the firmware, so fill the gap from the
             # per-entry topics. Verified on 2026-09-05: keypad/json listed 34 of
@@ -474,9 +490,29 @@ class NukiHubMqttClient:
             logger.error("NukiHub unreachable: %s", exc)
             return [], True
         auths = self.list_keypad_codes()
-        if not auths and self._last("lock/keypad/json") is None:
+        if not auths and not self._has_keypad_snapshot():
             return [], True
         return auths, False
+
+    def _has_keypad_snapshot(self) -> bool:
+        """Has the hub ever given us something we could actually read?
+
+        ``keypad/json`` being present is not enough: a bare ``null`` is an answer
+        but not a snapshot, and treating it as one would report "the lock holds no
+        codes" for a keypad that is in fact full — fail-open, exactly the wrong
+        direction. A truncated payload still counts (it carries real entries), and
+        so do the per-entry topics, which are not subject to the size cap.
+        """
+        raw = self._last("lock/keypad/json")
+        if raw is not None:
+            try:
+                if isinstance(json.loads(raw), list):
+                    return True
+            except json.JSONDecodeError:
+                return True  # cut off mid-entry, but real data up to that point
+        prefix = self._t("lock/keypad/codes/")
+        with self._lock:
+            return any(k.startswith(prefix) for k in self._messages)
 
     def verify_materialization(self, code: str) -> dict[str, Any]:
         if self._settings.nuki_dry_run:
@@ -618,6 +654,9 @@ class NukiHubMqttClient:
     def _keypad_action(self, payload: dict[str, Any]) -> str | None:
         started = time.time()
         self._cache = None
+        # Cleared up front so ``last_write_confirmed()`` can never report the
+        # PREVIOUS write's outcome for one that failed before an answer arrived.
+        self._last_command_result = None
         self._publish("lock/keypad/actionJson", json.dumps(payload))
         # The hub answers keypad actions on commandResultJson ("success",
         # "codeValid", "noExistingCodeIdSet", …); the plain commandResult topics
@@ -626,14 +665,26 @@ class NukiHubMqttClient:
             "lock/keypad/commandResultJson", timeout=self._timeout / 2, since=started
         )
         if result and result not in ("--", "undefined"):
+            self._last_command_result = result
             return result
         # Older hub builds answer on the plain result topics — read what is cached
-        # rather than serialising another full wait onto every command.
+        # rather than serialising another full wait onto every command. Deliberately
+        # NOT recorded as a confirmation: these are retained, so a stale ``success``
+        # from an earlier write would vouch for one that never landed.
         for suffix in ("lock/keypad/commandResult", "lock/commandResult"):
             cached = self._last(suffix)
             if cached and cached not in ("--", "undefined"):
                 return cached
         return None
+
+    def last_write_confirmed(self) -> bool:
+        """Did the lock itself acknowledge the most recent keypad write?
+
+        Only a *fresh* ``commandResultJson`` of ``success`` counts — that is the
+        lock's own answer, relayed over BLE, and it arrives seconds before the
+        published code list catches up (if it catches up at all).
+        """
+        return self._last_command_result == "success"
 
     def check_keypad_code(self, *, code_id: int | str, code: str) -> bool | None:
         """Ask the lock itself whether ``code`` is the code behind ``code_id``.
