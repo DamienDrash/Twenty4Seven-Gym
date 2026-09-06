@@ -207,6 +207,8 @@ class NukiHubMqttClient:
         self._client = None
         self._connected = False
         self._cache: tuple[float, list[dict[str, Any]]] | None = None
+        self._trust_db_when_unpublished = bool(
+            getattr(settings, "nuki_hub_trust_unpublished", False))
 
     # ── topics ────────────────────────────────────────────────────
 
@@ -483,6 +485,27 @@ class NukiHubMqttClient:
             }
         outcome = evaluate_window_materialization(auths, code, weekday, hour)
         if not outcome.get("exists"):
+            # The hub does not publish every keypad entry: on 2026-09-06 the lock held
+            # 109 codes, the hub retrieved all 109 (its own log) but only ever published
+            # 91 — the tail is lost in the ESP32's MQTT outbox, and no setting fixes it
+            # (kpmaxentry=200, maxkpad=112 both verified). "Not published" therefore does
+            # NOT mean "not on the lock": a full manual audit against the Nuki app the
+            # same day matched all 101 slots to the database, code for code.
+            #
+            # Refusing here is what locked seven members out for five days. With the
+            # opt-in below we deliver the rotation's own pin for a slot the hub cannot
+            # show us — and say so loudly — instead of turning a member away at a door
+            # whose code we have every reason to believe is correct.
+            if (self._trust_db_when_unpublished
+                    and not any(a.get("code") == int(code) for a in auths)):
+                logger.warning(
+                    "NukiHub: slot code ****** not in the hub's published set (%d entries) "
+                    "— delivering on the rotation record (NUKI_HUB_TRUST_UNPUBLISHED)",
+                    len(auths),
+                )
+                return {**outcome, "exists": True, "materialised": True,
+                        "covers_window": True, "valid": False, "deliverable": True,
+                        "window_source": "unpublished-slot"}
             return outcome
         match = next(
             (a for a in auths if a.get("type") == 13 and a.get("code") == int(code)), {}

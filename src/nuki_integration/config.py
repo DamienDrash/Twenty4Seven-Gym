@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     nuki_mqtt_password: str = Field(default="", alias="NUKI_MQTT_PASSWORD")
     nuki_mqtt_prefix: str = Field(default="nukihub", alias="NUKI_MQTT_PREFIX")
     nuki_mqtt_timeout_seconds: int = Field(default=20, alias="NUKI_MQTT_TIMEOUT_SECONDS")
+    # Der Hub publiziert nicht alle Keypad-Einträge (109 am Schloss, 91 über MQTT —
+    # 06.09.2026 verifiziert, kein Einstellungsproblem). Mit True liefert die
+    # Zustellung für einen Slot, den der Hub nicht zeigt, den Pin der eigenen
+    # Rotation aus, statt das Mitglied auszusperren — vertretbar, weil ein
+    # vollständiger Abgleich gegen die Nuki-App alle 101 Slots bestätigt hat.
+    nuki_hub_trust_unpublished: bool = Field(default=False, alias="NUKI_HUB_TRUST_UNPUBLISHED")
     # Outage detector (fail-closed against a frozen Cloud↔Lock link). When True, a code
     # that is present in the cloud auth list but NOT device-confirmed (no updateDate) is
     # treated as NOT deliverable: during a Cloud↔Lock sync freeze such a code has never

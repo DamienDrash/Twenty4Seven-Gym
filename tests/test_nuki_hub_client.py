@@ -160,6 +160,42 @@ def _json(entry):
     return json.dumps(entry)
 
 
+class UnpublishedSlotTests(unittest.TestCase):
+    """Der Hub zeigt nicht alle Keypad-Einträge — das darf kein Aussperrgrund sein."""
+
+    def _client(self, trust):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+            nuki_hub_trust_unpublished=trust,
+        ))
+        c._connect = lambda: None
+        c._auths_or_error = lambda: ([hub_entry_to_auth(_entry(), seen_at=SEEN)], False)
+        return c
+
+    def test_unpublished_slot_is_delivered_when_trusted(self):
+        c = self._client(True)
+        r = c.verify_code_for_window("227892", weekday=6, hour=20)
+        self.assertTrue(r["deliverable"])
+        self.assertEqual(r["window_source"], "unpublished-slot")
+        c.close()
+
+    def test_unpublished_slot_fails_closed_by_default(self):
+        c = self._client(False)
+        r = c.verify_code_for_window("227892", weekday=6, hour=20)
+        self.assertFalse(r.get("deliverable"))
+        self.assertFalse(r["exists"])
+        c.close()
+
+    def test_published_slot_is_still_checked_normally(self):
+        """Ein sichtbarer Code wird weiterhin am Fenster geprüft, nicht durchgewunken."""
+        c = self._client(True)
+        r = c.verify_code_for_window("258244", weekday=6, hour=4)   # bh: Mo-Sa 08-21
+        self.assertFalse(r["covers_window"], "Sonntag 04:00 darf nicht abgedeckt sein")
+        c.close()
+
+
 if __name__ == "__main__":
     unittest.main()
 
