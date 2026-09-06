@@ -162,3 +162,28 @@ def _json(entry):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RequeryThrottleTests(unittest.TestCase):
+    """Ein erzwungener Keypad-Read kostet den Hub ~1000 Retain-Publishes — nicht im Minutentakt."""
+
+    def test_requery_is_rate_limited(self):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+        published = []
+        c._connect = lambda: None
+        c._publish = lambda suffix, payload: published.append(suffix)
+        c._await_message = lambda *a, **k: None
+        c._last = lambda suffix: "[]"
+        c._per_entry_auths = lambda seen_at: []
+        c.list_keypad_codes(cache_seconds=0.0)
+        self.assertIn("lock/query/keypad", published)
+        c.list_keypad_codes(cache_seconds=0.0)          # sofort danach
+        self.assertEqual(published.count("lock/query/keypad"), 1, "zweite Abfrage muss gedrosselt sein")
+        c._last_query_at -= c._MIN_REQUERY_SECONDS + 1  # Fenster abgelaufen
+        c.list_keypad_codes(cache_seconds=0.0)
+        self.assertEqual(published.count("lock/query/keypad"), 2)
+        c.close()
