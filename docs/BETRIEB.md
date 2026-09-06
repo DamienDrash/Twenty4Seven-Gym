@@ -1,6 +1,6 @@
 # Betriebshandbuch · OPENGYM
 
-Stand: 06.08.2026. Gilt für die Produktionsinstanz auf dem getimpulse-Server.
+Stand: 06.09.2026. Gilt für die Produktionsinstanz auf dem getimpulse-Server.
 
 > **SICHERHEITSKRITISCH.** Dieses System steuert physischen Zugang zum Studio.
 > Änderungen an Tür-, Nuki- oder Code-Rotations-Logik werden entwickelt und getestet,
@@ -66,10 +66,10 @@ Erwartetes Bild eines gesunden Zyklus (alle ~5 Minuten eine solche Zeile):
 ```
 worker cycle: expired_db=0 deleted_nuki=0 orphans_removed=0 windows=162
   tw_slots=197 tw_assigned=0 tw_no_code=0 tw_delivered=0 tw_blocked=0
-  tw_pushed=101 guardian_reconciled=True guardian_repaired=0 dry_run=False
+  tw_pushed=53 guardian_reconciled=True guardian_repaired=0 dry_run=False
 ```
 
-Prüfpunkte: `tw_pushed=101` (alle Codes auf dem Schloss), `guardian_reconciled=True`,
+Prüfpunkte: `tw_pushed=53` (alle Codes auf dem Schloss; historisch 101), `guardian_reconciled=True`,
 `dry_run=False`, keine `ERROR`-Zeilen, kein Restart-Loop.
 
 ---
@@ -78,9 +78,9 @@ Prüfpunkte: `tw_pushed=101` (alle Codes auf dem Schloss), `guardian_reconciled=
 
 | Pfad | Wert | Quelle |
 |---|---|---|
-| Code-Pool auf dem Keypad | **101** = 96 Off-Peak + 5 Business-Hours-Fallback | `timewindow/pin_pool.py:168` (`expected_slot_count`) |
-| Off-Peak-Pool | 4 Codes je Off-Peak-Stunde (`POOL_PER_HOUR`) → 24×4 = 96 | `timewindow/pin_pool.py:27` |
-| Fallback-Pool | 5 Codes `og-bh-p0..p4`, 08:00–21:00, Mo–Sa | `timewindow/pin_pool.py:33-36`, `:148` |
+| Code-Pool auf dem Keypad | **53** = 48 Off-Peak + 5 Business-Hours-Fallback (historisch 101) | `timewindow/pin_pool.py:168` (`expected_slot_count`) |
+| Off-Peak-Pool | 2 Codes je Off-Peak-Stunde (`POOL_PER_HOUR`) → 24×2 = 48 (historisch 4/h = 96) | `timewindow/pin_pool.py:35` |
+| Fallback-Pool | 5 Codes `og-bh-p0..p4`, 08:00–21:00, Mo–Sa | `timewindow/pin_pool.py:44`, `:148` |
 | Hardware-Grenze | 200 Codes (`KEYPAD_CODE_LIMIT`), Grenzwächter `assert_within_budget` | `timewindow/pin_pool.py:28`, `:194` |
 | PIN-Format | genau 6 Ziffern 1–9, darf nicht mit `12` beginnen | `timewindow/pin_pool.py:46-59` |
 | Zugangsfenster | Buchungsstart **−15 min** bis Cluster-Ende **+30 min** | `services/sync.py:91-100` |
@@ -105,7 +105,7 @@ kein Cron und kein Wächter darf diese Flags selbst verändern.
 
 **Bedeutung.** `true` friert das Schloss ein: `rotate_daily` macht **keinerlei**
 Lock-Änderungen (kein create/delete/rotate), es werden keine neuen PINs erzeugt. Die
-101 Codes bleiben physisch unverändert auf dem Keypad gültig. Die Zustellung läuft
+Codes (53 Slots, historisch 101) bleiben physisch unverändert auf dem Keypad gültig. Die Zustellung läuft
 weiter, sie fällt auf die zuletzt rotierten PINs zurück (= die eingefrorenen
 Schloss-Codes). Das Flag hat **Vorrang vor `force`** — am eingefrorenen Schloss darf
 nichts mutieren.
@@ -197,7 +197,7 @@ Was aus dem Code belegt ist und als Software-Fallback zählt:
 - Die **5 Business-Hours-Fallback-Codes** (`og-bh-p0..p4`, 08:00–21:00 Mo–Sa) sind
   stabil vormaterialisiert und überstehen einen Cloud↔Schloss-Ausfall — sie sind der
   Grund, warum der Ausfall-Detektor während eines Freezes noch zustellen kann.
-- Bei aktivem `NUKI_ROTATION_PAUSED` bleiben **alle 101 Codes gültig** — ein Freeze
+- Bei aktivem `NUKI_ROTATION_PAUSED` bleiben **alle Codes (53 Slots, historisch 101) gültig** — ein Freeze
   sperrt niemanden aus, er verhindert nur neue Codes.
 
 ---
