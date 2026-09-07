@@ -145,12 +145,19 @@ def notify(
     cooldown_secs: int = DEFAULT_COOLDOWN_SECS,
     now: datetime | None = None,
 ) -> bool:
-    """Send a deduplicated, severity-tagged, redacted operational alert.
+    """Send a redacted operational alert — once per INCIDENT, not once per cooldown.
 
-    Idempotent: the same ``key`` is (re)sent at most once per ``cooldown_secs``.
-    Returns True if an alert was actually dispatched this call, False if suppressed
-    by the cooldown. Atomic via an ON CONFLICT guard so concurrent workers/service
-    can never double-fire.
+    Edge-triggered (Betreiber-Entscheid 07.09.2026): a condition alerts when it
+    first appears, then stays silent for as long as it persists, and alerts again
+    only after :func:`resolve` has closed it and it recurs. The old behaviour —
+    re-sending every ``cooldown_secs`` while the condition was open — turned a
+    single studio outage into a push notification every 30 minutes all night
+    (``nuki-lock-reachable-unfreeze-ready`` reached 114 sends).
+
+    ``cooldown_secs`` is kept for signature compatibility but no longer schedules
+    repeats. Returns True if an alert was actually dispatched this call, False if
+    the condition is already open. Atomic via an ON CONFLICT guard so concurrent
+    workers/service can never double-fire.
     """
     now = now or now_utc()
     with db.connection() as conn:
@@ -161,22 +168,23 @@ def notify(
                     (dedup_key, severity, kind, first_seen_at, last_sent_at, times_sent, resolved_at)
                 VALUES (%s, %s, %s, %s, %s, 1, NULL)
                 ON CONFLICT (dedup_key) DO UPDATE
-                    SET last_sent_at = EXCLUDED.last_sent_at,
-                        severity     = EXCLUDED.severity,
-                        times_sent   = monitoring_alert_state.times_sent + 1,
-                        resolved_at  = NULL
-                    WHERE monitoring_alert_state.last_sent_at
-                              < EXCLUDED.last_sent_at - (%s * interval '1 second')
-                       OR monitoring_alert_state.resolved_at IS NOT NULL
+                    SET last_sent_at  = EXCLUDED.last_sent_at,
+                        -- Recurrence after a resolve = a NEW incident: restart the
+                        -- clock so the resolution message reports this outage's length.
+                        first_seen_at = EXCLUDED.first_seen_at,
+                        severity      = EXCLUDED.severity,
+                        times_sent    = monitoring_alert_state.times_sent + 1,
+                        resolved_at   = NULL
+                    WHERE monitoring_alert_state.resolved_at IS NOT NULL
                 RETURNING times_sent
                 """,
-                (key, severity, kind, now, now, cooldown_secs),
+                (key, severity, kind, now, now),
             )
             row = cur.fetchone()
         conn.commit()
 
     if row is None:
-        return False  # within cooldown → suppressed (dedup)
+        return False  # condition still open → silent until it resolves and recurs
 
     safe = _safe_payload(payload)
     message = _safe_text(f"{title}\n{detail}".strip())
@@ -192,20 +200,73 @@ def notify(
     return True
 
 
-def resolve(db, *, key: str, now: datetime | None = None) -> None:
-    """Mark a condition resolved so the next occurrence re-alerts immediately."""
+# Titel der Entwarnung je Alarmart. Fallback: "Entwarnung: <kind>".
+_RESOLVED_TITLES: dict[str, str] = {
+    "studio-internet-down": "Studio wieder online — Internet/Router und NAS erreichbar",
+    "nas-offline": "NAS wieder erreichbar",
+    "home-assistant-offline": "Home Assistant antwortet wieder",
+    "nuki-hub-offline": "Nuki Hub wieder erreichbar — antwortet über MQTT",
+    "nuki-lock-unreachable": "Nuki Schloss für den Hub wieder erreichbar",
+    "codes-out-of-sync": "Codes zwischen Datenbank und Nuki wieder synchron",
+    "worker-heartbeat-stale": "OpenGym Worker läuft wieder",
+    "nuki-rotation-paused-long": "Rotation nicht mehr pausiert",
+    "nuki-unfreeze-ready": "Entfrier-Hinweis erledigt",
+}
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    hours, rest = divmod(seconds, 3600)
+    return f"{hours} h {rest // 60:02d} min"
+
+
+def resolve(db, *, key: str, now: datetime | None = None, settings: Settings | None = None,
+            detail: str = "") -> bool:
+    """Close a condition — and say so, exactly once.
+
+    Flips ``resolved_at`` so the next occurrence counts as a new incident (and
+    alerts again). If the row actually changed from open to resolved AND
+    ``settings`` is given, an INFO "erledigt" notification goes out with how long
+    the condition was open. Calling this on an already-resolved or never-open key
+    is a silent no-op — which is what makes it safe to call every worker cycle.
+    Returns True when a resolution was announced.
+    """
     now = now or now_utc()
     with db.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE monitoring_alert_state SET resolved_at=%s "
-                "WHERE dedup_key=%s AND resolved_at IS NULL",
+                "WHERE dedup_key=%s AND resolved_at IS NULL "
+                "RETURNING kind, severity, first_seen_at, times_sent",
                 (now, key),
             )
+            row = cur.fetchone()
         conn.commit()
+    if row is None or settings is None:
+        return False
+
+    kind = row["kind"]
+    title = _RESOLVED_TITLES.get(kind, f"Entwarnung: {kind}")
+    opened = row.get("first_seen_at")
+    dauer = _format_duration((now - opened).total_seconds()) if opened else "unbekannt"
+    text = _safe_text(f"Zustand bestand {dauer}. {detail}".strip())
+    try:
+        create_operational_alert(db=db, settings=settings, severity=AlertSeverity.INFO,
+                                  kind=f"{kind}-resolved", message=f"{title}\n{text}",
+                                  payload={"resolved_key": key, "open_for": dauer},
+                                  send_telegram=False, send_email=False)
+    except Exception:
+        logger.exception("monitoring.resolve: create_operational_alert failed key=%s", key)
+    _push_ntfy(settings, severity=AlertSeverity.INFO, kind=kind, title=title, detail=text,
+               resolved=True)
+    logger.info("[MONITOR RESOLVED] %s key=%s after %s", kind, key, dauer)
+    return True
 
 
-def _push_ntfy(settings: Settings, *, severity: str, kind: str, title: str, detail: str) -> None:
+def _push_ntfy(settings: Settings, *, severity: str, kind: str, title: str, detail: str,
+               resolved: bool = False) -> None:
     """Optional ntfy push (dormant unless NTFY_URL+NTFY_TOPIC configured)."""
     url = (getattr(settings, "ntfy_url", "") or "").strip()
     topic = (getattr(settings, "ntfy_topic", "") or "").strip()
@@ -214,10 +275,11 @@ def _push_ntfy(settings: Settings, *, severity: str, kind: str, title: str, deta
     try:
         import httpx
         sev = str(severity).lower()
-        prio = {"error": "urgent", "warning": "high"}.get(sev, "default")
+        prio = "default" if resolved else {"error": "urgent", "warning": "high"}.get(sev, "default")
         # Emoji tag = what the alert is about, readable on a lock screen without
-        # opening the notification.
-        tag = {"error": "rotating_light", "warning": "warning"}.get(sev, "information_source")
+        # opening the notification. Resolutions get a check mark and normal priority.
+        tag = ("white_check_mark" if resolved
+               else {"error": "rotating_light", "warning": "warning"}.get(sev, "information_source"))
         by_kind = {
             "nuki-hub-offline": "electric_plug", "nuki-lock-unreachable": "lock",
             "nuki-battery-low": "battery", "studio-internet-down": "satellite",
@@ -228,7 +290,7 @@ def _push_ntfy(settings: Settings, *, severity: str, kind: str, title: str, deta
         }
         tags = ",".join(t for t in (tag, by_kind.get(kind)) if t)
         httpx.post(f"{url.rstrip('/')}/{topic}", content=(f"{title}\n{detail}").encode("utf-8"),
-                   headers={"Title": f"OpenGym {severity.upper()} {kind}"[:120],
+                   headers={"Title": f"OpenGym {'ERLEDIGT' if resolved else str(severity).upper()} {kind}"[:120],
                             "Priority": prio, "Tags": tags},
                    timeout=10)
     except Exception:
@@ -293,7 +355,7 @@ def check_worker_heartbeat(db, settings: Settings, *, now: datetime | None = Non
             cooldown_secs=15 * 60, now=now,
         )
     else:
-        resolve(db, key=key, now=now)  # recovery → next staleness re-alerts
+        resolve(db, key=key, now=now, settings=settings)  # recovery → next staleness re-alerts
     return {"heartbeat_age_secs": int(age), "stale": stale, "alerted": alerted}
 
 
@@ -513,8 +575,8 @@ def check_freeze_watch(db, settings: Settings, nuki_client=None, *, now: datetim
         with db.connection() as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM monitoring_cursor WHERE name='freeze_start_at'")
         conn.commit()
-        resolve(db, key="nuki-rotation-paused-24h", now=now)
-        resolve(db, key="nuki-lock-reachable-unfreeze-ready", now=now)
+        resolve(db, key="nuki-rotation-paused-24h", now=now, settings=settings)
+        resolve(db, key="nuki-lock-reachable-unfreeze-ready", now=now, settings=settings)
         return {"paused": False, "alerted_24h": False, "alerted_reachable": False}
 
     # Track when freeze started
@@ -637,7 +699,7 @@ def check_studio_link(db, settings: Settings, *, now: datetime | None = None) ->
              "home_assistant": home_assistant, "kind": kind}
     for k in ("studio-internet-down", "nas-offline", "home-assistant-offline"):
         if k != kind:
-            resolve(db, key=k, now=now)
+            resolve(db, key=k, now=now, settings=settings)
     if kind is None:
         return {**state, "alerted": False}
     severity = AlertSeverity.ERROR if kind == "studio-internet-down" else AlertSeverity.WARNING
@@ -677,7 +739,7 @@ def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None =
         ):
             alerted += 1
         return {**health, "alerted": alerted}
-    resolve(db, key="nuki-hub-offline", now=now)
+    resolve(db, key="nuki-hub-offline", now=now, settings=settings)
 
     # ``hybrid_connected`` ist hier BEWUSST kein Alarmkriterium mehr. Der Hybrid-Modus
     # (zweite MQTT-Verbindung zur Nuki-Cloud) wurde am 06.09.2026 abgeschaltet, weil er
@@ -698,7 +760,7 @@ def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None =
         ):
             alerted += 1
     else:
-        resolve(db, key="nuki-lock-unreachable", now=now)
+        resolve(db, key="nuki-lock-unreachable", now=now, settings=settings)
 
     level = health.get("battery_level")
     if health.get("battery_critical") or (isinstance(level, int) and level <= 20):
@@ -786,7 +848,7 @@ def check_code_sync(db, settings: Settings, nuki=None, *, smartlock_id: int = 0,
             cooldown_secs=6 * 3600, now=now,
         )
     else:
-        resolve(db, key="codes-out-of-sync", now=now)
+        resolve(db, key="codes-out-of-sync", now=now, settings=settings)
         result["alerted"] = False
     return result
 

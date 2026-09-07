@@ -132,3 +132,127 @@ class FreezeWatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Zustandswechsel statt Dauerfeuer (Betreiber-Entscheid 07.09.2026) ──────────
+class _FakeCursor:
+    def __init__(self, row):
+        self.row, self.executed = row, []
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params))
+    def fetchone(self):
+        return self.row
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+
+class _FakeConn:
+    def __init__(self, cur):
+        self.cur, self.commits = cur, 0
+    def cursor(self):
+        return self.cur
+    def commit(self):
+        self.commits += 1
+    def __enter__(self):
+        return self
+    def __exit__(self, *a):
+        return False
+
+
+class _FakeDB:
+    """Stellt genau das nach, was notify/resolve von der DB sehen: eine Zeile oder keine."""
+    def __init__(self, row):
+        self.cur = _FakeCursor(row)
+    def connection(self):
+        return _FakeConn(self.cur)
+
+
+class EdgeTriggeredAlertTests(unittest.TestCase):
+    """Einmal beim Auftreten, einmal bei Entwarnung, dazwischen Ruhe — und erneut
+    erst bei einem NEUEN Vorfall. Vorher: Wiederholung alle ``cooldown_secs``,
+    eine Nacht Studio-Ausfall = ein Push alle 30 Minuten."""
+
+    NOW = datetime(2026, 9, 7, 9, 0, tzinfo=UTC)
+
+    def _notify(self, row):
+        db = _FakeDB(row)
+        with mock.patch.object(m, "create_operational_alert") as coa, \
+             mock.patch.object(m, "_push_ntfy") as push:
+            sent = m.notify(db, object(), key="studio-internet-down", severity=AlertSeverity.ERROR,
+                            kind="studio-internet-down", title="Studio offline", detail="x",
+                            cooldown_secs=30 * 60, now=self.NOW)
+        return sent, coa.called, push.called, db
+
+    def test_first_occurrence_alerts(self):
+        sent, alerted, pushed, _ = self._notify({"times_sent": 1})
+        self.assertTrue(sent and alerted and pushed)
+
+    def test_ongoing_condition_stays_silent(self):
+        """Die DB liefert keine Zeile = Zustand ist schon offen → kein zweiter Push."""
+        sent, alerted, pushed, _ = self._notify(None)
+        self.assertFalse(sent or alerted or pushed)
+
+    def test_cooldown_no_longer_schedules_repeats(self):
+        """Der Wiederholungspfad muss aus dem SQL RAUS sein — nicht nur selten werden."""
+        _, _, _, db = self._notify({"times_sent": 1})
+        sql, params = db.cur.executed[0]
+        self.assertNotIn("interval '1 second'", sql)
+        self.assertIn("resolved_at IS NOT NULL", sql)
+        self.assertEqual(len(params), 5, "cooldown_secs darf nicht mehr ins SQL fliessen")
+
+    def _resolve(self, row, settings=object(), **kw):
+        db = _FakeDB(row)
+        with mock.patch.object(m, "create_operational_alert") as coa, \
+             mock.patch.object(m, "_push_ntfy") as push:
+            announced = m.resolve(db, key="studio-internet-down", now=self.NOW, settings=settings, **kw)
+        return announced, coa, push, db
+
+    def test_resolution_is_announced_exactly_when_the_row_flips(self):
+        row = {"kind": "studio-internet-down", "severity": "error",
+               "first_seen_at": self.NOW - timedelta(hours=2), "times_sent": 1}
+        announced, coa, push, _ = self._resolve(row)
+        self.assertTrue(announced)
+        self.assertEqual(coa.call_args.kwargs["severity"], AlertSeverity.INFO)
+        self.assertFalse(coa.call_args.kwargs["send_telegram"])
+        self.assertTrue(push.call_args.kwargs["resolved"])
+        self.assertIn("Studio wieder online", push.call_args.kwargs["title"])
+        self.assertIn("2 h 00 min", push.call_args.kwargs["detail"])
+
+    def test_already_resolved_is_a_silent_noop(self):
+        """resolve() laeuft jeden Worker-Zyklus — darf nur beim ECHTEN Wechsel reden."""
+        announced, coa, push, db = self._resolve(None)
+        self.assertFalse(announced or coa.called or push.called)
+        self.assertEqual(len(db.cur.executed), 1)  # Zustand wird trotzdem geprueft/gesetzt
+
+    def test_without_settings_state_is_closed_but_nothing_is_sent(self):
+        row = {"kind": "nuki-hub-offline", "severity": "error",
+               "first_seen_at": self.NOW - timedelta(minutes=5), "times_sent": 3}
+        announced, coa, push, db = self._resolve(row, settings=None)
+        self.assertFalse(announced or coa.called or push.called)
+        self.assertEqual(len(db.cur.executed), 1)
+
+    def test_unknown_kind_gets_a_generic_title(self):
+        row = {"kind": "something-new", "severity": "warning",
+               "first_seen_at": self.NOW - timedelta(minutes=30), "times_sent": 1}
+        _, _, push, _ = self._resolve(row)
+        self.assertEqual(push.call_args.kwargs["title"], "Entwarnung: something-new")
+
+    def test_resolution_push_is_visibly_different(self):
+        """Gruener Haken, normale Prioritaet, 'ERLEDIGT' im Titel — auf dem Sperrbildschirm
+        muss die Entwarnung auf einen Blick vom Alarm unterscheidbar sein."""
+        from types import SimpleNamespace
+        settings = SimpleNamespace(ntfy_url="https://ntfy.sh", ntfy_topic="topic")
+        with mock.patch("httpx.post") as post:
+            m._push_ntfy(settings, severity=AlertSeverity.INFO, kind="studio-internet-down",
+                         title="Studio wieder online", detail="Zustand bestand 2 h 00 min.",
+                         resolved=True)
+        headers = post.call_args.kwargs["headers"]
+        self.assertTrue(headers["Title"].startswith("OpenGym ERLEDIGT"))
+        self.assertIn("white_check_mark", headers["Tags"])
+        self.assertEqual(headers["Priority"], "default")
+        with mock.patch("httpx.post") as post:
+            m._push_ntfy(settings, severity=AlertSeverity.ERROR, kind="studio-internet-down",
+                         title="Studio offline", detail="")
+        self.assertEqual(post.call_args.kwargs["headers"]["Priority"], "urgent")
