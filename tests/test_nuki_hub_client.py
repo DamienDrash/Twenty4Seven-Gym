@@ -536,3 +536,39 @@ class MissingKeypadJsonTests(unittest.TestCase):
         self.assertFalse(c._hub_is_live())
         NukiHubMqttClient._liveness = None
         c.close()
+
+
+class BleBusyWindowTests(unittest.TestCase):
+    """``busy`` markiert: der Hub schweigt, weil WIR ihn gerade das Keypad auslesen
+    lassen — nicht, weil er weg ist."""
+
+    def _client(self):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+        c._connect = lambda: None
+        c._publish = lambda *a, **k: None
+        c._await_message = lambda *a, **k: None      # keine Antwort
+        c._last = lambda suffix: None
+        return c
+
+    def test_silence_right_after_a_keypad_read_is_busy_not_offline(self):
+        import time as _t
+        c = self._client()
+        NukiHubMqttClient._last_query_at = _t.time()
+        h = c.hub_health()
+        self.assertFalse(h["responsive"])
+        self.assertTrue(h["busy"])
+        c.close()
+
+    def test_silence_long_after_a_keypad_read_is_a_real_outage(self):
+        import time as _t
+        c = self._client()
+        NukiHubMqttClient._last_query_at = _t.time() - (c._BLE_BUSY_SECONDS + 60)
+        h = c.hub_health()
+        self.assertFalse(h["responsive"])
+        self.assertFalse(h["busy"])
+        c.close()
+        NukiHubMqttClient._last_query_at = 0.0

@@ -379,6 +379,9 @@ class NukiHubMqttClient:
     # Liveness-Round-Trip: dient nur dazu, Retains eines toten Hubs zu erkennen —
     # alle 3 min ist genug und faellt gegen die Zyklusdauer nicht ins Gewicht.
     _LIVENESS_TTL = 180.0
+    # Wie lange nach einem Keypad-Vollabzug eine ausbleibende Antwort als „beschaeftigt"
+    # statt als „offline" gilt. 109 Codes ueber BLE dauern hier ~60-90 s.
+    _BLE_BUSY_SECONDS = 150.0
     _liveness: tuple[float, bool] | None = None
 
     def _hub_is_live(self) -> bool:
@@ -977,7 +980,7 @@ class NukiHubMqttClient:
         alive. ``responsive`` is the field to alert on.
         """
         out: dict[str, Any] = {
-            "responsive": False, "mqtt_connected": None, "lock_available": None,
+            "responsive": False, "busy": False, "mqtt_connected": None, "lock_available": None,
             "hybrid_connected": None, "lock_state": None, "battery_level": None,
             "battery_critical": None, "ble_rssi": None, "wifi_rssi": None,
             "uptime": None, "error": None,
@@ -988,6 +991,14 @@ class NukiHubMqttClient:
             self._publish("lock/query/lockstate", "1")
             fresh = self._await_message("lock/json", timeout=self._timeout, since=started)
             out["responsive"] = fresh is not None
+            # WIR haben ihn blind gemacht, nicht das Netz: ein ``query/keypad`` laesst den
+            # Hub alle Codes einzeln ueber BLE vom Schloss lesen (bei 109 Eintraegen gut
+            # eine Minute), und in der Zeit beantwortet er keine Statusabfrage. Am
+            # 08.09.2026 erzeugte genau das stuendlich einen „Hub offline"-Alarm, der sich
+            # im naechsten Zyklus von selbst aufloeste. Kein Urteil statt Fehlurteil.
+            if not out["responsive"]:
+                since_read = time.time() - NukiHubMqttClient._last_query_at
+                out["busy"] = since_read < self._BLE_BUSY_SECONDS
             out["mqtt_connected"] = (self._last("maintenance/mqttConnectionState") or "").strip() == "online"
             out["lock_available"] = (self._last("lock/availability") or "").strip() == "online"
             out["hybrid_connected"] = (self._last("lock/hybridConnected") or "").strip() == "1"

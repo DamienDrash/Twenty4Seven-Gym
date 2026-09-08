@@ -128,3 +128,47 @@ class NukiLinkAlertTests(unittest.TestCase):
         raus = self._alarme(responsive=False)
         self.assertIn("nuki-hub-offline", raus)
         self.assertNotIn("nuki-lock-unreachable", raus)  # frueher Ausstieg, keine Doppelmeldung
+
+
+class HubBusyTests(unittest.TestCase):
+    """Ein Keypad-Vollabzug (109 Codes ueber BLE, auf UNSERE Anforderung) legt den Hub
+    fuer ~1 min lahm. Das darf weder als Ausfall gemeldet noch als Erholung entwarnt
+    werden — sonst flattert der Alarm stuendlich (Vorfall 08.09.2026, 13:30)."""
+
+    def _run(self, **health):
+        from types import SimpleNamespace
+        from unittest import mock
+        from nuki_integration.services import monitoring
+
+        zustand = {"responsive": False, "busy": False, "mqtt_connected": True,
+                   "lock_available": True, "hybrid_connected": False, "lock_state": "locked",
+                   "battery_level": 65, "battery_critical": False, "ble_rssi": -65,
+                   "wifi_rssi": -42, "uptime": 100, "error": None}
+        zustand.update(health)
+        raus, entwarnt = [], []
+        with mock.patch.object(monitoring, "notify",
+                               side_effect=lambda *a, **k: (raus.append(k.get("key")), True)[1]), \
+             mock.patch.object(monitoring, "resolve",
+                               side_effect=lambda *a, **k: entwarnt.append(k.get("key"))):
+            res = monitoring.check_nuki_link(None, object(),
+                                             nuki=SimpleNamespace(hub_health=lambda: zustand))
+        return raus, entwarnt, res
+
+    def test_busy_hub_is_not_reported_offline(self):
+        raus, entwarnt, res = self._run(busy=True)
+        self.assertEqual(raus, [])
+        self.assertTrue(res.get("no_verdict"))
+
+    def test_busy_hub_does_not_falsely_resolve_an_open_outage(self):
+        """Kein Urteil heisst KEIN Urteil — auch keine vorschnelle Entwarnung."""
+        _raus, entwarnt, _res = self._run(busy=True)
+        self.assertEqual(entwarnt, [])
+
+    def test_a_real_outage_still_alerts(self):
+        raus, _e, _r = self._run(busy=False)
+        self.assertIn("nuki-hub-offline", raus)
+
+    def test_a_responsive_hub_resolves(self):
+        raus, entwarnt, _r = self._run(responsive=True)
+        self.assertEqual(raus, [])
+        self.assertIn("nuki-hub-offline", entwarnt)

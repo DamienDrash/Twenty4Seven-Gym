@@ -726,6 +726,11 @@ def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None =
         return {"checked": False}
     health = nuki.hub_health()
     alerted = 0
+    if health.get("busy"):
+        # Der Hub liest gerade auf UNSERE Anforderung hin das Keypad ueber BLE aus und
+        # beantwortet solange nichts. Das ist kein Ausfall — weder alarmieren noch
+        # entwarnen, sondern beim naechsten Zyklus erneut hinsehen.
+        return {**health, "alerted": 0, "no_verdict": True}
     if not health.get("responsive"):
         if notify(
             db, settings, key="nuki-hub-offline", severity=AlertSeverity.ERROR,
