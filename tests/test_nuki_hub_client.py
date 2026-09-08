@@ -313,14 +313,55 @@ class RequeryThrottleTests(unittest.TestCase):
         c._await_message = lambda *a, **k: None
         c._last = lambda suffix: "[]"
         c._per_entry_auths = lambda seen_at: []
+        NukiHubMqttClient._last_query_at = 0.0           # Prozess-Zustand zuruecksetzen
         c.list_keypad_codes(cache_seconds=0.0)
         self.assertIn("lock/query/keypad", published)
         c.list_keypad_codes(cache_seconds=0.0)          # sofort danach
         self.assertEqual(published.count("lock/query/keypad"), 1, "zweite Abfrage muss gedrosselt sein")
-        c._last_query_at -= c._MIN_REQUERY_SECONDS + 1  # Fenster abgelaufen
+        NukiHubMqttClient._last_query_at -= c._MIN_REQUERY_SECONDS + 1  # Fenster abgelaufen
         c.list_keypad_codes(cache_seconds=0.0)
         self.assertEqual(published.count("lock/query/keypad"), 2)
         c.close()
+
+    def test_throttle_survives_a_fresh_client_instance(self):
+        """Vorfall 08.09.2026: jeder Worker-Zyklus baut einen neuen Client — die Drossel
+        muss trotzdem greifen, sonst liest der Hub alle 7 min das ganze Keypad ueber BLE
+        und beantwortet derweil keine Statusabfrage mehr ('offline')."""
+        published = []
+        def mk():
+            c = NukiHubMqttClient(SimpleNamespace(
+                nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+                nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+                nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+            ))
+            c._connect = lambda: None
+            c._publish = lambda suffix, payload: published.append(suffix)
+            c._await_message = lambda *a, **k: None
+            c._last = lambda suffix: "[]"
+            c._per_entry_auths = lambda seen_at: []
+            return c
+        NukiHubMqttClient._last_query_at = 0.0
+        mk().list_keypad_codes(cache_seconds=0.0)
+        mk().list_keypad_codes(cache_seconds=0.0)       # naechster Zyklus, neue Instanz
+        self.assertEqual(published.count("lock/query/keypad"), 1)
+        NukiHubMqttClient._last_query_at = 0.0
+
+    def test_liveness_cache_is_shared_across_instances(self):
+        published = []
+        def mk():
+            c = NukiHubMqttClient(SimpleNamespace(
+                nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+                nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+                nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+            ))
+            c._connect = lambda: None
+            c._publish = lambda suffix, payload: published.append(suffix)
+            c._await_message = lambda suffix, **k: "{}" if suffix == "lock/json" else None
+            return c
+        NukiHubMqttClient._liveness = None
+        self.assertTrue(mk()._hub_is_live()); self.assertTrue(mk()._hub_is_live())
+        self.assertEqual(published.count("lock/query/lockstate"), 1)
+        NukiHubMqttClient._liveness = None
 
 
 class NullKeypadJsonTests(unittest.TestCase):
@@ -481,6 +522,7 @@ class MissingKeypadJsonTests(unittest.TestCase):
         published = []
         c._publish = lambda suffix, payload: published.append(suffix)
         c._await_message = lambda suffix, **k: "{}" if suffix == "lock/json" else None
+        NukiHubMqttClient._liveness = None
         self.assertTrue(c._hub_is_live())
         self.assertIn("lock/query/lockstate", published)
         self.assertTrue(c._hub_is_live())
@@ -490,5 +532,7 @@ class MissingKeypadJsonTests(unittest.TestCase):
 
     def test_a_silent_hub_is_not_alive(self):
         c = self._client()
+        NukiHubMqttClient._liveness = None
         self.assertFalse(c._hub_is_live())
+        NukiHubMqttClient._liveness = None
         c.close()

@@ -313,7 +313,15 @@ class NukiHubMqttClient:
         client = self._connect()
         topic = self._t(suffix)
         logger.info("NukiHub PUBLISH %s", topic)
-        info = client.publish(topic, payload, qos=1)
+        # QoS 0, bewusst (Vorfall 08.09.2026): der Hub haelt eine PERSISTENTE Session
+        # (clean_session=0) am Broker. Bleibt darin eine QoS-1-Nachricht unquittiert
+        # haengen, liefert Mosquitto dem Hub keine weiteren QoS-1-Publishes mehr aus —
+        # QoS 0 dagegen schon. Genau so sah es aus: jede QoS-0-Abfrage in 2–3 s
+        # beantwortet, jede QoS-1-Abfrage totgeschwiegen, und ein Stromstoss am Hub
+        # aendert nichts, weil die Session im Broker lebt. Zustellgarantie brauchen wir
+        # nicht: jedes Kommando wartet ohnehin auf die Antwort des Hubs (oder laeuft
+        # in den Timeout und wird als „nicht erreichbar" behandelt).
+        info = client.publish(topic, payload, qos=0)
         try:
             info.wait_for_publish(timeout=self._timeout)
         except Exception as exc:  # pragma: no cover - paho version differences
@@ -356,12 +364,21 @@ class NukiHubMqttClient:
     # its web server kept running (observed repeatedly on 2026-09-06). The hub already
     # refreshes on its own schedule, so ask at most this often — the retained snapshot
     # in between is device truth from the hub's last read, not a guess.
-    _MIN_REQUERY_SECONDS = 900.0
+    # PROZESSWEIT, nicht je Instanz (Vorfall 08.09.2026): jeder Worker-Zyklus und jede
+    # Service-Funktion baut sich einen frischen Client (12 Aufrufstellen von
+    # build_nuki_client). Solange die Zeitstempel an der Instanz hingen, begann die
+    # Drossel jedes Mal bei null — Ergebnis waren ~2 BLE-Vollabzuege des Keypads und
+    # 3 Statusabfragen PRO ZYKLUS (54 Keypad-Reads in 6 h). Waehrend der Hub 109 Codes
+    # ueber BLE liest, beantwortet er keine Statusabfrage → wir haben ihn selbst als
+    # „offline" gemeldet. Deshalb: Klassenattribute, immer ueber die KLASSE lesen und
+    # schreiben. Eine Stunde reicht — der Hub selbst liest nur alle 24 h (KPINT), und
+    # Zustellung/Beweis brauchen die Liste nicht, sondern nur Retains + ``check``.
+    _MIN_REQUERY_SECONDS = 3600.0
     _last_query_at = 0.0
     _last_command_result: str | None = None
-    # Ein Liveness-Round-Trip je Minute reicht: er dient nur dazu, retained Daten von
-    # einem toten Hub zu unterscheiden, und soll nicht selbst zur Last werden.
-    _LIVENESS_TTL = 60.0
+    # Liveness-Round-Trip: dient nur dazu, Retains eines toten Hubs zu erkennen —
+    # alle 3 min ist genug und faellt gegen die Zyklusdauer nicht ins Gewicht.
+    _LIVENESS_TTL = 180.0
     _liveness: tuple[float, bool] | None = None
 
     def _hub_is_live(self) -> bool:
@@ -372,7 +389,7 @@ class NukiHubMqttClient:
         question we just asked proves it is alive.
         """
         now = time.time()
-        cached = self._liveness
+        cached = NukiHubMqttClient._liveness
         if cached is not None and now - cached[0] < self._LIVENESS_TTL:
             return cached[1]
         started = time.time()
@@ -382,7 +399,7 @@ class NukiHubMqttClient:
         except Exception as exc:
             logger.debug("NukiHub liveness probe failed: %s", exc)
             alive = False
-        self._liveness = (now, alive)
+        NukiHubMqttClient._liveness = (now, alive)
         return alive
 
     def list_keypad_codes(self, *, refresh: bool = True, cache_seconds: float = 60.0) -> list[dict]:
@@ -393,7 +410,7 @@ class NukiHubMqttClient:
         now = time.time()
         if self._cache and now - self._cache[0] < cache_seconds:
             return list(self._cache[1])
-        if refresh and now - self._last_query_at < self._MIN_REQUERY_SECONDS:
+        if refresh and now - NukiHubMqttClient._last_query_at < self._MIN_REQUERY_SECONDS:
             refresh = False
         try:
             self._connect()
@@ -401,7 +418,7 @@ class NukiHubMqttClient:
             if refresh:
                 started = time.time()
                 # Ask the hub to re-read the keypad from the lock over BLE.
-                self._last_query_at = started
+                NukiHubMqttClient._last_query_at = started
                 self._publish("lock/query/keypad", "1")
                 payload = self._await_message(
                     "lock/keypad/json", timeout=self._timeout, since=started
