@@ -572,3 +572,58 @@ class BleBusyWindowTests(unittest.TestCase):
         self.assertFalse(h["busy"])
         c.close()
         NukiHubMqttClient._last_query_at = 0.0
+
+
+class RetainedMessageTests(unittest.TestCase):
+    """Ein Retain ist die Wiedergabe des Brokers, keine Antwort des Hubs. Er darf einen
+    Round-Trip NIE erfuellen — sonst meldet ein frisch verbundener Client einen seit
+    Tagen toten Hub als erreichbar (Fehl-Entwarnung 10.09.2026 05:44)."""
+
+    def _client(self):
+        return NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+
+    def _await_in_background(self, c, retain):
+        import threading, time as _t
+        topic = c._t("lock/json")
+        out = {}
+
+        def waiter():
+            out["result"] = c._await_message("lock/json", timeout=1.5, since=_t.time())
+
+        th = threading.Thread(target=waiter); th.start()
+        _t.sleep(0.25)
+        c._handle_message(topic, '{"lock_state":"locked"}', retain)
+        th.join(timeout=4)
+        return out.get("result")
+
+    def test_a_retained_message_does_not_satisfy_a_round_trip(self):
+        c = self._client()
+        self.assertIsNone(self._await_in_background(c, retain=True))
+        c.close()
+
+    def test_a_fresh_message_does(self):
+        c = self._client()
+        self.assertEqual(self._await_in_background(c, retain=False), '{"lock_state":"locked"}')
+        c.close()
+
+    def test_a_retain_still_populates_the_cache(self):
+        """Die Einzel-Topic-Sicht und ``_last()`` leben von Retains — nur wecken duerfen sie nicht."""
+        c = self._client()
+        c._handle_message(c._t("lock/availability"), "online", True)
+        self.assertEqual(c._last("lock/availability"), "online")
+        c.close()
+
+    def test_hub_health_is_not_fooled_by_a_retained_lock_json(self):
+        import time as _t
+        c = self._client()
+        c._connect = lambda: None
+        c._publish = lambda suffix, payload: c._handle_message(c._t("lock/json"), "{}", True)
+        NukiHubMqttClient._last_query_at = 0.0
+        h = c.hub_health()
+        self.assertFalse(h["responsive"])
+        self.assertFalse(h["busy"])
+        c.close()

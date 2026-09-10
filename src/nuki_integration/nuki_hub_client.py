@@ -258,11 +258,7 @@ class NukiHubMqttClient:
                 text = msg.payload.decode(errors="replace")
             except Exception:  # pragma: no cover - defensive
                 return
-            with self._lock:
-                self._messages[msg.topic] = text
-                ev = self._events.get(msg.topic)
-            if ev is not None:
-                ev.set()
+            self._handle_message(msg.topic, text, bool(msg.retain))
 
         client.on_message = _on_message
         try:
@@ -326,6 +322,24 @@ class NukiHubMqttClient:
             info.wait_for_publish(timeout=self._timeout)
         except Exception as exc:  # pragma: no cover - paho version differences
             logger.debug("wait_for_publish: %s", exc)
+
+    def _handle_message(self, topic: str, text: str, retain: bool) -> None:
+        """Store a payload; wake a waiter ONLY for a genuinely fresh message.
+
+        A retained message is the broker replaying what was last published — the
+        hub may have been gone for a day. It arrives again on every SUBSCRIBE, so a
+        newly connected client would otherwise mistake it for an answer to the
+        question it just asked. That is exactly what happened on 2026-10-09 05:44:
+        a false "Hub wieder erreichbar" while the device was off the network (ARP
+        FAILED, port 80 closed), followed by a fresh alert six minutes later.
+        Retains still populate the cache — ``_last()`` and the per-entry keypad view
+        need them — they just never satisfy a round-trip.
+        """
+        with self._lock:
+            self._messages[topic] = text
+            ev = None if retain else self._events.get(topic)
+        if ev is not None:
+            ev.set()
 
     def _await_message(self, suffix: str, *, timeout: float, since: float) -> str | None:
         """Wait for a *fresh* message on ``suffix``; None if none arrives in time.
