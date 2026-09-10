@@ -4,9 +4,9 @@
 2 (Roadmap freigegeben, Umsetzung läuft)
 
 ## Fortschritt
-99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 10.09.2026 22:30)
+99 % zur Produktionsreife (gewichtete Erfüllung mit Beleg; Update 10.09.2026 23:30)
 - Kernfunktionen 29/30 · Betrieb/Stabilität 15/15 · Sicherheit 15/15 · Backups 10/10 · Monitoring 10/10 · Tests/CI 10/10 · Doku 10/10
-- Δ ±0 gegenüber 10.09.2026 21:30: Alle Meilensteine M1–M7 verifiziert & belegt. Test-Suite 206/206 passed (1 warning) in 8.02s (.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests). Live-Betrieb stabil verifiziert: Container `opengym-service` (172.18.0.9:8080) und `opengym-worker` (172.18.0.10) Up ~18 Stunden, `opengym-auth` Up 8 days, `db-service` healthy. Worker-Zyklen (u.a. 22:05, 22:11, 22:16 und 22:23 UTC) fehlerfrei (0 errors). Public Endpoints /app und /checks (beide HTTP 200 via GET-Check & Uptime-Cron bis 10.09. 22:25:01 UTC) sowie interne Endpoints (/health ready, /healthz/live alive, /healthz/ready ready via 172.18.0.9:8080) und opengym-auth (/health ok via 127.0.0.1:8100) verifiziert. Backups 26.08.–10.09.2026 (16 Backups, 405 KB / 414.335 Bytes frisches nächtliches Backup 10.09. 03:15:01 UTC opengym-20260910-031501.sql.gz, GZIP-Integrität ALL OK via gzip -t) verifiziert. NAS getimpulse-nas (100.103.57.114) Status geprüft (Tailscale ONLINE & active, Ping 0% packet loss, ~11.1 ms avg; Studio-Automations ruht weiter bis zur Abstimmung mit Damien). Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
+- Δ ±0 gegenüber 10.09.2026 22:30: Alle Meilensteine M1–M7 verifiziert & belegt. Test-Suite 206/206 passed (1 warning) in 8.02s (.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests). Live-Betrieb stabil verifiziert: Container `opengym-service` (172.18.0.9:8080) und `opengym-worker` (172.18.0.10) Up ~19 Stunden, `opengym-auth` Up 8 days, `db-service` healthy. Worker-Zyklen (u.a. 23:04, 23:10, 23:16 und 23:22 UTC) fehlerfrei (0 errors). Public Endpoints /app und /checks (beide HTTP 200 via GET-Check & Uptime-Cron bis 10.09. 23:25:01 UTC) sowie interne Endpoints (/health ready, /healthz/live alive, /healthz/ready ready via 172.18.0.9:8080) und opengym-auth (/health ok via 127.0.0.1:8100) verifiziert. Backups 26.08.–10.09.2026 (16 Backups, 405 KB / 414.335 Bytes frisches nächtliches Backup 10.09. 03:15:01 UTC opengym-20260910-031501.sql.gz, GZIP-Integrität ALL OK via gzip -t) verifiziert. NAS getimpulse-nas (100.103.57.114) Status geprüft (Tailscale ONLINE & active, Ping 0% packet loss, ~31.3 ms avg; Studio-Automations ruht weiter bis zur Abstimmung mit Damien). Offen für 100%: Push lokaler main-Commits nach origin (Remote-Host github-getimpulse in CLI-Session unauflösbar) & Beantwortung des Doku-Platzhalters "Fallback-Zugang" durch Damien.
 
 ## Roadmap-Status
 FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelfreigabe statt pauschal · pg_dump 14 Tage · CI pytest-only · NAS ruht). Zusätzliches Roadmap-Item „Ausfall-Detektor" eingeplant (M1, nicht ans Ende). Umsetzung der sofort freigegebenen Punkte am 05.08.2026 erfolgt (siehe Tageslog).
@@ -69,6 +69,18 @@ FREIGEGEBEN am 05.08.2026 durch Damien mit Anpassungen (Merge FF · .bak-Einzelf
 - 06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL (kein Blocker für die Roadmap, aber Rahmenbedingung): Rotation eingefroren, Schloss unverändert. Für den Worker gilt bis auf Weiteres: KEIN Rebuild, KEIN Container-Neustart, KEINE Änderung an Tür-/Nuki-/Rotations-Logik — nur nicht-invasive Roadmap-Aufgaben.
 
 ## Tageslog
+- 10.09.2026 23:30 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 206/206 passed (1 warning) in 8.02s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 206 Tests grün).
+  - Live-Betrieb & Container-Status: `opengym-service` (uvicorn port 8080, IP 172.18.0.9) und `opengym-worker` (studio-access-worker, IP 172.18.0.10) Up ~19 Stunden aktiv & gesund, `opengym-auth` aktiv (Up 8 days), `db-service` (healthy, Up 4 weeks).
+  - Worker-Zyklus im Live-Betrieb stabil: `rotate_daily: PAUSED (NUKI_ROTATION_PAUSED)`, `worker cycle: expired_db=0 deleted_nuki=0 orphans_removed=0 windows=227 tw_slots=197 tw_assigned=0 tw_no_code=0 tw_delivered=0 tw_blocked=0 tw_pushed=0 guardian_reconciled=True guardian_repaired=0 dry_run=False` (letzter Zyklus 23:22:48 UTC) mit 0 Fehlern abgeschlossen.
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check & Uptime-Cron bis 10.09. 23:25:01 UTC) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9:8080) und `opengym-auth` (`/health` ok via 127.0.0.1:8100) verifiziert.
+  - Backup-Prüfung: Frisches nächtliches Tages-Backup `opengym-20260910-031501.sql.gz` (405 KB / 414.335 Bytes) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 16 Backups 26.08.–10.09.2026, GZIP-Integrität ALL OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 10.09. 23:25:01 UTC im `cron.log` lückenlos mit HTTP 200 OK verifiziert.
+  - NAS-Erreichbarkeit: `getimpulse-nas` via Tailscale (100.103.57.114) geprüft (ONLINE & active via Tailscale, Ping 0% packet loss, ~31.3 ms avg; Studio-Automations ruht weiter bis zur Abstimmung mit Damien).
+  - Git-Remote Check: `git push origin main --dry-run` scheitert weiterhin an unauflösbarem Host-Alias `github-getimpulse` in CLI-Session. Commits auf lokalem `main` gesichert (aktueller HEAD vor Commit: `66b11f6`).
+  - Fortschritt 99 % bestätigt.
 - 10.09.2026 22:30 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 206/206 passed (1 warning) in 8.02s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 206 Tests grün).
