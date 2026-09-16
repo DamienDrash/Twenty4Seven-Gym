@@ -77,6 +77,34 @@ Funktions-Check (Codes gültig? Worker läuft?).
       haben beide `NetworkSettings.Ports = {}` und `HostConfig.PortBindings = {}` (keine
       veröffentlichten Ports) und hängen ausschließlich im internen Netz
       `getimpulse_getimpulse-network` (172.18.0.9 / .10). Erreichbar nur über die api-gateway-Kette.
+- [ ] ⚙ **M3.4 TLS-Prüfung für Home Assistant wieder einschalten**
+      (Aufgabe Damien 17.09.2026). **STATUS: EXTERN BLOCKIERT — Zertifikat erneuern (Damien).**
+      Befund: `src/nuki_integration/services/monitoring.py:653` ruft Home Assistant über
+      `_http_ok()` mit `httpx.get(..., verify=False)` ab, und das umschließende
+      `except Exception: return False` verschluckt einen Zertifikatsfehler stumm — er wäre
+      von „Home Assistant offline" nicht zu unterscheiden. Es ist die einzige
+      `verify=False`-Stelle im Repo (17.09.2026 repo-weit geprüft, `.venv` ausgenommen);
+      `_http_ok()` hat genau zwei Aufrufer, beide für Home Assistant
+      (`monitoring.py:689` und `:692`).
+      Ursache der Ausnahme: das Zertifikat von `services.getimpulse.de` (Synology-Reverse-Proxy,
+      Let's Encrypt über DSM) ist abgelaufen, weil Port 80 am Studio-Router nicht
+      weitergeleitet ist. Damien behebt das (Portweiterleitung + Erneuern in DSM).
+      **Voraussetzung geprüft am 17.09.2026 00:38 (lokal) / 16.09. 22:38 UTC — NICHT erfüllt:**
+      `openssl s_client -connect services.getimpulse.de:8123 -servername services.getimpulse.de`
+      liefert `subject=CN = services.getimpulse.de`, `issuer=Let's Encrypt CN = YE1`,
+      `notBefore=Jun 16 22:01:15 2026 GMT`, **`notAfter=Sep 14 22:01:14 2026 GMT`**
+      (seit ~48,6 h abgelaufen), `Verify return code: 10 (certificate has expired)`.
+      Solange das so ist, wird **nichts geändert** — `verify=False` bleibt vorerst stehen,
+      weil die Prüfung sonst garantiert fehlschlägt und das Studio-Link-Monitoring blind wird.
+      Erst nach gültigem Zertifikat (`notAfter` in der Zukunft, Verify return code 0):
+      1. `verify=False` entfernen (Standardprüfung).
+      2. Fehlerfall sauber behandeln: `httpx.ConnectError`/`ssl.SSLCertVerificationError` als
+         **eigenen** Alarm melden (eigene `kind`, z. B. `home-assistant-tls-invalid`), statt ihn
+         als „offline" oder stumm als `False` durchgehen zu lassen.
+      3. Tests ergänzen: Zertifikatsfehler → Alarm, gültiges Zertifikat → normaler Lauf;
+         Testlauf mit Zahl belegen; committen.
+      4. Ausrollen erst nach Freigabe — siehe Offene Frage „Deploy während des Freezes"
+         in `PO-STATUS.md`. An Tür-, Nuki- und Rotationslogik wird nichts geändert.
 
 ## M4 Backups & getesteter Restore · Gewicht 10
 - [x] Nächtlicher pg_dump der opengym-DB → /opt/getimpulse/backups/opengym, Retention 14 Tage (Cron 03:15, Erstlauf verifiziert 05.08.2026: 267 KB, 29 Tabellen)

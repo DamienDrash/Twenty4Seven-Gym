@@ -38,13 +38,25 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
   6. Zusatz-Item „Ausfall-Detektor" (eingefrorener Cloud↔Schloss-Sync): während eines Freezes nur stabile `og-bh`-Codes zustellen, Off-Peak fail-closed + Alert. Umgesetzt als Commit `42872fb`, live seit 06.08.2026 (als Vorfahr von Damiens Freeze-Commit `8cdba22` mit ausgerollt). ERLEDIGT.
 
 ## Offene Fragen
-1. **Ist mit „Buchungssperre 30 min" der Nachlauf des Zugangsfensters gemeint, eine Magicline-Regel oder eine noch offene Anforderung?** (06.08.2026) Repo-weit gesucht nach `sperr`, `30 min`, `cooldown`, `lead_time`, `min_advance`, `too_late`. Der einzige 30-Minuten-Wert im Buchungspfad ist ein **Nachlauf**, keine Sperre: `services/sync.py:92` setzt `ends_at = Cluster-Ende + 30 min`; vorne läuft das Fenster 15 min früher an (`sync.py:99`). Der einzige weitere 30-min-Wert ist ein Alarm-Cooldown im Wächter (`timewindow/guardian.py:289`).
+1. **Darf der TLS-Fix (M3.4) während des laufenden Freezes ausgerollt werden — und wenn ja, zusammen mit dem noch nicht ausgerollten NukiHub-Commit?**
+   (17.09.2026) Die Änderung selbst betrifft nur das Monitoring
+   (`services/monitoring.py:653`), nicht Tür-, Nuki- oder Rotationslogik. Ein Deploy ist
+   hier aber nicht folgenlos: Service und Worker teilen sich **ein** Image, und auf dem
+   lokalen `main` liegt seit dem letzten Image-Build (10.09.2026 04:06 UTC) genau ein
+   noch nicht ausgerollter Nicht-Doku-Commit — `089fef1`
+   *fix(nukihub): ignore retained messages during round-trip queries*. Ein Rebuild würde
+   diesen Nuki-Commit **mit** live nehmen, und genau das ist freigabepflichtig. Hinzu kommt
+   der Container-Neustart (kurz zu halten, danach Funktions-Check).
+   *Default:* nicht separat ausrollen — der TLS-Fix reist mit dem nächsten ohnehin
+   freigegebenen Deploy mit (naheliegend: die Umstellung der Rotation auf den Nuki Hub,
+   `ROADMAP.md` M1.7). Bis dahin bleibt der Fix committet, aber nicht deployt.
+2. **Ist mit „Buchungssperre 30 min" der Nachlauf des Zugangsfensters gemeint, eine Magicline-Regel oder eine noch offene Anforderung?** (06.08.2026) Repo-weit gesucht nach `sperr`, `30 min`, `cooldown`, `lead_time`, `min_advance`, `too_late`. Der einzige 30-Minuten-Wert im Buchungspfad ist ein **Nachlauf**, keine Sperre: `services/sync.py:92` setzt `ends_at = Cluster-Ende + 30 min`; vorne läuft das Fenster 15 min früher an (`sync.py:99`). Der einzige weitere 30-min-Wert ist ein Alarm-Cooldown im Wächter (`timewindow/guardian.py:289`).
    *Default:* der 30-min-Nachlauf ist gemeint — bis zur Klärung wird NICHTS an der Logik geändert.
-2. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
+3. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
    *Default:* aus der `.env` entfernen statt zu Feldern machen — eine Code-Änderung am Wächter wäre freigabepflichtig. Vorerst nur in `.env.example` als wirkungslos markiert.
-3. **Ist das Token-Fragment in den Fremd-Testfixtures echtes Sitzungsmaterial (→ rotieren) oder ein Upstream-Platzhalter (→ hinnehmen)?** (06.08.2026, M3-Audit) Hochentropes Fragment in den mitgelieferten VCR-Cassettes des vendorten notebooklm-Skills unter `.agents/skills/notebooklm/tests/cassettes/` (18 Diff-Zeilen in `artifacts_*.yaml`, 8 in `real_api_*.yaml`); hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026), aus der Historie weiterhin rekonstruierbar. Der eigene Projektcode ist sauber; Werte wurden bewusst nicht ausgegeben.
+4. **Ist das Token-Fragment in den Fremd-Testfixtures echtes Sitzungsmaterial (→ rotieren) oder ein Upstream-Platzhalter (→ hinnehmen)?** (06.08.2026, M3-Audit) Hochentropes Fragment in den mitgelieferten VCR-Cassettes des vendorten notebooklm-Skills unter `.agents/skills/notebooklm/tests/cassettes/` (18 Diff-Zeilen in `artifacts_*.yaml`, 8 in `real_api_*.yaml`); hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026), aus der Historie weiterhin rekonstruierbar. Der eigene Projektcode ist sauber; Werte wurden bewusst nicht ausgegeben.
    *Default:* Upstream-Platzhalter, hinnehmen — ein History-Rewrite wäre destruktiv und wurde nicht durchgeführt.
-4. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
+5. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
    *Default:* keiner — diese Angabe kann nur von Damien kommen.
 
 **Abgeschlossen:**
@@ -62,6 +74,14 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 17.09.2026 00:45 Neue Aufgabe von Damien aufgenommen: **TLS-Prüfung für Home Assistant wieder einschalten** (M3 Sicherheit, ⚙) — als `ROADMAP.md` **M3.4** angelegt. **Nichts geändert, nichts deployt.**
+  - Befund bestätigt: `src/nuki_integration/services/monitoring.py:653` ruft Home Assistant über `_http_ok()` mit `httpx.get(..., verify=False)` ab. Das umschließende `except Exception: return False` verschluckt einen Zertifikatsfehler zusätzlich stumm — er wäre von „Home Assistant offline" nicht zu unterscheiden.
+  - Repo-weite Suche nach weiteren Stellen: **`monitoring.py:653` ist die einzige** `verify=False`-Stelle im Repo (`.venv` ausgenommen). `_http_ok()` hat genau zwei Aufrufer, beide Home Assistant (`monitoring.py:689`, `:692`).
+  - **Voraussetzung geprüft — NICHT erfüllt** (16.09.2026 22:38 UTC): `openssl s_client -connect services.getimpulse.de:8123 -servername services.getimpulse.de` → `subject=CN = services.getimpulse.de`, `issuer=Let's Encrypt CN = YE1`, `notBefore=Jun 16 22:01:15 2026 GMT`, **`notAfter=Sep 14 22:01:14 2026 GMT`**, `Verify return code: 10 (certificate has expired)` — abgelaufen seit ~48,6 h. Damit läuft M3.4 als **„extern blockiert: Zertifikat erneuern (Damien)"**; `verify=False` bleibt vorerst stehen, weil die Standardprüfung sonst garantiert fehlschlägt und das Studio-Link-Monitoring blind würde.
+  - Schritte 2–4 (verify entfernen, eigener TLS-Alarm, Tests, Deploy) sind in M3.4 vorbereitet, aber bewusst **nicht** begonnen.
+  - Deploy-Frage an Damien gestellt (neue Offene Frage 1): Service und Worker teilen ein Image, und seit dem letzten Image-Build (10.09.2026 04:06 UTC) liegt mit `089fef1` *fix(nukihub): ignore retained messages during round-trip queries* genau ein noch nicht ausgerollter Nicht-Doku-Commit auf `main` — ein Rebuild nähme diesen Nuki-Commit mit live. Default: nicht separat ausrollen, sondern mit dem nächsten freigegebenen Deploy mitnehmen.
+  - Freeze unverändert: `NUKI_ROTATION_PAUSED=true`. Keine Änderung an Tür-, Nuki- oder Rotationslogik, kein Rebuild, kein Container-Neustart.
+
 - 16.09.2026 21:30 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 206/206 passed (1 warning) in 8.35s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 206 Tests grün).
