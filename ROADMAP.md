@@ -74,8 +74,11 @@ Funktions-Check (Codes gültig? Worker läuft?).
       EIN BEFUND (nicht im eigenen Code): hochentropes Token-Fragment in mitgelieferten
       Fremd-Testfixtures unter .agents/skills/notebooklm/tests/cassettes/ (artifacts_*.yaml,
       real_api_*.yaml) — hinzugefügt in b870c03 (01.04.2026), gelöscht in 0b214e9 (02.04.2026),
-      aus der Historie weiterhin rekonstruierbar. Bewertung + ggf. Rotation durch Damien.
-      KEIN History-Rewrite durchgeführt (destruktiv, freigabepflichtig).
+      aus der Historie weiterhin rekonstruierbar.
+      BEWERTET UND ABGESCHLOSSEN am 17.09.2026 durch Damien: Upstream-Platzhalter,
+      hingenommen — keine Rotation, KEIN History-Rewrite (destruktiv und, da `b870c03`
+      Vorfahr von `origin/main` ist, zusätzlich Force-Push-pflichtig). Der eigene
+      Projektcode bleibt sauber; die Dateien liegen weder im Arbeitsbaum noch im HEAD-Tree.
 - [x] pip-audit / Dependency-Update: Audit am 08.08.2026 durchgeführt (11 Befunde in pip 24.0 und python-multipart 0.0.22; Updates erst nach Damiens Freigabe deployen).
 - [x] Oberflächen-Check mit Beleg (06.08.2026): `docker inspect` → opengym-service und opengym-worker
       haben beide `NetworkSettings.Ports = {}` und `HostConfig.PortBindings = {}` (keine

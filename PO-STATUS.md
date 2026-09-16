@@ -22,6 +22,17 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 **Freigegeben** — `ROADMAP.md` freigegeben am 05.08.2026 durch Damien mit Anpassungen (Merge FF · `.bak`-Einzelfreigabe statt pauschal · `pg_dump` 14 Tage · CI pytest-only · NAS ruht) und Zusatz-Item „Ausfall-Detektor" in M1. Ergänzt am 16.09.2026 um M1.7 „Rotation über Nuki Hub" (Abhängigkeit für das Freeze-Ende).
 
 ## Freigaben und Entscheidungen von Damien
+- **17.09.2026 · Token-Fragment in den Fremd-Testfixtures (M3-Audit) — Vorschlag des PO übernommen:**
+  **Upstream-Platzhalter, hinnehmen.** Kein History-Rewrite (destruktiv), keine Rotation.
+  Betroffen sind ausschließlich mitgelieferte VCR-Cassettes des vendorten notebooklm-Skills
+  unter `.agents/skills/notebooklm/tests/cassettes/` — nicht der eigene Projektcode.
+  Stand bei der Umsetzung geprüft (17.09.2026, rein lesend): die Dateien sind **weder im
+  Arbeitsbaum noch im `HEAD`-Tree** vorhanden, sie sind nur über die Historie erreichbar
+  (hinzugefügt in `b870c03` 01.04.2026, gelöscht in `0b214e9` 02.04.2026).
+  Bewusst mit akzeptiert: `b870c03` ist Vorfahr von `origin/main` (`039bb25`), das Fragment
+  liegt also auch in der Remote-Historie auf GitHub. Ein Entfernen würde einen
+  History-Rewrite **mit Force-Push** erfordern — genau das ist mit dieser Entscheidung
+  ausgeschlossen. Der Punkt gilt damit als bewertet und abgeschlossen, nicht als offenes Risiko.
 - **17.09.2026 · Deploy des TLS-Fix (M3.4) während des Freezes — Vorschlag des PO übernommen:**
   **Nicht separat ausrollen.** Der TLS-Fix reist mit dem nächsten ohnehin freigegebenen
   Deploy mit (naheliegend: die Umstellung der Rotation auf den Nuki Hub, `ROADMAP.md` M1.7).
@@ -55,12 +66,13 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
    *Default:* der 30-min-Nachlauf ist gemeint — bis zur Klärung wird NICHTS an der Logik geändert.
 2. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
    *Default:* aus der `.env` entfernen statt zu Feldern machen — eine Code-Änderung am Wächter wäre freigabepflichtig. Vorerst nur in `.env.example` als wirkungslos markiert.
-3. **Ist das Token-Fragment in den Fremd-Testfixtures echtes Sitzungsmaterial (→ rotieren) oder ein Upstream-Platzhalter (→ hinnehmen)?** (06.08.2026, M3-Audit) Hochentropes Fragment in den mitgelieferten VCR-Cassettes des vendorten notebooklm-Skills unter `.agents/skills/notebooklm/tests/cassettes/` (18 Diff-Zeilen in `artifacts_*.yaml`, 8 in `real_api_*.yaml`); hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026), aus der Historie weiterhin rekonstruierbar. Der eigene Projektcode ist sauber; Werte wurden bewusst nicht ausgegeben.
-   *Default:* Upstream-Platzhalter, hinnehmen — ein History-Rewrite wäre destruktiv und wurde nicht durchgeführt.
-4. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
+3. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
    *Default:* keiner — diese Angabe kann nur von Damien kommen.
 
 **Abgeschlossen:**
+- *Token-Fragment in den Fremd-Testfixtures: echtes Sitzungsmaterial oder Upstream-Platzhalter?*
+  — beantwortet am 17.09.2026: Upstream-Platzhalter, hingenommen; kein History-Rewrite, keine
+  Rotation. Siehe „Freigaben und Entscheidungen von Damien".
 - *Darf der TLS-Fix (M3.4) während des Freezes ausgerollt werden?* — beantwortet am
   17.09.2026: nein, nicht separat; der Fix reist mit dem nächsten freigegebenen Deploy mit
   (M1.7) und bleibt bis dahin committet, aber nicht deployt. Siehe „Freigaben und
@@ -79,6 +91,14 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 17.09.2026 01:15 Leitstand-Entscheidung Damien zum Token-Fragment aus dem M3-Audit eingetragen und umgesetzt — **nichts gelöscht, nichts umgeschrieben, nichts deployt**:
+  - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum vermerkt: Upstream-Platzhalter, hinnehmen, kein History-Rewrite.
+  - Offene Frage 3 geschlossen und in die Abgeschlossen-Liste übernommen; verbleibende Fragen neu durchnummeriert (jetzt 3 offene Fragen).
+  - `ROADMAP.md` M3 Secrets-Audit: der bis dahin offene Befund ist als durch Damien bewertet und abgeschlossen markiert.
+  - Befund vor dem Abschluss rein lesend gegengeprüft: `.agents/skills/notebooklm/tests/cassettes/` existiert **weder im Arbeitsbaum noch im `HEAD`-Tree** (`git ls-tree -r HEAD` → 0 Treffer); erreichbar nur über die Historie (`b870c03` hinzugefügt, `0b214e9` gelöscht). Werte wurden weiterhin bewusst nicht ausgegeben.
+  - Mit akzeptiert und dokumentiert: `b870c03` ist Vorfahr von `origin/main` (`039bb25`), das Fragment liegt also auch in der Remote-Historie; ein Entfernen bräuchte Rewrite **plus Force-Push** — mit dieser Entscheidung ausgeschlossen.
+  - Freeze unverändert (`NUKI_ROTATION_PAUSED=true`), kein Rebuild, kein Container-Neustart, keine Änderung an Tür-, Nuki- oder Rotationslogik.
+
 - 17.09.2026 01:00 Leitstand-Entscheidung Damien zum Deploy des TLS-Fix (M3.4) eingetragen und umgesetzt — **nichts deployt, kein Rebuild, kein Neustart, keine Code-Änderung**:
   - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum vermerkt: nicht separat ausrollen, der TLS-Fix reist mit dem nächsten freigegebenen Deploy mit (M1.7), bis dahin committet aber nicht deployt.
   - Offene Frage 1 („Darf der TLS-Fix während des Freezes ausgerollt werden?") geschlossen und in die Abgeschlossen-Liste übernommen; die verbleibenden vier offenen Fragen neu durchnummeriert.
