@@ -1,6 +1,7 @@
 # ROADMAP · OPENGYM · Ziel: 100 % Produktionsreife
 
 Status: FREIGEGEBEN am 05.08.2026 durch Damien (mit Anpassungen, siehe Tageslog PO-STATUS.md).
+Ergänzt am 16.09.2026 um das M1-Item „Rotation über den Nuki Hub" (Abhängigkeit für das Freeze-Ende).
 Gewichte nach PO-Bewertungsraster (Summe 100). Reihenfolge = Abarbeitungsreihenfolge.
 
 SICHERHEITSKRITISCH (Besonderheiten): Änderungen an Tür-, Nuki- oder Code-Rotations-Logik
@@ -24,6 +25,26 @@ Funktions-Check (Codes gültig? Worker läuft?).
       guardian_reconciled=True, 0 ERROR in beiden Containern, Freeze-Logzeile wie erwartet.
 - [ ] Lokalen main nach origin pushen: origin/main steht auf 039bb25, lokal b0a8bb2/HEAD
       (Freeze-Commit + PO-Doku ungesichert). Kein Deploy-Risiko — das Image ist bereits gebaut.
+- [ ] 👤 **M1.7 Rotation über den Nuki Hub** — Abhängigkeit für das Freeze-Ende
+      (Entscheidung Damien 16.09.2026, ersetzt das bisherige ESKALIERT-Flag „Studio-Internet-Ausfall").
+      `NUKI_ROTATION_PAUSED=true` steht seit dem 06.08.2026 18:24 und bleibt BEWUSST stehen: die
+      Türcodes rotieren nicht, die Zustellung fällt auf die zuletzt rotierten Pins zurück.
+      Der Grund ist nicht mehr der Internet-Ausfall, sondern die offene Umstellung der
+      Code-Rotation auf den Nuki Hub (MQTT) — die Nuki Web API zeigt für dieses Schloss seit
+      2026-06 einen veralteten Keypad-/Auth-Stand (siehe `config.py`, `nuki_transport`).
+      Stand 16.09.2026: Transport und Zustellung laufen bereits über den Hub
+      (`NUKI_TRANSPORT=nukihub` live verifiziert, `nuki_hub_client.py` + `docs/nuki-hub-esp32.md`,
+      Keypad-Pool auf 53 Slots reduziert wegen ESP32-Heapgrenze). Offen ist die Rotation selbst
+      (`rotate_daily`), die weiterhin pausiert protokolliert wird.
+      BEFUND 16.09.2026 21:05 (rein lesend, nicht angefasst): der Hub liefert derzeit keinen
+      Keypad-Stand — `NukiHub: no keypad/json received (hub offline?)` 412x in 24 h, durchgehend
+      seit mindestens 00:05 UTC. Die Worker-Zyklen laufen dabei sauber durch
+      (`guardian_reconciled=True`, `tw_pushed=0` wegen Freeze), aber solange der Hub stumm ist,
+      kann die Rotation nicht auf ihn umgestellt werden. Ursache klären, bevor M1.7 angegangen wird.
+      Reihenfolge: Rotation über den Hub bauen und mit Beleg verifizieren → Freigabe einholen →
+      **Unfreeze durch Damien** (👤). Das Zurücksetzen des Flags ist ausdrücklich seine
+      Entscheidung, nicht die des Agenten; bis dahin gilt weiter: kein Rebuild, kein
+      Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## M2 Betrieb & Stabilität · Gewicht 15
 - [x] Deploy-Mechanismus belegt (nur lesend, 06.08.2026): **Image, KEIN Bind-Mount des Quellcodes.**
