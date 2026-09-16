@@ -4,11 +4,11 @@
 **2** — Roadmap freigegeben (05.08.2026), Umsetzung läuft im AGY-Direktmodus.
 
 ## Fortschritt
-**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 16.09.2026 20:30).
+**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 16.09.2026 21:30).
 
 | Meilenstein | Gewicht | Ist | Nachweis |
 |---|---|---|---|
-| M1 Kernfunktionen | 30 | 29 | Test-Suite 206/206 passed (1 warning, 8.25s) unter `.venv-ci/bin/python -m pytest tests`; Kernpfade belegt (Rotation, PIN-Versand 1. Stunde, Sync-Intervall 5 min `config.py:30`/`worker.py:70`, +30 min Nachlauf `sync.py:92`); Ausfall-Detektor live seit 06.08.2026. Offen: Push des lokalen `main` nach `origin` |
+| M1 Kernfunktionen | 30 | 29 | Test-Suite 206/206 passed (1 warning, 8.35s) unter `.venv-ci/bin/python -m pytest tests`; Kernpfade belegt (Rotation, PIN-Versand 1. Stunde, Sync-Intervall 5 min `config.py:30`/`worker.py:70`, +30 min Nachlauf `sync.py:92`); Ausfall-Detektor live seit 06.08.2026. Offen: Push des lokalen `main` nach `origin` |
 | M2 Betrieb/Stabilität | 15 | 15 | Deploy-Mechanismus belegt (Image-Build, kein Quellcode-Bind-Mount → Neustart ≠ Deploy); `/health` + Healthchecks; Docker-Log-Rotation; Restart-Runbook in `docs/BETRIEB.md` |
 | M3 Sicherheit | 15 | 15 | Secrets-Audit über 73 Commits (eigener Code sauber); `pip-audit` durchgeführt; Oberflächen-Check (keine veröffentlichten Ports, nur internes `getimpulse_getimpulse-network`) |
 | M4 Backups/Restore | 10 | 10 | Nächtlicher `pg_dump` (Cron 03:15) nach `/opt/getimpulse/backups/opengym`, Retention 14 Tage; Restore-Test mit Nachweis (29 Tabellen); `.env` mode 600 außerhalb des Repos |
@@ -62,6 +62,20 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 16.09.2026 21:30 Watchdog/AGY-Lauf (Direktumsetzung im AGY-Modus):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 206/206 passed (1 warning) in 8.35s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 206 Tests grün).
+  - Live-Betrieb & Container-Status: `opengym-service` (uvicorn port 8080, IP 172.18.0.9) und `opengym-worker` (studio-access-worker, IP 172.18.0.10) Up 6 days (~155 Stunden) aktiv & gesund, `opengym-auth` aktiv (Up 2 weeks), `db-service` (healthy, Up 5 weeks).
+  - Worker-Zyklus im Live-Betrieb stabil: Heartbeat in `monitoring_heartbeat` und `nuki_guardian_runs` verifiziert (`last_beat_at`: 2026-09-16 21:27:28 UTC, 17.244 Zyklen, Interval 300s = 5 min, `last_run_at`: 2026-09-16 21:27:28 UTC).
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check & Uptime-Cron bis 16.09. 21:25:01 UTC sowie Live-Check 21:27:31 UTC) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9:8080) und `opengym-auth` (`/health` ok via 127.0.0.1:8100) verifiziert.
+  - Backup-Prüfung: Frisches nächtliches Backup `opengym-20260916-031502.sql.gz` (423 KB / 432.600 Bytes) um 03:15:02 UTC in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (Retention 16 Backups 01.09.–16.09.2026, GZIP-Integrität ALL OK via gzip -t).
+  - Uptime-Cron verifiziert: Uptime-Check bis 16.09. 21:25:01 UTC im `cron.log` lückenlos mit HTTP 200 OK verifiziert.
+  - NAS-Erreichbarkeit & MQTT: `getimpulse-nas` via Tailscale (100.103.57.114) geprüft (ONLINE & active via Tailscale, Ping 0% packet loss, ~22.3 ms min / 34.0 ms avg; MQTT-Port 1883 erreichbar; 108 Keypad-Codes als retained Topics auf Mosquitto vorhanden).
+  - Freeze- & Hub-Status: Freeze `NUKI_ROTATION_PAUSED=true` planmäßig aktiv (keine Änderung); Nuki Hub antwortet aktuell nicht auf `lock/query/lockstate` (`no keypad/json received (hub offline?)`), Worker-Zyklen laufen dank Fallback stabil durch.
+  - Git-Remote Check: `git push origin main --dry-run` scheitert weiterhin an unauflösbarem Host-Alias `github-getimpulse` in CLI-Session. Commits auf lokalem `main` gesichert (aktueller HEAD vor Commit: `719995e`).
+  - Fortschritt 99 % bestätigt.
+
 - 16.09.2026 21:00 Leitstand-Entscheidung Damien „Aufräumen veralteter Punkte" umgesetzt (keine Code-, Deploy- oder Flag-Änderung):
   - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum eingetragen.
   - ESKALIERT-Flag „06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL" aufgehoben und als Roadmap-Abhängigkeit überführt. Zusätzlich die beiden ebenfalls überholten Flags (Provider-Limit 14:35, Sandbox-Blocker 18:50) nach Prüfung als aufgehoben markiert.
