@@ -22,6 +22,19 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 **Freigegeben** — `ROADMAP.md` freigegeben am 05.08.2026 durch Damien mit Anpassungen (Merge FF · `.bak`-Einzelfreigabe statt pauschal · `pg_dump` 14 Tage · CI pytest-only · NAS ruht) und Zusatz-Item „Ausfall-Detektor" in M1. Ergänzt am 16.09.2026 um M1.7 „Rotation über Nuki Hub" (Abhängigkeit für das Freeze-Ende).
 
 ## Freigaben und Entscheidungen von Damien
+- **17.09.2026 · Deploy des TLS-Fix (M3.4) während des Freezes — Vorschlag des PO übernommen:**
+  **Nicht separat ausrollen.** Der TLS-Fix reist mit dem nächsten ohnehin freigegebenen
+  Deploy mit (naheliegend: die Umstellung der Rotation auf den Nuki Hub, `ROADMAP.md` M1.7).
+  Bis dahin bleibt der Fix committet, aber **nicht deployt** — es wird für ihn allein weder
+  ein Rebuild noch ein Container-Neustart ausgelöst. Damit geht auch der noch nicht
+  ausgerollte NukiHub-Commit `089fef1` nicht vorzeitig live.
+  Hinweis zum Stand: der Fix **existiert noch nicht** — M3.4 ist weiter extern blockiert
+  (Zertifikat `services.getimpulse.de` abgelaufen, erneut geprüft am 17.09.2026 00:54 lokal /
+  16.09. 22:54 UTC: `notAfter=Sep 14 22:01:14 2026 GMT`, `Verify return code: 10`).
+  Die Entscheidung greift also ab dem Moment, in dem das Zertifikat gültig ist und die
+  Schritte 2–3 von M3.4 umgesetzt und committet sind.
+  Rahmen unverändert: Tür-, Nuki- oder Rotationslogik deployen ist ohne explizite Freigabe
+  verboten; ein Container-Neustart bleibt so kurz wie möglich, danach sofort Funktions-Check.
 - **16.09.2026 · Aufräumen veralteter Punkte (Leitstand-Entscheidung zum Eintrag „06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL"):**
   1. **Freeze bleibt bewusst aktiv — KEIN Unfreeze.** Der Grund ist nicht mehr der Internet-Ausfall, sondern: die Code-Rotation soll auf den **Nuki Hub** verschoben werden; erst danach hebt **Damien** den Freeze auf. Das ESKALIERT-Flag zum Internet-Ausfall ist aufgehoben und wird als Abhängigkeit in der Roadmap geführt (neu: `ROADMAP.md` M1.7, 👤 für die Unfreeze-Freigabe).
   2. Offene Frage „Freeze-Ende" ist damit **beantwortet** und geschlossen.
@@ -38,28 +51,20 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
   6. Zusatz-Item „Ausfall-Detektor" (eingefrorener Cloud↔Schloss-Sync): während eines Freezes nur stabile `og-bh`-Codes zustellen, Off-Peak fail-closed + Alert. Umgesetzt als Commit `42872fb`, live seit 06.08.2026 (als Vorfahr von Damiens Freeze-Commit `8cdba22` mit ausgerollt). ERLEDIGT.
 
 ## Offene Fragen
-1. **Darf der TLS-Fix (M3.4) während des laufenden Freezes ausgerollt werden — und wenn ja, zusammen mit dem noch nicht ausgerollten NukiHub-Commit?**
-   (17.09.2026) Die Änderung selbst betrifft nur das Monitoring
-   (`services/monitoring.py:653`), nicht Tür-, Nuki- oder Rotationslogik. Ein Deploy ist
-   hier aber nicht folgenlos: Service und Worker teilen sich **ein** Image, und auf dem
-   lokalen `main` liegt seit dem letzten Image-Build (10.09.2026 04:06 UTC) genau ein
-   noch nicht ausgerollter Nicht-Doku-Commit — `089fef1`
-   *fix(nukihub): ignore retained messages during round-trip queries*. Ein Rebuild würde
-   diesen Nuki-Commit **mit** live nehmen, und genau das ist freigabepflichtig. Hinzu kommt
-   der Container-Neustart (kurz zu halten, danach Funktions-Check).
-   *Default:* nicht separat ausrollen — der TLS-Fix reist mit dem nächsten ohnehin
-   freigegebenen Deploy mit (naheliegend: die Umstellung der Rotation auf den Nuki Hub,
-   `ROADMAP.md` M1.7). Bis dahin bleibt der Fix committet, aber nicht deployt.
-2. **Ist mit „Buchungssperre 30 min" der Nachlauf des Zugangsfensters gemeint, eine Magicline-Regel oder eine noch offene Anforderung?** (06.08.2026) Repo-weit gesucht nach `sperr`, `30 min`, `cooldown`, `lead_time`, `min_advance`, `too_late`. Der einzige 30-Minuten-Wert im Buchungspfad ist ein **Nachlauf**, keine Sperre: `services/sync.py:92` setzt `ends_at = Cluster-Ende + 30 min`; vorne läuft das Fenster 15 min früher an (`sync.py:99`). Der einzige weitere 30-min-Wert ist ein Alarm-Cooldown im Wächter (`timewindow/guardian.py:289`).
+1. **Ist mit „Buchungssperre 30 min" der Nachlauf des Zugangsfensters gemeint, eine Magicline-Regel oder eine noch offene Anforderung?** (06.08.2026) Repo-weit gesucht nach `sperr`, `30 min`, `cooldown`, `lead_time`, `min_advance`, `too_late`. Der einzige 30-Minuten-Wert im Buchungspfad ist ein **Nachlauf**, keine Sperre: `services/sync.py:92` setzt `ends_at = Cluster-Ende + 30 min`; vorne läuft das Fenster 15 min früher an (`sync.py:99`). Der einzige weitere 30-min-Wert ist ein Alarm-Cooldown im Wächter (`timewindow/guardian.py:289`).
    *Default:* der 30-min-Nachlauf ist gemeint — bis zur Klärung wird NICHTS an der Logik geändert.
-3. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
+2. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
    *Default:* aus der `.env` entfernen statt zu Feldern machen — eine Code-Änderung am Wächter wäre freigabepflichtig. Vorerst nur in `.env.example` als wirkungslos markiert.
-4. **Ist das Token-Fragment in den Fremd-Testfixtures echtes Sitzungsmaterial (→ rotieren) oder ein Upstream-Platzhalter (→ hinnehmen)?** (06.08.2026, M3-Audit) Hochentropes Fragment in den mitgelieferten VCR-Cassettes des vendorten notebooklm-Skills unter `.agents/skills/notebooklm/tests/cassettes/` (18 Diff-Zeilen in `artifacts_*.yaml`, 8 in `real_api_*.yaml`); hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026), aus der Historie weiterhin rekonstruierbar. Der eigene Projektcode ist sauber; Werte wurden bewusst nicht ausgegeben.
+3. **Ist das Token-Fragment in den Fremd-Testfixtures echtes Sitzungsmaterial (→ rotieren) oder ein Upstream-Platzhalter (→ hinnehmen)?** (06.08.2026, M3-Audit) Hochentropes Fragment in den mitgelieferten VCR-Cassettes des vendorten notebooklm-Skills unter `.agents/skills/notebooklm/tests/cassettes/` (18 Diff-Zeilen in `artifacts_*.yaml`, 8 in `real_api_*.yaml`); hinzugefügt in `b870c03` (01.04.2026), gelöscht in `0b214e9` (02.04.2026), aus der Historie weiterhin rekonstruierbar. Der eigene Projektcode ist sauber; Werte wurden bewusst nicht ausgegeben.
    *Default:* Upstream-Platzhalter, hinnehmen — ein History-Rewrite wäre destruktiv und wurde nicht durchgeführt.
-5. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
+4. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
    *Default:* keiner — diese Angabe kann nur von Damien kommen.
 
 **Abgeschlossen:**
+- *Darf der TLS-Fix (M3.4) während des Freezes ausgerollt werden?* — beantwortet am
+  17.09.2026: nein, nicht separat; der Fix reist mit dem nächsten freigegebenen Deploy mit
+  (M1.7) und bleibt bis dahin committet, aber nicht deployt. Siehe „Freigaben und
+  Entscheidungen von Damien".
 - *Deploy-Freigabe für den Ausfall-Detektor (`42872fb`)* — erledigt 06.08.2026: Damien hat den Freeze-Commit `8cdba22` selbst gebaut und ausgerollt, `42872fb` ist dessen Vorfahr und damit mit live. Post-Deploy-Funktions-Check sauber.
 - *Monatliches Ausgabenlimit des Claude-Accounts* — erledigt (Entscheidung Damien 16.09.2026): die Läufe arbeiten seit Wochen ohne Limit-Fehler.
 - *Freeze-Ende: wer setzt `NUKI_ROTATION_PAUSED` zurück?* — beantwortet (Entscheidung Damien 16.09.2026): der Freeze bleibt bewusst aktiv, bis die Rotation über den Nuki Hub läuft; das Unfreeze macht Damien selbst (`ROADMAP.md` M1.7). Der Freeze-Wächter (Alert nach 24 h Freeze + Alert bei Wiedererreichbarkeit des Schlosses) ist seit 08.08.2026 umgesetzt.
@@ -74,6 +79,13 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 17.09.2026 01:00 Leitstand-Entscheidung Damien zum Deploy des TLS-Fix (M3.4) eingetragen und umgesetzt — **nichts deployt, kein Rebuild, kein Neustart, keine Code-Änderung**:
+  - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum vermerkt: nicht separat ausrollen, der TLS-Fix reist mit dem nächsten freigegebenen Deploy mit (M1.7), bis dahin committet aber nicht deployt.
+  - Offene Frage 1 („Darf der TLS-Fix während des Freezes ausgerollt werden?") geschlossen und in die Abgeschlossen-Liste übernommen; die verbleibenden vier offenen Fragen neu durchnummeriert.
+  - `ROADMAP.md`: Schritt 4 von M3.4 von „wartet auf Freigabefrage" auf die entschiedene Regel umgestellt; bei M1.7 vermerkt, dass dieser Deploy den TLS-Fix mitnimmt und der Funktions-Check danach beide Änderungen abdecken muss.
+  - **Stand des Fixes unverändert: es gibt ihn noch nicht.** M3.4 bleibt extern blockiert — Zertifikat erneut geprüft (16.09.2026 22:54 UTC): `notAfter=Sep 14 22:01:14 2026 GMT`, `Verify return code: 10 (certificate has expired)`. Die Entscheidung greift, sobald das Zertifikat gültig ist und die Schritte 2–3 umgesetzt sind.
+  - Freeze unverändert: `NUKI_ROTATION_PAUSED=true`. Der noch nicht ausgerollte NukiHub-Commit `089fef1` bleibt damit ebenfalls undeployt.
+
 - 17.09.2026 00:45 Neue Aufgabe von Damien aufgenommen: **TLS-Prüfung für Home Assistant wieder einschalten** (M3 Sicherheit, ⚙) — als `ROADMAP.md` **M3.4** angelegt. **Nichts geändert, nichts deployt.**
   - Befund bestätigt: `src/nuki_integration/services/monitoring.py:653` ruft Home Assistant über `_http_ok()` mit `httpx.get(..., verify=False)` ab. Das umschließende `except Exception: return False` verschluckt einen Zertifikatsfehler zusätzlich stumm — er wäre von „Home Assistant offline" nicht zu unterscheiden.
   - Repo-weite Suche nach weiteren Stellen: **`monitoring.py:653` ist die einzige** `verify=False`-Stelle im Repo (`.venv` ausgenommen). `_http_ok()` hat genau zwei Aufrufer, beide Home Assistant (`monitoring.py:689`, `:692`).

@@ -45,6 +45,10 @@ Funktions-Check (Codes gültig? Worker läuft?).
       **Unfreeze durch Damien** (👤). Das Zurücksetzen des Flags ist ausdrücklich seine
       Entscheidung, nicht die des Agenten; bis dahin gilt weiter: kein Rebuild, kein
       Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
+      MITREISENDE ÄNDERUNGEN (Entscheidung Damien 17.09.2026): dieser Deploy nimmt den
+      TLS-Fix aus M3.4 und den NukiHub-Commit `089fef1` mit live, weil Service und Worker
+      sich ein Image teilen. Der Funktions-Check danach muss beides abdecken — nicht nur
+      Codes/Worker, sondern auch den Home-Assistant-Check (kein stiller TLS-Fehler).
 
 ## M2 Betrieb & Stabilität · Gewicht 15
 - [x] Deploy-Mechanismus belegt (nur lesend, 06.08.2026): **Image, KEIN Bind-Mount des Quellcodes.**
@@ -103,8 +107,12 @@ Funktions-Check (Codes gültig? Worker läuft?).
          als „offline" oder stumm als `False` durchgehen zu lassen.
       3. Tests ergänzen: Zertifikatsfehler → Alarm, gültiges Zertifikat → normaler Lauf;
          Testlauf mit Zahl belegen; committen.
-      4. Ausrollen erst nach Freigabe — siehe Offene Frage „Deploy während des Freezes"
-         in `PO-STATUS.md`. An Tür-, Nuki- und Rotationslogik wird nichts geändert.
+      4. Ausrollen: **entschieden am 17.09.2026 durch Damien — NICHT separat ausrollen.**
+         Der Fix bleibt nach dem Commit liegen und reist mit dem nächsten ohnehin
+         freigegebenen Deploy mit (naheliegend: M1.7, Rotation über den Nuki Hub).
+         Für ihn allein wird weder ein Rebuild noch ein Container-Neustart ausgelöst —
+         das hält zugleich den noch nicht ausgerollten NukiHub-Commit `089fef1` zurück.
+         An Tür-, Nuki- und Rotationslogik wird nichts geändert.
 
 ## M4 Backups & getesteter Restore · Gewicht 10
 - [x] Nächtlicher pg_dump der opengym-DB → /opt/getimpulse/backups/opengym, Retention 14 Tage (Cron 03:15, Erstlauf verifiziert 05.08.2026: 267 KB, 29 Tabellen)
