@@ -83,7 +83,7 @@ Prüfpunkte: `tw_pushed=53` (alle Codes auf dem Schloss; historisch 101), `guard
 | Fallback-Pool | 5 Codes `og-bh-p0..p4`, 08:00–21:00, Mo–Sa | `timewindow/pin_pool.py:44`, `:148` |
 | Hardware-Grenze | 200 Codes (`KEYPAD_CODE_LIMIT`), Grenzwächter `assert_within_budget` | `timewindow/pin_pool.py:28`, `:194` |
 | PIN-Format | genau 6 Ziffern 1–9, darf nicht mit `12` beginnen | `timewindow/pin_pool.py:46-59` |
-| Zugangsfenster | Buchungsstart **−15 min** bis Cluster-Ende **+30 min** | `services/sync.py:91-100` |
+| Zugangsfenster (= die „Buchungssperre 30 min") | Buchungsstart **−15 min** bis Cluster-Ende **+30 min**. Der 30-min-Wert ist ein **Nachlauf**, keine Sperre — so am 17.09.2026 von Damien bestätigt. | `services/sync.py:91-100` |
 | PIN gilt für | **die erste gebuchte Stunde** (ungepuffert) | `timewindow/rotation.py:362-363` |
 | Sync-/Worker-Intervall | **5 Minuten** (`MAGICLINE_SYNC_INTERVAL_MINUTES`, Default 5) | `config.py:30`, `worker.py:70` |
 | Rotation | täglich, create-first: erst neuen Code anlegen + Bestätigung abwarten, **dann** alten löschen | `timewindow/rotation.py:147-156` |

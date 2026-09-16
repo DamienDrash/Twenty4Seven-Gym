@@ -13,7 +13,7 @@ Funktions-Check (Codes gültig? Worker läuft?).
 - [x] Test-Suite (pytest) vollständig laufen, Ergebnis im Tageslog protokollieren (Beleg: 107 passed, 05.08.2026)
 - [x] main auf Produktionsstand bringen: fix/opengym-access-window mergen (Fast-Forward 44b543d..42872fb, KEIN Redeploy — laufende Container unverändert; origin gepusht)
 - [x] .bak-Dateien aufräumen (Entscheidung Damien 05.08.2026: 3 Dateien gelöscht, paperless-Rollback-Punkt behalten)
-- [x] Kernpfade verifizieren: Buchungssperre (+30 min Nachlauf sync.py:92), PIN-Versand nur für erste gebuchte Stunde (rotation.py:362), Rotation 101 Codes (5 innen / 96 außen, pin_pool.py:27), Sync-Intervall 5 min (config.py:30, worker.py:70) — Belege im Tageslog.
+- [x] Kernpfade verifizieren: Buchungssperre = +30 min Nachlauf des Zugangsfensters (sync.py:92; Deutung am 17.09.2026 von Damien bestätigt, keine Logikänderung), PIN-Versand nur für erste gebuchte Stunde (rotation.py:362), Rotation 101 Codes (5 innen / 96 außen, pin_pool.py:27), Sync-Intervall 5 min (config.py:30, worker.py:70) — Belege im Tageslog.
 - [x] Ausfall-Detektor für eingefrorenen Cloud↔Schloss-Sync (Zusatz-Item Damien 05.08.2026):
       während eines Freezes nur stabile og-bh-Codes zustellen, Off-Peak-Codes fail-closed + Alert.
       Hintergrund: bei Router-Ausfall können frische Off-Peak-Codes fälschlich als gültig

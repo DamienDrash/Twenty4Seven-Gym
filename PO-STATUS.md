@@ -22,6 +22,18 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 **Freigegeben** — `ROADMAP.md` freigegeben am 05.08.2026 durch Damien mit Anpassungen (Merge FF · `.bak`-Einzelfreigabe statt pauschal · `pg_dump` 14 Tage · CI pytest-only · NAS ruht) und Zusatz-Item „Ausfall-Detektor" in M1. Ergänzt am 16.09.2026 um M1.7 „Rotation über Nuki Hub" (Abhängigkeit für das Freeze-Ende).
 
 ## Freigaben und Entscheidungen von Damien
+- **17.09.2026 · „Buchungssperre 30 min" — Vorschlag des PO übernommen:**
+  Gemeint ist der **30-min-Nachlauf des Zugangsfensters**, keine Sperre und keine fehlende
+  Anforderung. Die Anforderung ist damit durch das bestehende Verhalten erfüllt; **an der
+  Logik wird nichts geändert**.
+  Belegt (17.09.2026 erneut gegen den Code geprüft): `services/sync.py:92` setzt
+  `ends_at = Cluster-Ende + 30 min`, `sync.py:91` und `:99` setzen Versand und Fensterbeginn
+  auf `Buchungsstart − 15 min`. Das Zugangsfenster läuft also von **Buchungsstart −15 min bis
+  Cluster-Ende +30 min**. Der einzige weitere 30-Minuten-Wert im Repo ist ein Alarm-Cooldown
+  im Wächter (`timewindow/guardian.py:289`) und hat mit dem Buchungspfad nichts zu tun.
+  Nicht zu verwechseln: der **ausgelieferte PIN** gilt nur für die erste gebuchte Stunde
+  (ungepuffert, `timewindow/rotation.py:362`) — der Nachlauf betrifft das Zugangsfenster,
+  nicht die Gültigkeit des Codes.
 - **17.09.2026 · Token-Fragment in den Fremd-Testfixtures (M3-Audit) — Vorschlag des PO übernommen:**
   **Upstream-Platzhalter, hinnehmen.** Kein History-Rewrite (destruktiv), keine Rotation.
   Betroffen sind ausschließlich mitgelieferte VCR-Cassettes des vendorten notebooklm-Skills
@@ -62,14 +74,16 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
   6. Zusatz-Item „Ausfall-Detektor" (eingefrorener Cloud↔Schloss-Sync): während eines Freezes nur stabile `og-bh`-Codes zustellen, Off-Peak fail-closed + Alert. Umgesetzt als Commit `42872fb`, live seit 06.08.2026 (als Vorfahr von Damiens Freeze-Commit `8cdba22` mit ausgerollt). ERLEDIGT.
 
 ## Offene Fragen
-1. **Ist mit „Buchungssperre 30 min" der Nachlauf des Zugangsfensters gemeint, eine Magicline-Regel oder eine noch offene Anforderung?** (06.08.2026) Repo-weit gesucht nach `sperr`, `30 min`, `cooldown`, `lead_time`, `min_advance`, `too_late`. Der einzige 30-Minuten-Wert im Buchungspfad ist ein **Nachlauf**, keine Sperre: `services/sync.py:92` setzt `ends_at = Cluster-Ende + 30 min`; vorne läuft das Fenster 15 min früher an (`sync.py:99`). Der einzige weitere 30-min-Wert ist ein Alarm-Cooldown im Wächter (`timewindow/guardian.py:289`).
-   *Default:* der 30-min-Nachlauf ist gemeint — bis zur Klärung wird NICHTS an der Logik geändert.
-2. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
+1. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
    *Default:* aus der `.env` entfernen statt zu Feldern machen — eine Code-Änderung am Wächter wäre freigabepflichtig. Vorerst nur in `.env.example` als wirkungslos markiert.
-3. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
+2. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
    *Default:* keiner — diese Angabe kann nur von Damien kommen.
 
 **Abgeschlossen:**
+- *Ist mit „Buchungssperre 30 min" der Nachlauf, eine Magicline-Regel oder eine offene
+  Anforderung gemeint?* — beantwortet am 17.09.2026: der 30-min-Nachlauf des Zugangsfensters
+  ist gemeint; keine Logikänderung nötig und keine durchgeführt. Siehe „Freigaben und
+  Entscheidungen von Damien".
 - *Token-Fragment in den Fremd-Testfixtures: echtes Sitzungsmaterial oder Upstream-Platzhalter?*
   — beantwortet am 17.09.2026: Upstream-Platzhalter, hingenommen; kein History-Rewrite, keine
   Rotation. Siehe „Freigaben und Entscheidungen von Damien".
@@ -91,6 +105,14 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 17.09.2026 01:30 Leitstand-Entscheidung Damien zu „Buchungssperre 30 min" eingetragen und umgesetzt — **keine Logikänderung, kein Deploy, kein Neustart**:
+  - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum vermerkt: gemeint ist der 30-min-Nachlauf des Zugangsfensters; die Anforderung ist durch das bestehende Verhalten erfüllt.
+  - Offene Frage 1 geschlossen und in die Abgeschlossen-Liste übernommen; verbleibende Fragen neu durchnummeriert (jetzt 2 offene Fragen: wirkungslose `.env`-Keys, Fallback-Zugang).
+  - Code-Beleg vor dem Abschluss erneut geprüft (rein lesend): `services/sync.py:92` → `ends_at = Cluster-Ende + 30 min`; `sync.py:91` (`dispatch_at`) und `:99` (`starts_at`) → `Buchungsstart − 15 min`. Unverändert gegenüber dem Befund vom 06.08.2026.
+  - `docs/BETRIEB.md`: die Kernpfad-Zeile „Zugangsfenster" um den Begriff „Buchungssperre 30 min" ergänzt, damit die Bezeichnung künftig eindeutig auf den Nachlauf zeigt und die Frage nicht erneut gestellt wird.
+  - `ROADMAP.md` M1: Kernpfad-Item um den Verweis auf die Entscheidung ergänzt.
+  - Freeze unverändert (`NUKI_ROTATION_PAUSED=true`), nichts an Tür-, Nuki- oder Rotationslogik.
+
 - 17.09.2026 01:15 Leitstand-Entscheidung Damien zum Token-Fragment aus dem M3-Audit eingetragen und umgesetzt — **nichts gelöscht, nichts umgeschrieben, nichts deployt**:
   - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum vermerkt: Upstream-Platzhalter, hinnehmen, kein History-Rewrite.
   - Offene Frage 3 geschlossen und in die Abgeschlossen-Liste übernommen; verbleibende Fragen neu durchnummeriert (jetzt 3 offene Fragen).
