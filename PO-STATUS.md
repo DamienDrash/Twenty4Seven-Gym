@@ -14,14 +14,37 @@
 | M4 Backups/Restore | 10 | 10 | Nächtlicher `pg_dump` (Cron 03:15) nach `/opt/getimpulse/backups/opengym`, Retention 14 Tage; Restore-Test mit Nachweis (29 Tabellen); `.env` mode 600 außerhalb des Repos |
 | M5 Monitoring | 10 | 10 | Guardian + Rotations-Check-Cron 10:30 + `monitoring_heartbeat`; Uptime-Check `/app` & `/checks` alle 5 min (`ops/opengym-uptime-check/check.py`); Freeze-Wächter `check_freeze_watch()`; Alerting Telegram Topic 37 / ntfy |
 | M6 Tests/CI | 10 | 10 | GitHub Actions `.github/workflows/tests.yml` (pytest-only, kein Deploy, Commit `d6cc0b6`); Suite 206/206 grün |
-| M7 Doku | 10 | 10 | `docs/BETRIEB.md`, `docs/nuki-hub-esp32.md`, `README.md`, `.env.example` gegen `config.py` abgeglichen. Platzhalter „Fallback-Zugang" wartet auf Damiens Angabe |
+| M7 Doku | 10 | 10 | `docs/BETRIEB.md` (inkl. Fallback-Zugang: Nuki App + physischer Schlüssel, Angabe Damien 17.09.2026), `docs/nuki-hub-esp32.md`, `README.md`, `.env.example` gegen `config.py` abgeglichen — keine Platzhalter mehr offen |
 
-Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Alias `github-getimpulse` ist in der CLI-Session unauflösbar; (b) Beantwortung des Doku-Platzhalters „Fallback-Zugang" durch Damien.
+Offen für 100 %: nur noch der Push der lokalen `main`-Commits nach `origin` — der Host-Alias `github-getimpulse` ist in der CLI-Session unauflösbar. Der Doku-Platzhalter „Fallback-Zugang" ist am 17.09.2026 durch Damiens Angabe aufgelöst.
 
 ## Roadmap-Status
 **Freigegeben** — `ROADMAP.md` freigegeben am 05.08.2026 durch Damien mit Anpassungen (Merge FF · `.bak`-Einzelfreigabe statt pauschal · `pg_dump` 14 Tage · CI pytest-only · NAS ruht) und Zusatz-Item „Ausfall-Detektor" in M1. Ergänzt am 16.09.2026 um M1.7 „Rotation über Nuki Hub" (Abhängigkeit für das Freeze-Ende).
 
 ## Freigaben und Entscheidungen von Damien
+- **17.09.2026 · Fallback-Zugang für `docs/BETRIEB.md`:**
+  **Nuki App und physischer Schlüssel.** Beide Wege sind unabhängig von Keypad-Codes,
+  Rotation und Cloud↔Schloss-Sync und greifen daher auch bei aktivem Freeze.
+  In `docs/BETRIEB.md` Abschnitt 7 eingetragen; der bisherige Platzhalter ist damit
+  aufgelöst und M7 hat keinen offenen Punkt mehr. Bewusst **nicht** im Repo hinterlegt:
+  wer App-Zugriff hat und wo der Schlüssel liegt — das läuft über Damien.
+- **17.09.2026 · Wirkungslose `.env`-Keys:**
+  Auftrag: prüfen, ob sie relevant sind und verwendet werden — wenn nicht, entfernen.
+  **Geprüft (17.09.2026, gegen den aktuellen Code): nicht verwendet.** Keiner der sechs
+  Keys ist ein Feld von `Settings` (`config.py`), `extra="ignore"` ist weiterhin gesetzt,
+  und in `src/` gibt es kein einziges `os.environ`/`os.getenv`. Ein Wert in der `.env`
+  hat also keinerlei Wirkung. **Folge: entfernt** aus `.env.example`
+  (`GUARDIAN_ENABLED`, `GUARDIAN_AUTOFIX`, `GUARDIAN_LOOKAHEAD_MINUTES`,
+  `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_INTERVAL_SECONDS`, `NUKI_LOG_STALE_ALERT_HOURS`).
+  Wichtig zur Einordnung: **das Verhalten ändert sich dadurch nicht.** Der Wächter liest
+  diese Werte über `getattr(settings, …, <Default>)` und arbeitet unverändert mit seinen
+  hartkodierten Defaults weiter (enabled=True, autofix=True, lookahead=90 min,
+  grace=20 min, stale-alert=48 h); `GUARDIAN_INTERVAL_SECONDS` hat gar keinen Leser.
+  Entfernt wurde also irreführende Dokumentation, keine Funktion.
+  **Nicht angefasst:** die echten Settings-Felder `NUKI_GUARDIAN_COOLDOWN_SECONDS` und
+  `NUKI_GUARDIAN_FALLBACK_INTERVAL_SECONDS` (`config.py:93`, `:98`) — die wirken.
+  Testlauf nach der Änderung: **206/206 passed (1 warning) in 7,98 s**
+  (`.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`).
 - **17.09.2026 · „Buchungssperre 30 min" — Vorschlag des PO übernommen:**
   Gemeint ist der **30-min-Nachlauf des Zugangsfensters**, keine Sperre und keine fehlende
   Anforderung. Die Anforderung ist damit durch das bestehende Verhalten erfüllt; **an der
@@ -74,12 +97,14 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
   6. Zusatz-Item „Ausfall-Detektor" (eingefrorener Cloud↔Schloss-Sync): während eines Freezes nur stabile `og-bh`-Codes zustellen, Off-Peak fail-closed + Alert. Umgesetzt als Commit `42872fb`, live seit 06.08.2026 (als Vorfahr von Damiens Freeze-Commit `8cdba22` mit ausgerollt). ERLEDIGT.
 
 ## Offene Fragen
-1. **Sollen die wirkungslosen `.env`-Keys zu echten Settings-Feldern werden oder aus der `.env` verschwinden?** (06.08.2026) `GUARDIAN_ENABLED`, `GUARDIAN_INTERVAL_SECONDS`, `GUARDIAN_LOOKAHEAD_MINUTES`, `GUARDIAN_GRACE_MINUTES`, `GUARDIAN_AUTOFIX` und `NUKI_LOG_STALE_ALERT_HOURS` stehen in `.env.example`, sind aber keine Felder von `Settings`. `config.py` nutzt `extra="ignore"`, und im gesamten Code gibt es kein `os.environ`/`os.getenv`; der Wächter liest sie über `getattr(settings, …, <default>)` und bekommt daher IMMER den hartkodierten Default.
-   *Default:* aus der `.env` entfernen statt zu Feldern machen — eine Code-Änderung am Wächter wäre freigabepflichtig. Vorerst nur in `.env.example` als wirkungslos markiert.
-2. **Was ist der „Fallback-Zugang" (physischer Zugang/Schlüssel) für `docs/BETRIEB.md`?** (06.08.2026) Der Abschnitt ist bewusst als offener Platzhalter belassen, weil kein belegter Stand vorliegt und er nicht aus Vermutungen gefüllt werden darf. Letzter offener Punkt in M7.
-   *Default:* keiner — diese Angabe kann nur von Damien kommen.
+- _(keine offenen Fragen an Damien)_
 
 **Abgeschlossen:**
+- *Was ist der „Fallback-Zugang" für `docs/BETRIEB.md`?* — beantwortet am 17.09.2026:
+  Nuki App und physischer Schlüssel; in `docs/BETRIEB.md` Abschnitt 7 eingetragen.
+- *Sollen die wirkungslosen `.env`-Keys zu Settings-Feldern werden oder verschwinden?*
+  — beantwortet am 17.09.2026: geprüft, nicht verwendet → aus `.env.example` entfernt;
+  Verhalten unverändert (hartkodierte Defaults im Wächter).
 - *Ist mit „Buchungssperre 30 min" der Nachlauf, eine Magicline-Regel oder eine offene
   Anforderung gemeint?* — beantwortet am 17.09.2026: der 30-min-Nachlauf des Zugangsfensters
   ist gemeint; keine Logikänderung nötig und keine durchgeführt. Siehe „Freigaben und
@@ -105,6 +130,13 @@ Offen für 100 %: (a) Push der lokalen `main`-Commits nach `origin` — Host-Ali
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 17.09.2026 01:50 Zwei Leitstand-Entscheidungen Damiens eingetragen und umgesetzt — **kein Deploy, kein Rebuild, kein Neustart, nichts an Tür-, Nuki- oder Rotationslogik**:
+  - **Wirkungslose `.env`-Keys** (Auftrag: prüfen, ob verwendet — wenn nicht, entfernen). Geprüft gegen den aktuellen Code: keiner der sechs Keys ist ein Feld von `Settings`, `extra="ignore"` ist gesetzt (`config.py:20`), und `src/` enthält kein einziges `os.environ`/`os.getenv`. Ergebnis: **nicht verwendet → entfernt** (15 Zeilen aus `.env.example`, Datei 139 → 125 Zeilen). Verhalten unverändert: der Wächter liest die Werte über `getattr(settings, …, <Default>)` und läuft weiter mit enabled=True, autofix=True, lookahead=90 min, grace=20 min, stale-alert=48 h (`timewindow/guardian.py:165,243,263,275,279,280`); `GUARDIAN_INTERVAL_SECONDS` hatte gar keinen Leser. Die echten Felder `NUKI_GUARDIAN_COOLDOWN_SECONDS`/`NUKI_GUARDIAN_FALLBACK_INTERVAL_SECONDS` (`config.py:93`, `:98`) blieben unangetastet.
+  - **Testlauf nach der Änderung: 206/206 passed (1 warning) in 7,98 s** unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`.
+  - **OFFEN GEBLIEBEN dabei:** die reale `.env` (`/opt/getimpulse/opengym/.env`, mode 600, fremder Eigentümer) ist für diesen Lauf **nicht lesbar** — ob die Keys dort noch stehen, konnte ich weder prüfen noch bereinigen. Wirkung hat das keine (die Keys sind ignoriert, und im Container existieren sie ohnehin nicht: `printenv` im `opengym-worker` zeigt keine `GUARDIAN_*`/`NUKI_LOG_STALE_*`-Variable, ein `/app/.env` gibt es dort nicht). Aufräumen kann das nur Damien.
+  - **Fallback-Zugang**: Angabe „Nuki App und physischer Schlüssel" in `docs/BETRIEB.md` Abschnitt 7 eingetragen, Platzhalter aufgelöst. Wer App-Zugriff hat und wo der Schlüssel liegt, steht bewusst nicht im Repo. Damit hat M7 keinen offenen Punkt mehr.
+  - **Offene Fragen an Damien: keine mehr** — beide letzten Fragen sind mit diesen Entscheidungen geschlossen.
+
 - 17.09.2026 01:30 Leitstand-Entscheidung Damien zu „Buchungssperre 30 min" eingetragen und umgesetzt — **keine Logikänderung, kein Deploy, kein Neustart**:
   - Entscheidung unter „Freigaben und Entscheidungen von Damien" mit Datum vermerkt: gemeint ist der 30-min-Nachlauf des Zugangsfensters; die Anforderung ist durch das bestehende Verhalten erfüllt.
   - Offene Frage 1 geschlossen und in die Abgeschlossen-Liste übernommen; verbleibende Fragen neu durchnummeriert (jetzt 2 offene Fragen: wirkungslose `.env`-Keys, Fallback-Zugang).

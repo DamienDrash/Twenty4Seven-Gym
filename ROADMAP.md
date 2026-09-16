@@ -145,9 +145,10 @@ Funktions-Check (Codes gültig? Worker läuft?).
       Enthält: Was-läuft-wo, Neustart≠Deploy inkl. Beleg + Funktions-Check, Kernpfad-Kurzreferenz
       mit Datei:Zeile, beide Notfall-Flags (Bedeutung/wann setzen/wann zurücksetzen/wer darf das),
       Backup+Restore-Grundsatz, Monitoring, Eskalationsweg, NAS-Regel.
-      NOCH OFFEN: Abschnitt „Fallback-Zugang" (physischer Zugang/Schlüssel) — bewusst als
-      offener Platzhalter belassen, weil dem Worker kein belegter Stand vorliegt und dieser
-      Punkt nicht aus Vermutungen gefüllt werden darf. Braucht Damiens Angabe.
+      Abschnitt „Fallback-Zugang" ERGÄNZT am 17.09.2026 nach Damiens Angabe:
+      **Nuki App und physischer Schlüssel** — beide unabhängig von Keypad-Codes, Rotation und
+      Cloud↔Schloss-Sync, greifen also auch bei aktivem Freeze. Wer App-Zugriff hat und wo der
+      Schlüssel liegt, steht bewusst nicht im Repo. Damit ist M7 ohne offenen Punkt.
 - [x] README aktualisiert (06.08.2026, NICHT COMMITTET — git-Schreibbefehle im Worker gesperrt):
       Sync-Intervall 30 min → 5 min (gegen config.py:30 / worker.py:70 geprüft), neuer
       Abschnitt „Production" mit /opt/getimpulse/docker-compose.yml + Neustart≠Deploy,
@@ -161,9 +162,10 @@ Funktions-Check (Codes gültig? Worker läuft?).
       MAGICLINE_ENTITLEMENT_RATE_NAME/_PRODUCT_NAME, NUKI_TIMEOUT_SECONDS, NUKI_CLIENT_ID/
       _SECRET, NUKI_ACCESS_TOKEN, NUKI_REFRESH_TOKEN, TELEGRAM_MESSAGE_THREAD_ID,
       NTFY_URL/_TOPIC, MEDIA_STORAGE_PATH/_URL_BASE, HOST, PORT. Nur Platzhalter.
-      NEUER BEFUND dabei: die bisherigen GUARDIAN_*-Keys und NUKI_LOG_STALE_ALERT_HOURS sind
-      WIRKUNGSLOS (keine Settings-Felder, extra="ignore", kein os.environ-Leser) — als solche
-      markiert, siehe Offene Fragen.
+      Die wirkungslosen GUARDIAN_*-Keys und NUKI_LOG_STALE_ALERT_HOURS wurden am
+      17.09.2026 nach Prüfung und Entscheidung Damiens ENTFERNT (keine Settings-Felder,
+      extra="ignore", kein os.environ-Leser). Verhalten unverändert — der Wächter arbeitet
+      weiter mit seinen hartkodierten Defaults.
 
 ## Zurückgestellt
 - Teilbereich Studio-Automations (getimpulse-nas): NAS am 23.08.2026 22:28 wieder online erreichbar (100.103.57.114). Ruht bis zur Abstimmung/Reaktivierung mit Damien.

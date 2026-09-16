@@ -187,12 +187,24 @@ neu alarmiert.
 
 ## 7. Fallback-Zugang
 
-> **OFFEN — von Damien zu bestätigen und hier einzutragen.**
-> Der PO-Worker hat keinen belegten Stand zum physischen Fallback-Zugang (Schlüssel,
-> Hinterlegungsort, wer hat Zugriff, Ansprechpartner vor Ort). Dieser Abschnitt darf
-> nicht aus Vermutungen gefüllt werden — er wird nach Damiens Angabe ergänzt.
+Angabe von Damien (17.09.2026): **Nuki App und physischer Schlüssel.**
 
-Was aus dem Code belegt ist und als Software-Fallback zählt:
+Kommt niemand über das Keypad hinein, gibt es zwei Wege, die unabhängig von
+Rotation, Codes und Cloud↔Schloss-Sync funktionieren:
+
+1. **Nuki App** — öffnet das Schloss direkt (Bluetooth vor Ort, oder remote über den
+   Hub). Unabhängig von den Keypad-Codes, funktioniert also auch bei eingefrorener
+   Rotation oder leerem Code-Pool.
+2. **Physischer Schlüssel** — der letzte Rückfallweg, unabhängig von Strom, Netz und
+   Software.
+
+> Wer App-Zugriff hat und wo der Schlüssel hinterlegt ist, steht bewusst **nicht** in
+> dieser Datei (sie liegt im Repo). Diese Angaben laufen über Damien.
+
+Vor jedem Deploy, der Tür-, Nuki- oder Rotationslogik berührt, ist zu prüfen, dass
+mindestens einer dieser beiden Wege verfügbar ist (siehe Kopf dieses Dokuments).
+
+Zusätzlich als **Software-Fallback** aus dem Code belegt:
 
 - Die **5 Business-Hours-Fallback-Codes** (`og-bh-p0..p4`, 08:00–21:00 Mo–Sa) sind
   stabil vormaterialisiert und überstehen einen Cloud↔Schloss-Ausfall — sie sind der
