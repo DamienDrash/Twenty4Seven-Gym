@@ -4,7 +4,7 @@
 **2** — Roadmap freigegeben (05.08.2026), Umsetzung läuft im AGY-Direktmodus.
 
 ## Fortschritt
-**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 20.09.2026 20:28 / 20.09.2026 18:28 UTC).
+**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 20.09.2026 21:28 / 20.09.2026 19:28 UTC).
 
 | Meilenstein | Gewicht | Ist | Nachweis |
 |---|---|---|---|
@@ -130,6 +130,21 @@ Offen für 100 %: nur noch der Push der lokalen `main`-Commits nach `origin` —
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 20.09.2026 21:28 Watchdog/AGY-Lauf (20.09.2026 19:28 UTC):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 213/213 passed (1 warning) in 8.04s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 213 Tests grün).
+  - Live-Betrieb & Container-Status: `opengym-service` (uvicorn Port 8080, IP 172.18.0.9, PID 547290) und `opengym-worker` (studio-access-worker, IP 172.18.0.10, PID 547296) Up 10 days (~255 Stunden) aktiv & gesund, `opengym-auth` aktiv (Up 2 weeks, PID 2296624, `/health` ok via 127.0.0.1:8100), `db-service` (healthy, Up 6 weeks, PID 3926081).
+  - Worker-Zyklus im Live-Betrieb stabil: Heartbeat in `monitoring_heartbeat` und `nuki_guardian_audit` verifiziert (`name`: worker, `last_beat_at`: 2026-09-20 19:21:03.485918+00, 18.182 Zyklen, Interval 300s = 5 min, `nuki_guardian_audit` ID 18262 verified=True mit 0 Failures).
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check & Uptime-Cron bis 20.09. 19:25:02 UTC) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9:8080, `auth` `/health` via 127.0.0.1:8100) verifiziert (HTTP 200).
+  - Backup-Prüfung: Frisches nächtliches Backup `opengym-20260920-031501.sql.gz` (447 KB / 436 KiB) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (GZIP-Integrität OK; 14 Tage Retention mit 16 Backup-Dateien eingehalten; nächster Backup-Lauf am 21.09. um 03:15 UTC).
+  - Uptime-Cron verifiziert: Uptime-Check bis 20.09. 19:25:02 UTC im `cron.log` lückenlos mit HTTP 200 OK.
+  - NAS-Erreichbarkeit & Ports: `getimpulse-nas` via Tailscale (100.103.57.114) geprüft (ONLINE, Ping 0% packet loss, min 12.3 ms / avg 12.7 ms; Ports 443 HTTPS und 1883 MQTT erreichbar).
+  - M1.7 Nuki Hub: Freeze `NUKI_ROTATION_PAUSED=true` planmäßig aktiv (keine Änderung); Worker-Zyklen laufen dank Fallback stabil durch. MQTT-Status des ESP32 am Broker via paho-mqtt geprüft (`maintenance/mqttConnectionState`: offline, `lock/availability`: online, `lock/state`: locked, `battery_level`: 62% [retained], `battery_critical`: 0, `ble_rssi`: -66, `uptime`: 1833, ESP32 derzeit getrennt). Unfreeze bleibt Abhängigkeit von M1.7 durch Damien (👤).
+  - Git-Remote Check: `git push origin main` scheitert an unauflösbarem Host-Alias `github-getimpulse` in CLI-Session. Alle Commits auf lokalem `main` gesichert.
+  - Offene Fragen an Damien: keine. Aktive Eskalations-Flags: keine.
+  - Fortschritt: 99 % bestätigt (offen nur noch Push nach origin + M1.7 Nuki Hub Unfreeze durch Damien).
+
 - 20.09.2026 20:28 Watchdog/AGY-Lauf (20.09.2026 18:28 UTC):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 213/213 passed (1 warning) in 8.04s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 213 Tests grün).
