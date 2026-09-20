@@ -647,23 +647,54 @@ def _tcp_open(host: str, port: int, timeout: float = 5.0) -> bool:
         return False
 
 
-def _http_ok(url: str, *, headers: dict[str, str] | None = None, timeout: float = 8.0) -> bool:
+def _is_tls_error(exc: Exception) -> bool:
+    """Prüft, ob eine Ausnahme auf einen TLS/SSL-Zertifikatsfehler zurückgeht."""
+    import ssl
+    cur: Exception | None = exc
+    while cur:
+        if isinstance(cur, ssl.SSLCertVerificationError):
+            return True
+        msg = str(cur).lower()
+        if "certificate verify failed" in msg or "certificatenameerror" in msg:
+            return True
+        cur = getattr(cur, "__cause__", None)
+    return False
+
+
+def _http_check(url: str, *, headers: dict[str, str] | None = None, timeout: float = 8.0) -> tuple[bool, bool]:
+    """HTTP-Prüfung mit aktivierter TLS-Verifikation (verify=True, Standard).
+
+    Rückgabe: (ok: bool, tls_invalid: bool).
+    Ein abgelaufenes oder ungültiges Zertifikat setzt tls_invalid=True.
+    """
     try:
         import httpx
-        resp = httpx.get(url, headers=headers or {}, timeout=timeout, verify=False)
-        return resp.status_code < 500
-    except Exception:
-        return False
+        resp = httpx.get(url, headers=headers or {}, timeout=timeout)
+        return resp.status_code < 500, False
+    except Exception as exc:
+        if _is_tls_error(exc):
+            return False, True
+        return False, False
 
 
-def classify_studio_link(*, nas_tailscale: bool, public_endpoint: bool, home_assistant: bool) -> tuple[str | None, str]:
+def _http_ok(url: str, *, headers: dict[str, str] | None = None, timeout: float = 8.0) -> bool:
+    ok, _ = _http_check(url, headers=headers, timeout=timeout)
+    return ok
+
+
+def classify_studio_link(*, nas_tailscale: bool, public_endpoint: bool, home_assistant: bool,
+                         ha_tls_invalid: bool = False) -> tuple[str | None, str]:
     """Pure: welches Kettenglied ist gerissen? → (kind|None, Begründung).
 
     Tailscale läuft über dieselbe WAN-Leitung wie alles andere: ist die NAS über
     Tailscale erreichbar, steht das Studio-Internet zwangsläufig. Antwortet
     zusätzlich der öffentliche Endpunkt (Router-Portfreigabe) nicht, während
     Tailscale tot ist, dann ist die Leitung/der Router weg — nicht nur die NAS.
+    Ein Zertifikatsfehler am HA-Endpunkt wird separat als TLS-Fehler klassifiziert.
     """
+    if ha_tls_invalid:
+        return "home-assistant-tls-invalid", ("Home Assistant TLS-Zertifikat ungültig oder "
+                                              "abgelaufen — Let's Encrypt / Synology DSM prüfen.")
     if nas_tailscale and home_assistant:
         return None, "Studio-Kette vollständig erreichbar."
     if nas_tailscale and not home_assistant:
@@ -686,28 +717,37 @@ def check_studio_link(db, settings: Settings, *, now: datetime | None = None) ->
     if not host:
         return {"checked": False}
     nas_tailscale = _tcp_open(host, int(getattr(settings, "nuki_mqtt_port", 1883) or 1883))
-    public_endpoint = _http_ok(ha_url) if ha_url else False
+    public_endpoint = False
+    ha_tls_invalid = False
+    if ha_url:
+        public_endpoint, tls_err = _http_check(ha_url)
+        if tls_err:
+            ha_tls_invalid = True
     home_assistant = False
     if ha_url and ha_token:
-        home_assistant = _http_ok(f"{ha_url.rstrip('/')}/api/",
-                                  headers={"Authorization": f"Bearer {ha_token}"})
+        ha_ok, tls_err = _http_check(f"{ha_url.rstrip('/')}/api/",
+                                    headers={"Authorization": f"Bearer {ha_token}"})
+        home_assistant = ha_ok
+        if tls_err:
+            ha_tls_invalid = True
     elif nas_tailscale:
         home_assistant = True  # ohne Token nicht prüfbar → nicht fälschlich alarmieren
     kind, reason = classify_studio_link(nas_tailscale=nas_tailscale, public_endpoint=public_endpoint,
-                                        home_assistant=home_assistant)
+                                        home_assistant=home_assistant, ha_tls_invalid=ha_tls_invalid)
     state = {"nas_tailscale": nas_tailscale, "public_endpoint": public_endpoint,
-             "home_assistant": home_assistant, "kind": kind}
-    for k in ("studio-internet-down", "nas-offline", "home-assistant-offline"):
+             "home_assistant": home_assistant, "ha_tls_invalid": ha_tls_invalid, "kind": kind}
+    for k in ("studio-internet-down", "nas-offline", "home-assistant-offline", "home-assistant-tls-invalid"):
         if k != kind:
             resolve(db, key=k, now=now, settings=settings)
     if kind is None:
         return {**state, "alerted": False}
-    severity = AlertSeverity.ERROR if kind == "studio-internet-down" else AlertSeverity.WARNING
+    severity = AlertSeverity.ERROR if kind in ("studio-internet-down", "home-assistant-tls-invalid") else AlertSeverity.WARNING
     alerted = notify(
         db, settings, key=kind, severity=severity, kind=kind,
         title={"studio-internet-down": "Studio offline — Internet/Router oder NAS ausgefallen",
                "nas-offline": "NAS nicht erreichbar",
-               "home-assistant-offline": "Home Assistant antwortet nicht"}[kind],
+               "home-assistant-offline": "Home Assistant antwortet nicht",
+               "home-assistant-tls-invalid": "Home Assistant TLS-Zertifikat ungültig"}[kind],
         detail=reason, payload=state, cooldown_secs=30 * 60, now=now,
     )
     return {**state, "alerted": alerted}

@@ -34,6 +34,19 @@ class StudioLinkTests(unittest.TestCase):
             kind, _ = classify_studio_link(nas_tailscale=True, public_endpoint=public, home_assistant=True)
             self.assertIsNone(kind)
 
+    def test_ha_tls_invalid(self):
+        kind, reason = classify_studio_link(nas_tailscale=True, public_endpoint=False, home_assistant=False,
+                                            ha_tls_invalid=True)
+        self.assertEqual(kind, "home-assistant-tls-invalid")
+        self.assertIn("TLS-Zertifikat", reason)
+
+    def test_ha_tls_invalid_takes_precedence_over_unreachable(self):
+        """Bei TLS-Fehler antwortet der Server — kein 'Internet down', sondern spezifischer TLS-Alarm."""
+        kind, reason = classify_studio_link(nas_tailscale=False, public_endpoint=False, home_assistant=False,
+                                            ha_tls_invalid=True)
+        self.assertEqual(kind, "home-assistant-tls-invalid")
+        self.assertIn("TLS-Zertifikat", reason)
+
 
 class CodeSyncTests(unittest.TestCase):
     def test_mismatch_detected(self):
@@ -172,3 +185,108 @@ class HubBusyTests(unittest.TestCase):
         raus, entwarnt, _r = self._run(responsive=True)
         self.assertEqual(raus, [])
         self.assertIn("nuki-hub-offline", entwarnt)
+
+
+class StudioLinkCheckTests(unittest.TestCase):
+    """Prüfung von check_studio_link und TLS-Fehlerbehandlung (M3.4)."""
+
+    def test_http_check_detects_tls_error(self):
+        import ssl
+        import httpx
+        from unittest import mock
+        from nuki_integration.services.monitoring import _http_check
+
+        ssl_err = ssl.SSLCertVerificationError("certificate verify failed: certificate has expired")
+        connect_err = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
+                                         request=httpx.Request("GET", "https://services.getimpulse.de:8123"))
+        connect_err.__cause__ = ssl_err
+
+        with mock.patch("httpx.get", side_effect=connect_err):
+            ok, tls_invalid = _http_check("https://services.getimpulse.de:8123")
+            self.assertFalse(ok)
+            self.assertTrue(tls_invalid)
+
+    def test_http_check_valid_cert(self):
+        import httpx
+        from unittest import mock
+        from nuki_integration.services.monitoring import _http_check
+
+        mock_resp = mock.Mock(status_code=200)
+        with mock.patch("httpx.get", return_value=mock_resp):
+            ok, tls_invalid = _http_check("https://services.getimpulse.de:8123")
+            self.assertTrue(ok)
+            self.assertFalse(tls_invalid)
+
+    def test_http_check_other_network_error(self):
+        import httpx
+        from unittest import mock
+        from nuki_integration.services.monitoring import _http_check
+
+        with mock.patch("httpx.get", side_effect=httpx.ConnectError("Connection refused",
+                                                                     request=httpx.Request("GET", "https://services.getimpulse.de:8123"))):
+            ok, tls_invalid = _http_check("https://services.getimpulse.de:8123")
+            self.assertFalse(ok)
+            self.assertFalse(tls_invalid)
+
+    def test_check_studio_link_tls_error_alerts(self):
+        from types import SimpleNamespace
+        import ssl
+        import httpx
+        from unittest import mock
+        from nuki_integration.services import monitoring
+
+        settings = SimpleNamespace(
+            nuki_mqtt_host="100.103.57.114",
+            nuki_mqtt_port=1883,
+            ha_url="https://services.getimpulse.de:8123",
+            ha_token="dummy-token",
+        )
+
+        ssl_err = ssl.SSLCertVerificationError("certificate verify failed: certificate has expired")
+        connect_err = httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]",
+                                         request=httpx.Request("GET", "https://services.getimpulse.de:8123"))
+        connect_err.__cause__ = ssl_err
+
+        raus, entwarnt = [], []
+        with mock.patch.object(monitoring, "_tcp_open", return_value=True), \
+             mock.patch("httpx.get", side_effect=connect_err), \
+             mock.patch.object(monitoring, "notify",
+                               side_effect=lambda *a, **k: (raus.append(k.get("key")), True)[1]), \
+             mock.patch.object(monitoring, "resolve",
+                               side_effect=lambda *a, **k: entwarnt.append(k.get("key"))):
+            res = monitoring.check_studio_link(None, settings)
+
+        self.assertEqual(res["kind"], "home-assistant-tls-invalid")
+        self.assertTrue(res["ha_tls_invalid"])
+        self.assertIn("home-assistant-tls-invalid", raus)
+        self.assertIn("home-assistant-offline", entwarnt)
+
+    def test_check_studio_link_valid_cert_resolves(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from nuki_integration.services import monitoring
+
+        settings = SimpleNamespace(
+            nuki_mqtt_host="100.103.57.114",
+            nuki_mqtt_port=1883,
+            ha_url="https://services.getimpulse.de:8123",
+            ha_token="dummy-token",
+        )
+
+        mock_resp = mock.Mock(status_code=200)
+        raus, entwarnt = [], []
+        with mock.patch.object(monitoring, "_tcp_open", return_value=True), \
+             mock.patch("httpx.get", return_value=mock_resp), \
+             mock.patch.object(monitoring, "notify",
+                               side_effect=lambda *a, **k: (raus.append(k.get("key")), True)[1]), \
+             mock.patch.object(monitoring, "resolve",
+                               side_effect=lambda *a, **k: entwarnt.append(k.get("key"))):
+            res = monitoring.check_studio_link(None, settings)
+
+        self.assertIsNone(res["kind"])
+        self.assertFalse(res["alerted"])
+        self.assertFalse(res["ha_tls_invalid"])
+        self.assertEqual(raus, [])
+        self.assertIn("home-assistant-tls-invalid", entwarnt)
+        self.assertIn("home-assistant-offline", entwarnt)
+
