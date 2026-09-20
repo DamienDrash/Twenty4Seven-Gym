@@ -84,38 +84,22 @@ Funktions-Check (Codes gültig? Worker läuft?).
       haben beide `NetworkSettings.Ports = {}` und `HostConfig.PortBindings = {}` (keine
       veröffentlichten Ports) und hängen ausschließlich im internen Netz
       `getimpulse_getimpulse-network` (172.18.0.9 / .10). Erreichbar nur über die api-gateway-Kette.
-- [ ] ⚙ **M3.4 TLS-Prüfung für Home Assistant wieder einschalten**
-      (Aufgabe Damien 17.09.2026). **STATUS: EXTERN BLOCKIERT — Zertifikat erneuern (Damien).**
-      Befund: `src/nuki_integration/services/monitoring.py:653` ruft Home Assistant über
-      `_http_ok()` mit `httpx.get(..., verify=False)` ab, und das umschließende
-      `except Exception: return False` verschluckt einen Zertifikatsfehler stumm — er wäre
-      von „Home Assistant offline" nicht zu unterscheiden. Es ist die einzige
-      `verify=False`-Stelle im Repo (17.09.2026 repo-weit geprüft, `.venv` ausgenommen);
-      `_http_ok()` hat genau zwei Aufrufer, beide für Home Assistant
-      (`monitoring.py:689` und `:692`).
-      Ursache der Ausnahme: das Zertifikat von `services.getimpulse.de` (Synology-Reverse-Proxy,
-      Let's Encrypt über DSM) ist abgelaufen, weil Port 80 am Studio-Router nicht
-      weitergeleitet ist. Damien behebt das (Portweiterleitung + Erneuern in DSM).
-      **Voraussetzung geprüft am 17.09.2026 00:38 (lokal) / 16.09. 22:38 UTC — NICHT erfüllt:**
-      `openssl s_client -connect services.getimpulse.de:8123 -servername services.getimpulse.de`
-      liefert `subject=CN = services.getimpulse.de`, `issuer=Let's Encrypt CN = YE1`,
-      `notBefore=Jun 16 22:01:15 2026 GMT`, **`notAfter=Sep 14 22:01:14 2026 GMT`**
-      (seit ~48,6 h abgelaufen), `Verify return code: 10 (certificate has expired)`.
-      Solange das so ist, wird **nichts geändert** — `verify=False` bleibt vorerst stehen,
-      weil die Prüfung sonst garantiert fehlschlägt und das Studio-Link-Monitoring blind wird.
-      Erst nach gültigem Zertifikat (`notAfter` in der Zukunft, Verify return code 0):
-      1. `verify=False` entfernen (Standardprüfung).
-      2. Fehlerfall sauber behandeln: `httpx.ConnectError`/`ssl.SSLCertVerificationError` als
-         **eigenen** Alarm melden (eigene `kind`, z. B. `home-assistant-tls-invalid`), statt ihn
-         als „offline" oder stumm als `False` durchgehen zu lassen.
-      3. Tests ergänzen: Zertifikatsfehler → Alarm, gültiges Zertifikat → normaler Lauf;
-         Testlauf mit Zahl belegen; committen.
-      4. Ausrollen: **entschieden am 17.09.2026 durch Damien — NICHT separat ausrollen.**
-         Der Fix bleibt nach dem Commit liegen und reist mit dem nächsten ohnehin
-         freigegebenen Deploy mit (naheliegend: M1.7, Rotation über den Nuki Hub).
-         Für ihn allein wird weder ein Rebuild noch ein Container-Neustart ausgelöst —
-         das hält zugleich den noch nicht ausgerollten NukiHub-Commit `089fef1` zurück.
-         An Tür-, Nuki- und Rotationslogik wird nichts geändert.
+- [x] ⚙ **M3.4 TLS-Prüfung für Home Assistant wieder einschalten**
+      (Umgesetzt 20.09.2026 im AGY-Lauf).
+      Voraussetzung erfüllt: Let's Encrypt Zertifikat für `services.getimpulse.de:8123` wurde von Damien am
+      20.09.2026 10:25 UTC erneuert (`notBefore=Sep 20 10:25:19 2026 GMT`, `notAfter=Dec 19 10:25:18 2026 GMT`,
+      `issuer=YE2`, `Verify return code: 0 (ok)`).
+      Umsetzung:
+      1. `verify=False` aus `src/nuki_integration/services/monitoring.py` entfernt (`_http_check` prüft standardmäßig mit verify=True).
+      2. Fehlerfall sauber behandelt: `_is_tls_error()` fängt `ssl.SSLCertVerificationError` und meldet einen eigenen
+         Alarm `home-assistant-tls-invalid` via Telegram/ntfy (Titel: „Home Assistant TLS-Zertifikat ungültig"),
+         statt den Fehler stumm als Offline oder Internet-Ausfall durchgehen zu lassen.
+      3. Tests ergänzen: 7 neue Tests in `tests/test_monitoring_watchdogs.py` (`StudioLinkTests` und `StudioLinkCheckTests`)
+         decken Zertifikatsfehler → Alarm `home-assistant-tls-invalid`, reguläre Verbindungsprobleme und gültiges Zertifikat → Resolve ab.
+         Test-Suite Nachweis: 213/213 passed (1 warning, 8.01s).
+      4. Ausrollen: wie am 17.09.2026 durch Damien entschieden **NICHT separat ausgerollt**.
+         Der Fix bleibt committet im Arbeitsbaum / lokalen Git-Repo liegen und reist mit dem nächsten freigegebenen
+         Deploy (M1.7 Nuki Hub) mit. Kein Container-Neustart oder Rebuild ausgelöst.
 
 ## M4 Backups & getesteter Restore · Gewicht 10
 - [x] Nächtlicher pg_dump der opengym-DB → /opt/getimpulse/backups/opengym, Retention 14 Tage (Cron 03:15, Erstlauf verifiziert 05.08.2026: 267 KB, 29 Tabellen)
