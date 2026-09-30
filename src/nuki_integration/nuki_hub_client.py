@@ -200,6 +200,24 @@ def parse_keypad_json(payload: str, *, seen_at: str) -> tuple[list[dict[str, Any
 # ── MQTT transport ────────────────────────────────────────────────
 
 
+def lock_clock_drift(lock_json: str, *, received_at: datetime) -> dict[str, Any]:
+    """Uhr des Schlosses gegen die Serveruhr, aus einer FRISCHEN ``lock/json``.
+
+    Das Schloss prueft die Zeitfenster der Keypad-Codes gegen seine eigene Uhr.
+    Am 26.09.2026 ging sie rund 62 Minuten nach: ein richtig eingegebener Code
+    fuer 06-07 Uhr wurde um 06:40 mit 0x09 abgelehnt, weil das Schloss 05:38
+    glaubte. ``currentTime`` fuehrt das Schloss in UTC (``timeZoneOffset`` 0).
+    Positiv = Schloss geht vor. Unlesbar: beide Felder None, kein Urteil.
+    """
+    try:
+        raw = json.loads(lock_json).get("currentTime")
+        lock_time = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError, AttributeError):
+        return {"lock_time": None, "clock_drift_secs": None}
+    return {"lock_time": lock_time.isoformat(),
+            "clock_drift_secs": round((lock_time - received_at).total_seconds(), 1)}
+
+
 class NukiHubMqttClient:
     """Keypad/lock control through a Nuki Hub's MQTT interface.
 
@@ -997,7 +1015,7 @@ class NukiHubMqttClient:
             "responsive": False, "busy": False, "mqtt_connected": None, "lock_available": None,
             "hybrid_connected": None, "lock_state": None, "battery_level": None,
             "battery_critical": None, "ble_rssi": None, "wifi_rssi": None,
-            "uptime": None, "error": None,
+            "uptime": None, "lock_time": None, "clock_drift_secs": None, "error": None,
         }
         try:
             self._connect()
@@ -1005,6 +1023,8 @@ class NukiHubMqttClient:
             self._publish("lock/query/lockstate", "1")
             fresh = self._await_message("lock/json", timeout=self._timeout, since=started)
             out["responsive"] = fresh is not None
+            if fresh is not None:
+                out.update(lock_clock_drift(fresh, received_at=datetime.now(timezone.utc)))
             # WIR haben ihn blind gemacht, nicht das Netz: ein ``query/keypad`` laesst den
             # Hub alle Codes einzeln ueber BLE vom Schloss lesen (bei 109 Eintraegen gut
             # eine Minute), und in der Zeit beantwortet er keine Statusabfrage. Am

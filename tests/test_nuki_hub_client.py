@@ -627,3 +627,38 @@ class RetainedMessageTests(unittest.TestCase):
         self.assertFalse(h["responsive"])
         self.assertFalse(h["busy"])
         c.close()
+
+
+class LockClockDriftTests(unittest.TestCase):
+    """``currentTime`` in ``lock/json`` ist die Uhr des Schlosses, in UTC."""
+
+    def test_lock_behind_is_negative(self):
+        from datetime import datetime, timezone
+        from nuki_integration.nuki_hub_client import lock_clock_drift
+        empfangen = datetime(2026, 9, 26, 4, 40, 2, tzinfo=timezone.utc)
+        r = lock_clock_drift('{"currentTime":"2026-09-26 03:38:02","timeZoneOffset":0}',
+                             received_at=empfangen)
+        self.assertEqual(r["clock_drift_secs"], -62 * 60)
+        self.assertEqual(r["lock_time"], "2026-09-26T03:38:02+00:00")
+
+    def test_unreadable_gives_none(self):
+        from datetime import datetime, timezone
+        from nuki_integration.nuki_hub_client import lock_clock_drift
+        jetzt = datetime.now(timezone.utc)
+        for kaputt in ("{}", "kein json", '{"currentTime": "0000-00-00 00:00:00"}'):
+            self.assertIsNone(lock_clock_drift(kaputt, received_at=jetzt)["clock_drift_secs"])
+
+    def test_hub_health_reports_drift_from_the_fresh_reply(self):
+        c = NukiHubMqttClient(SimpleNamespace(
+            nuki_dry_run=False, nuki_smartlock_id=1, nuki_mqtt_host="broker",
+            nuki_mqtt_port=1883, nuki_mqtt_username="", nuki_mqtt_password="",
+            nuki_mqtt_prefix="nukihub", nuki_mqtt_timeout_seconds=5,
+        ))
+        c._connect = lambda: None
+        c._publish = lambda *a, **k: None
+        c._await_message = lambda *a, **k: '{"currentTime":"2000-01-01 00:00:00"}'
+        c._last = lambda suffix: None
+        h = c.hub_health()
+        self.assertTrue(h["responsive"])
+        self.assertLess(h["clock_drift_secs"], -3600)
+        c.close()

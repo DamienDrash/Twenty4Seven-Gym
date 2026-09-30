@@ -290,3 +290,51 @@ class StudioLinkCheckTests(unittest.TestCase):
         self.assertIn("home-assistant-tls-invalid", entwarnt)
         self.assertIn("home-assistant-offline", entwarnt)
 
+
+
+class LockClockTests(unittest.TestCase):
+    """Vorfall 26.09.2026: die Schlossuhr ging 62 min nach, ein richtiger Code fuer
+    06-07 Uhr wurde um 06:40 als 05:38 gewertet und abgelehnt (0x09)."""
+
+    def _run(self, **health):
+        from types import SimpleNamespace
+        from unittest import mock
+        from nuki_integration.services import monitoring
+
+        zustand = {"responsive": True, "mqtt_connected": True, "lock_available": True,
+                   "hybrid_connected": False, "lock_state": "locked", "battery_level": 65,
+                   "battery_critical": False, "ble_rssi": -65, "wifi_rssi": -42,
+                   "uptime": 100, "lock_time": "2026-09-26T04:38:00+00:00",
+                   "clock_drift_secs": -2.0, "error": None}
+        zustand.update(health)
+        raus, entwarnt = [], []
+        with mock.patch.object(monitoring, "notify",
+                               side_effect=lambda *a, **k: (raus.append(k.get("key")), True)[1]), \
+             mock.patch.object(monitoring, "resolve",
+                               side_effect=lambda *a, **k: entwarnt.append(k.get("key"))):
+            monitoring.check_nuki_link(None, object(), nuki=SimpleNamespace(hub_health=lambda: zustand))
+        return raus, entwarnt
+
+    def test_62_minutes_behind_alerts(self):
+        raus, _ = self._run(clock_drift_secs=-62 * 60)
+        self.assertIn("nuki-clock-drift", raus)
+
+    def test_ahead_alerts_too(self):
+        raus, _ = self._run(clock_drift_secs=5 * 60)
+        self.assertIn("nuki-clock-drift", raus)
+
+    def test_mqtt_latency_is_not_drift(self):
+        raus, entwarnt = self._run(clock_drift_secs=-2.3)
+        self.assertNotIn("nuki-clock-drift", raus)
+        self.assertIn("nuki-clock-drift", entwarnt)
+
+    def test_no_reading_no_verdict(self):
+        """Ohne frischen Messwert weder Alarm noch Entwarnung."""
+        raus, entwarnt = self._run(clock_drift_secs=None, lock_time=None)
+        self.assertNotIn("nuki-clock-drift", raus)
+        self.assertNotIn("nuki-clock-drift", entwarnt)
+
+    def test_silent_hub_gives_no_clock_verdict(self):
+        raus, entwarnt = self._run(responsive=False, clock_drift_secs=-62 * 60)
+        self.assertNotIn("nuki-clock-drift", raus)
+        self.assertNotIn("nuki-clock-drift", entwarnt)

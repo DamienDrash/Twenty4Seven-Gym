@@ -30,6 +30,7 @@ Alert kinds (all pushed to ntfy when configured):
   ``nuki-hub-offline``        Hub antwortet nicht auf einen Round-Trip
   ``nuki-lock-unreachable``   Hub lebt, Schloss nicht am BLE
   ``nuki-battery-low``        Schloss-Akku ≤20 % oder kritisch
+  ``nuki-clock-drift``        Schlossuhr weicht ≥2 min ab (Zeitfenster der Codes verschoben)
   ``codes-out-of-sync``       DB-Pin ≠ Keypad-Code
   ``wrong-code-delivered``    verschickter Code passt nicht mehr zum Slot
   ``booking-no-access-code``  fällige Buchung ohne Code (Zustellung ausgeblieben)
@@ -73,6 +74,9 @@ HEARTBEAT_STALE_FLOOR_SECS = 180
 OVERDUE_GRACE_SECS = 300
 # Re-alert spacing for a persisting condition.
 DEFAULT_COOLDOWN_SECS = 30 * 60
+# Schlossuhr: ab dieser Abweichung verschieben sich die Zeitfenster der Codes
+# spuerbar. Die Messung selbst traegt ~2 s MQTT-Laufzeit (gemessen 29.09.2026).
+CLOCK_DRIFT_ALERT_SECS = 120
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS monitoring_heartbeat (
@@ -207,6 +211,7 @@ _RESOLVED_TITLES: dict[str, str] = {
     "home-assistant-offline": "Home Assistant antwortet wieder",
     "nuki-hub-offline": "Nuki Hub wieder erreichbar — antwortet über MQTT",
     "nuki-lock-unreachable": "Nuki Schloss für den Hub wieder erreichbar",
+    "nuki-clock-drift": "Uhr des Nuki Schlosses geht wieder richtig",
     "codes-out-of-sync": "Codes zwischen Datenbank und Nuki wieder synchron",
     "worker-heartbeat-stale": "OpenGym Worker läuft wieder",
     "nuki-rotation-paused-long": "Rotation nicht mehr pausiert",
@@ -282,7 +287,8 @@ def _push_ntfy(settings: Settings, *, severity: str, kind: str, title: str, deta
                else {"error": "rotating_light", "warning": "warning"}.get(sev, "information_source"))
         by_kind = {
             "nuki-hub-offline": "electric_plug", "nuki-lock-unreachable": "lock",
-            "nuki-battery-low": "battery", "studio-internet-down": "satellite",
+            "nuki-battery-low": "battery", "nuki-clock-drift": "alarm_clock",
+            "studio-internet-down": "satellite",
             "nas-offline": "floppy_disk", "home-assistant-offline": "house",
             "codes-out-of-sync": "twisted_rightwards_arrows",
             "wrong-code-delivered": "no_entry", "keypad-code-rejected": "no_entry_sign",
@@ -807,6 +813,9 @@ def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None =
     else:
         resolve(db, key="nuki-lock-unreachable", now=now, settings=settings)
 
+    if check_lock_clock(db, settings, health, now=now):
+        alerted += 1
+
     level = health.get("battery_level")
     if health.get("battery_critical") or (isinstance(level, int) and level <= 20):
         if notify(
@@ -817,6 +826,38 @@ def check_nuki_link(db, settings: Settings, nuki=None, *, now: datetime | None =
         ):
             alerted += 1
     return {**health, "alerted": alerted}
+
+
+def check_lock_clock(db, settings: Settings, health: dict, *, now: datetime | None = None) -> bool:
+    """Geht die Uhr des Schlosses falsch? Meldet ``nuki-clock-drift``.
+
+    Das Schloss laesst einen Code nur in seinem Zeitfenster zu und misst dieses
+    Fenster an der eigenen Uhr. Geht sie falsch, lehnt es richtige Codes mit
+    0x09 ab (Vorfall 26.09.2026: 62 min nach, Mitglied stand um 06:40 draussen)
+    und laesst andere zu frueh oder zu spaet herein. Ohne frischen Messwert
+    (Hub still, ``currentTime`` unlesbar) gibt es kein Urteil, auch keine Entwarnung.
+    Returns True, wenn in diesem Aufruf alarmiert wurde.
+    """
+    drift = health.get("clock_drift_secs")
+    if not isinstance(drift, (int, float)):
+        return False
+    if abs(drift) < CLOCK_DRIFT_ALERT_SECS:
+        resolve(db, key="nuki-clock-drift", now=now, settings=settings,
+                detail=f"Abweichung jetzt {drift:+.0f} s.")
+        return False
+    minuten = round(abs(drift) / 60)
+    richtung = "vor" if drift > 0 else "nach"
+    return notify(
+        db, settings, key="nuki-clock-drift", severity=AlertSeverity.ERROR,
+        kind="nuki-clock-drift",
+        title=f"Uhr des Nuki Schlosses geht {minuten} min {richtung}",
+        detail=(f"Schloss meldet {health.get('lock_time')} (UTC), Abweichung {drift:+.0f} s. "
+                "Die Zeitfenster der Keypad-Codes verschieben sich um denselben Betrag: "
+                "Mitglieder mit gueltigem Code werden abgewiesen (0x09). Uhr ueber die "
+                "Nuki-App stellen."),
+        payload={"lock_time": health.get("lock_time"), "clock_drift_secs": drift},
+        now=now,
+    )
 
 
 # ── Konsistenz: DB-Pins ↔ tatsächliche Keypad-Codes ───────────────────────
