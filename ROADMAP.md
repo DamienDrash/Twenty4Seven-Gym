@@ -115,6 +115,10 @@ Funktions-Check (Codes gültig? Worker läuft?).
       check_freeze_watch() in src/nuki_integration/services/monitoring.py implementiert & unit-getestet (13/13 passed).
       Meldet 24h-Dauer-Freeze (Alerting) und meldet Wiedererreichbarkeit des Schlosses („Freeze kann zurückgesetzt werden").
       Das Zurücksetzen des Flags selbst bleibt Handarbeit und braucht Damiens Freigabe.
+- [x] Schlossuhr-Drift-Wächter (Vorfall 26.09.2026, umgesetzt 30.09.2026):
+      `check_lock_clock()` in `src/nuki_integration/services/monitoring.py` und `lock_clock_drift()` in `nuki_hub_client.py`.
+      Erkennt Abweichungen der Schlossuhr (≥120 s) aus frischer `lock/json` und schlägt Alarm (`nuki-clock-drift`),
+      um Code-Abweisungen (0x09) durch asynchrone Zeitfenster zu verhindern; 221/221 Tests grün.
 
 ## M6 Tests & CI · Gewicht 10
 - [x] CI einrichten: GitHub Actions, nur pytest bei Push/PR, kein Deploy (Workflow .github/workflows/tests.yml, Commit d6cc0b6)
