@@ -4,11 +4,11 @@
 **2** — Roadmap freigegeben (05.08.2026), Umsetzung läuft im AGY-Direktmodus.
 
 ## Fortschritt
-**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 07.10.2026 21:30 / 07.10.2026 19:30 UTC).
+**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 07.10.2026 22:30 / 07.10.2026 20:30 UTC).
 
 | Meilenstein | Gewicht | Ist | Nachweis |
 |---|---|---|---|
-| M1 Kernfunktionen | 30 | 29 | Test-Suite 221/221 passed (1 warning, 8.17s) unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`; Kernpfade belegt (Rotation, PIN-Versand 1. Stunde, Sync-Intervall 5 min `config.py:30`/`worker.py:70`, +30 min Nachlauf `sync.py:92`); Ausfall-Detektor live seit 06.08.2026. Offen: Push des lokalen `main` nach `origin` |
+| M1 Kernfunktionen | 30 | 29 | Test-Suite 221/221 passed (1 warning, 8.36s) unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests`; Kernpfade belegt (Rotation, PIN-Versand 1. Stunde, Sync-Intervall 5 min `config.py:30`/`worker.py:70`, +30 min Nachlauf `sync.py:92`); Ausfall-Detektor live seit 06.08.2026. Offen: Push des lokalen `main` nach `origin` |
 | M2 Betrieb/Stabilität | 15 | 15 | Deploy-Mechanismus belegt (Image-Build, kein Quellcode-Bind-Mount → Neustart ≠ Deploy); `/health` + Healthchecks; Docker-Log-Rotation; Restart-Runbook in `docs/BETRIEB.md` |
 | M3 Sicherheit | 15 | 15 | Secrets-Audit über 73 Commits (eigener Code sauber); `pip-audit` durchgeführt; Oberflächen-Check (keine veröffentlichten Ports, nur internes `getimpulse_getimpulse-network`); M3.4 TLS-Prüfung Home Assistant nach Let's-Encrypt-Erneuerung durch Damien umgesetzt (`verify=False` entfernt, Alarmierung `home-assistant-tls-invalid`, 7 Tests) |
 | M4 Backups/Restore | 10 | 10 | Nächtlicher `pg_dump` (Cron 03:15, Stand 07.10.2026 03:15 UTC: 495 KiB / 506.391 Bytes, gzip ok) nach `/opt/getimpulse/backups/opengym`, Retention 14 Tage (15 Backups); Restore-Test mit Nachweis (29 Tabellen); `.env` mode 600 außerhalb des Repos |
@@ -130,6 +130,22 @@ Offen für 100 %: nur noch der Push der lokalen `main`-Commits nach `origin` —
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 07.10.2026 22:30 Watchdog/AGY-Lauf (07.10.2026 20:30 UTC):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 221/221 passed (1 warning) in 8.36s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 221 Tests grün).
+  - Live-Betrieb & Container-Status: `opengym-service` (uvicorn Port 8080, IP 172.18.0.9) und `opengym-worker` (studio-access-worker, IP 172.18.0.10) Up 3 weeks aktiv & gesund (restarts=0), `opengym-auth` aktiv (Up 12 days, `/health` ok via 127.0.0.1:8100), `db-service` (healthy, Up 8 weeks), `web-frontend` (Up 8 days, healthy), `api-gateway` (Up 3 months).
+  - Worker-Zyklus im Live-Betrieb stabil: Heartbeat in `monitoring_heartbeat` und `nuki_guardian_audit` verifiziert (`name`: worker, `last_beat_at`: 2026-10-07 20:23:41.512862+00, interval_secs 300s = 5 min, cycles 22392; `nuki_guardian_audit` ID 22472 verified=True mit 0 Failures, trigger_kind worker-fallback).
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check & Uptime-Cron bis 07.10. 20:25:01 UTC) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.9:8080, `auth` `/health` via 127.0.0.1:8100) verifiziert (HTTP 200).
+  - Backup-Prüfung: Frisches nächtliches Backup `opengym-20261007-031501.sql.gz` (495 KiB / 506.391 Bytes) in `/opt/getimpulse/backups/opengym` vorhanden und verifiziert (GZIP-Integrität OK; 14 Tage Retention mit 15 Backup-Dateien eingehalten; nächster Backup-Lauf planmäßig am 08.10. um 03:15 UTC).
+  - Uptime-Cron verifiziert: Uptime-Check bis 07.10. 20:25:01 UTC im `cron.log` lückenlos mit HTTP 200 OK.
+  - NAS-Erreichbarkeit & Ports: `getimpulse-nas` via Tailscale (100.103.57.114) geprüft (ONLINE, Ping 0% packet loss, min 11.8 ms / avg 29.7 ms; Ports 443 HTTPS und 1883 MQTT erreichbar).
+  - M1.7 Nuki Hub & MQTT-Status: Freeze `NUKI_ROTATION_PAUSED=true` planmäßig aktiv (keine Änderung); Worker-Zyklen laufen dank Fallback stabil durch. Native Nuki MQTT (`nuki/4C17A4E7/connected`: true, `batteryChargeState`: 75, `doorsensorState`: 2, `state`: 1, `timestamp`: 2026-10-07T09:53:04Z). Nuki Hub (ESP32): `maintenance/mqttConnectionState: online` (uptime 3278, wifiRssi -46 dBm; `lock/state`: locked, `lock/rssi`: -66; `keypad/commandResultJson`: codeValid; 109 Keypad-Codes im Broker retain-Store). Unfreeze bleibt Abhängigkeit von M1.7 durch Damien (👤).
+  - Home Assistant TLS-Prüfung: Let's Encrypt Zertifikat für `services.getimpulse.de:8123` verifiziert (gültig bis 19.12.2026 10:25 GMT, verify return code 0 ok).
+  - Git-Remote Check: `git fetch origin` / `git push origin main` scheitert an unauflösbarem Host-Alias `github-getimpulse` in CLI-Session. Alle Commits auf lokalem `main` gesichert.
+  - Offene Fragen an Damien: keine. Aktive Eskalations-Flags: keine.
+  - Fortschritt: 99 % bestätigt (offen nur noch Push nach origin + M1.7 Nuki Hub Unfreeze durch Damien).
+
 - 07.10.2026 21:30 Watchdog/AGY-Lauf (07.10.2026 19:30 UTC):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 221/221 passed (1 warning) in 8.17s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 221 Tests grün).
