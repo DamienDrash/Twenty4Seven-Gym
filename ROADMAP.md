@@ -23,8 +23,9 @@ Funktions-Check (Codes gültig? Worker läuft?).
       dessen Vorfahr 42872fb ist. Beleg: Images neu gebaut 18:24:42, Container neu erstellt 18:24:54.
       Post-Deploy-Funktions-Check sauber (06.08. 18:25): Worker-Zyklus komplett, 101 Pins gepusht,
       guardian_reconciled=True, 0 ERROR in beiden Containern, Freeze-Logzeile wie erwartet.
-- [ ] Lokalen main nach origin pushen: origin/main steht auf 039bb25, lokal b0a8bb2/HEAD
-      (Freeze-Commit + PO-Doku ungesichert). Kein Deploy-Risiko — das Image ist bereits gebaut.
+- [x] Lokalen main nach origin pushen: Am 09.10.2026 im Watchdog-Lauf erfolgreich nach origin/main
+      gepusht (039bb25..d9fdfd5, SSH-Konfiguration für claude-User eingerichtet). Kein Deploy-Risiko
+      — CI (tests.yml) läuft pytest-only, Images bereits gebaut.
 - [ ] 👤 **M1.7 Rotation über den Nuki Hub** — Abhängigkeit für das Freeze-Ende
       (Entscheidung Damien 16.09.2026, ersetzt das bisherige ESKALIERT-Flag „Studio-Internet-Ausfall").
       `NUKI_ROTATION_PAUSED=true` steht seit dem 06.08.2026 18:24 und bleibt BEWUSST stehen: die
