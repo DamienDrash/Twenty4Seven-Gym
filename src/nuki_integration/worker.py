@@ -9,6 +9,13 @@ from .services import cleanup_orphaned_nuki_codes, deprovision_expired_codes, lo
 from .services.nuki_guardian import run_guardian_cycle
 from .services import deadman, monitoring
 from .timewindow.rotation import run_timewindow_cycle
+from .exceptions import MagiclineApiError
+
+# Erst nach so vielen Zyklen in Folge ohne Magicline-Sync meldet der
+# Dead-Man's-Switch "fail" (bei 5-Minuten-Takt also nach ~15 min). Ein einzelner
+# Aussetzer ist kein Ausfall: Codes für bereits synchronisierte Buchungen werden
+# trotzdem zugestellt, und die Tür-Überwachung läuft weiter.
+SYNC_FAIL_ALERT_AFTER = 3
 
 def run_cycle(db, settings, logger) -> dict:
     """One worker tick.
@@ -24,7 +31,15 @@ def run_cycle(db, settings, logger) -> dict:
         lock_if_no_active_sessions(db, settings)
     deleted_nuki = deprovision_expired_codes(db, settings)
     orphans_removed = cleanup_orphaned_nuki_codes(db, settings)
-    sync_result = sync_magicline_bookings(db, settings)
+    # Magicline-Ausfall darf den Rest des Zyklus nicht mitreißen (10.10.2026: ein
+    # einzelnes "Network is unreachable" ließ Zustellung, Wächter und die
+    # Keypad-Überwachung einen ganzen Zyklus ausfallen). Bereits synchronisierte
+    # Buchungen stehen in der DB und werden unten normal bedient.
+    try:
+        sync_result = sync_magicline_bookings(db, settings)
+    except MagiclineApiError as exc:
+        logger.warning("run_cycle: Magicline sync failed, continuing with DB state: %s", exc)
+        sync_result = {"members": 0, "bookings": 0, "windows": 0, "error": str(exc)[:300]}
     # M2b: per-booking provisioning replaced by the time-window PIN model.
     # Runs right after the sync so freshly-synced due windows dispatch now.
     tw = run_timewindow_cycle(db, settings)
@@ -57,7 +72,8 @@ def _deadman_summary(result: dict) -> str:
     tw = result.get("tw", {}) or {}
     return (f"windows={result.get('sync', {}).get('windows')} "
             f"assigned={tw.get('assigned')} delivered={tw.get('delivered')} "
-            f"blocked={tw.get('blocked')}")
+            f"blocked={tw.get('blocked')}"
+            + (" sync_error=1" if (result.get("sync") or {}).get("error") else ""))
 
 
 def run_forever() -> None:
@@ -67,6 +83,7 @@ def run_forever() -> None:
     db = Database(settings.database_url)
     db.open()
     db.ensure_schema()
+    sync_failures = 0
     try:
         while True:
             # A single transient failure (e.g. a Nuki API TimeoutError on the degraded
@@ -79,7 +96,13 @@ def run_forever() -> None:
                 # Schleifenanfang würde auch dann grün melden, wenn jeder Zyklus
                 # in der Mitte abbricht — und damit genau den Fall verschleiern,
                 # für den der Schalter da ist.
-                deadman.ping(settings, payload=_deadman_summary(result))
+                sync_error = (result.get("sync") or {}).get("error")
+                sync_failures = sync_failures + 1 if sync_error else 0
+                if sync_failures < SYNC_FAIL_ALERT_AFTER:
+                    deadman.ping(settings, payload=_deadman_summary(result))
+                else:
+                    deadman.ping(settings, suffix="fail",
+                                 payload=f"Magicline-Sync {sync_failures}x in Folge fehlgeschlagen: {sync_error}")
             except Exception:
                 logger.exception("worker cycle failed — continuing to next cycle")
                 deadman.ping(settings, suffix="fail",

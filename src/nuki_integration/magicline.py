@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 import httpx
@@ -20,11 +21,27 @@ class MagiclineClient:
     def close(self) -> None:
         self._client.close()
 
+    # Kurze Netzaussetzer auf dem Server (10.10.2026: "[Errno 101] Network is
+    # unreachable" für einen einzigen Request) dürfen keinen ganzen Worker-Zyklus
+    # kosten. Wiederholt wird nur, wenn der Request den Server sicher nie erreicht
+    # hat (Verbindungsaufbau gescheitert) — das ist auch für POST unbedenklich.
+    _CONNECT_RETRY_DELAYS = (2.0, 5.0)
+
     def _request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> Any:
-        try:
-            response = self._client.request(method, path, json=json_body)
-        except httpx.HTTPError as exc:
-            raise MagiclineApiError(f"Magicline request failed: {exc}") from exc
+        delays = iter(self._CONNECT_RETRY_DELAYS)
+        while True:
+            try:
+                response = self._client.request(method, path, json=json_body)
+                break
+            except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                delay = next(delays, None)
+                if delay is None:
+                    raise MagiclineApiError(f"Magicline request failed: {exc}") from exc
+                logger.warning("Magicline %s %s: connect failed (%s) — retry in %.0fs",
+                               method, path.split("?")[0], exc, delay)
+                time.sleep(delay)
+            except httpx.HTTPError as exc:
+                raise MagiclineApiError(f"Magicline request failed: {exc}") from exc
         if response.status_code >= 400:
             raise MagiclineApiError(f"Magicline API {response.status_code}: {response.text[:500]}")
         return response.json()
