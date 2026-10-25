@@ -4,7 +4,7 @@
 **2** — Roadmap freigegeben (05.08.2026), Umsetzung läuft im AGY-Direktmodus.
 
 ## Fortschritt
-**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 25.10.2026 01:28 / 24.10.2026 23:28 UTC).
+**99 %** zur Produktionsreife (gewichtete Erfüllung mit Beleg; Stand 25.10.2026 02:27 / 25.10.2026 00:27 UTC).
 
 | Meilenstein | Gewicht | Ist | Nachweis |
 |---|---|---|---|
@@ -130,6 +130,22 @@ Offen für 100 %: nur noch M1.7 Rotation über Nuki Hub / Unfreeze durch Damien 
 - *06.08.2026 18:24 · LAUFENDER STUDIO-INTERNET-AUSFALL* — aufgehoben am 16.09.2026 durch Entscheidung Damiens. Der Freeze (`NUKI_ROTATION_PAUSED=true`) bleibt bewusst stehen, aber nicht mehr wegen des Ausfalls: er endet erst, wenn die Code-Rotation über den Nuki Hub läuft und Damien das Unfreeze freigibt. Wird ab jetzt als Roadmap-Abhängigkeit geführt (`ROADMAP.md` M1.7), nicht als Eskalation. Die Betriebsregel bleibt unverändert: kein Rebuild, kein Container-Neustart, keine Änderung an Tür-/Nuki-/Rotations-Logik ohne explizite Freigabe.
 
 ## Tageslog
+- 25.10.2026 02:27 Watchdog/AGY-Lauf (25.10.2026 00:27 UTC):
+  - Watchdog-Ablauf für opengym vollständig durchgeführt.
+  - Test-Suite Nachweis: 228/228 passed (1 warning) in 8.01s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 228 Tests grün).
+  - Git-Remote & Push nach origin: Remote origin/main synchron mit lokalem main (Commit 69c8c45 vor Lauf, git status sauber, origin/main up-to-date, fetch bestätigt).
+  - Live-Betrieb & Container-Status: `opengym-service` (uvicorn Port 8080, IP 172.18.0.3, Up 7 days, restarts=0), `opengym-worker` (studio-access-worker, IP 172.18.0.7, Up 7 days, restarts=0, stabil), `opengym-auth` aktiv (Up 7 days, `/health` ok via 127.0.0.1:8100), `db-service` (healthy, Up 7 days, IP 172.18.0.5), `web-frontend` (Up 7 days, healthy), `api-gateway` (Up 7 days).
+  - Worker-Zyklus im Live-Betrieb stabil: Heartbeat in `monitoring_heartbeat` und `nuki_guardian_audit` verifiziert (`name`: worker, `last_beat_at`: 2026-10-25 00:21:55.383543+00, interval_secs 300s = 5 min, cycles 26611; `nuki_guardian_audit` ID 26691 verified=True mit 0 Failures, relevant_windows 0, trigger_kind worker-fallback; Zyklen laufen lückenlos alle 5-6 min).
+  - Public Web-Endpoints `/app` und `/checks` (beide HTTP 200 OK via GET-Check & Uptime-Cron bis 25.10. 00:25:01 UTC lückenlos) verifiziert.
+  - Interne Endpoints (`/health` ready, `/healthz/live` alive, `/healthz/ready` ready via 172.18.0.3:8080, `auth` `/health` ok via 127.0.0.1:8100) verifiziert (HTTP 200).
+  - Backup-Prüfung: Nächtliches Backup `opengym-20261024-031502.sql.gz` (558 KiB / 570.950 Bytes) in `/opt/getimpulse/backups/opengym` vom 24.10. um 03:15 UTC vorhanden und verifiziert (GZIP-Integrität OK; Retention mit 16 Backup-Dateien eingehalten; nächster Backup-Lauf heute am 25.10. 03:15 UTC).
+  - Uptime-Cron verifiziert: Uptime-Check bis 25.10. 00:25:01 UTC im `cron.log` lückenlos mit HTTP 200 OK.
+  - NAS-Erreichbarkeit & Ports: `getimpulse-nas` via Tailscale (100.103.57.114) geprüft (ONLINE, Ping 0% packet loss, min 12.5 ms / avg 20.0 ms; Ports 443 HTTPS und 1883 MQTT erreichbar).
+  - M1.7 Nuki Hub & Smartlock-Status: Freeze `NUKI_ROTATION_PAUSED=true` planmäßig aktiv (keine Änderung); Worker-Zyklen laufen dank Fallback stabil durch. Smartlock & Hub via MQTT geprüft: Letzter retained Status `state`: 'locked', `battery/basicJson`: level 68% (`critical`: 0), `rssi`: -60 dBm, `doorSensorState`: 'doorClosed'; Hub ESP32 auf MQTT-Broker offline (`maintenance/mqttConnectionState`: 'offline', Worker meldet `NukiHub: no keypad/json received`). Unfreeze bleibt Abhängigkeit von M1.7 durch Damien (👤).
+  - Home Assistant TLS-Prüfung: Let's Encrypt Zertifikat für `services.getimpulse.de:8123` verifiziert (gültig bis 19.12.2026 10:25 GMT, verify return code 0 ok).
+  - Offene Fragen an Damien: keine. Aktive Eskalations-Flags: keine.
+  - Fortschritt: 99 % bestätigt (offen für 100 % nur noch M1.7 Nuki Hub Unfreeze durch Damien).
+
 - 25.10.2026 01:28 Watchdog/AGY-Lauf (24.10.2026 23:28 UTC):
   - Watchdog-Ablauf für opengym vollständig durchgeführt.
   - Test-Suite Nachweis: 228/228 passed (1 warning) in 8.01s unter `.venv-ci/bin/python -m pytest /opt/getimpulse/opengym/tests` (alle 228 Tests grün).
